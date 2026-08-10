@@ -1,0 +1,49 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - unparam
+    - usetesting
+    - wastedassign
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+    gosec:
+      excludes:
+        # Veritix builds SQL from column and table identifiers by design; the
+        # engine package quotes every identifier it interpolates and rejects
+        # anything else. G201/G202 cannot see that, so they are handled by
+        # review and by engine's own tests rather than by the linter.
+        - G201
+        - G202
+
+  exclusions:
+    rules:
+      - path: _test\.go$
+        linters:
+          - gosec
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
