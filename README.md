@@ -15,7 +15,7 @@ Early development. See `.claude/plans/` for the build plan; the milestones are:
 | | |
 |---|---|
 | M0 | Skeleton, CLI, config, CI — **done** |
-| M1 | Ingest and profile CSV/Excel into DuckDB |
+| M1 | Ingest and profile CSV/Excel into DuckDB — **done** |
 | M2 | Deterministic checks, relationships, rules, reports |
 | M3 | HTTP server and React web interface |
 | M4 | Agentic LLM auditor with a strict data-egress guard |

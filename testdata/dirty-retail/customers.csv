@@ -1,0 +1,9 @@
+customer_id,name,email,signup_date,status,region,region
+CUS-000001,Alice Smith,alice@example.com,2024-01-15,Active,EMEA,EMEA
+CUS-000002,  Bob Jones  ,BOB@EXAMPLE.COM,15/02/2024,active,emea,EMEA
+CUS-000003,Carol White,carol@example.com,2024-03-01,ACTIVE,APAC,APAC
+CUS-000004,Dan Brown,,2024-04-12,Inactive,N/A,APAC
+CUS-000005,Eve Black,eve@example.com,2024-05-30,Active,AMER,AMER
+CUS-000005,Eve Black,eve@example.com,2024-05-30,Active,AMER,AMER
+CUS-000007,Frank Green,frank@example,not a date,Actve,EMEA,EMEA
+CUS-000008,Grace Hall,grace@example.com,2024-07-04,Active,-,EMEA
