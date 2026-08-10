@@ -43,13 +43,19 @@ func run(t *testing.T) *audit.Result {
 func TestDefaultReportContainsNoRawValues(t *testing.T) {
 	res := run(t)
 
-	for _, format := range []string{"json", "text"} {
+	// HTML matters most here: it is the format that gets emailed.
+	for _, format := range []string{"json", "text", "html", "sarif"} {
 		t.Run(format, func(t *testing.T) {
 			var buf bytes.Buffer
 			var err error
-			if format == "json" {
+			switch format {
+			case "json":
 				err = WriteJSON(&buf, res, "test", Options{Indent: true})
-			} else {
+			case "html":
+				err = WriteHTML(&buf, res, "test", Options{})
+			case "sarif":
+				err = WriteSARIF(&buf, res, "test", Options{Indent: true})
+			default:
 				err = WriteText(&buf, res, Options{})
 			}
 			if err != nil {
@@ -191,4 +197,85 @@ func renderOnce(t *testing.T) string {
 		t.Fatalf("marshal: %v", err)
 	}
 	return string(stable)
+}
+
+// The HTML report is opened on machines with no network and forwarded to
+// people outside the team, so it must not fetch anything from anywhere.
+func TestHTMLReportIsSelfContained(t *testing.T) {
+	res := run(t)
+
+	var buf bytes.Buffer
+	if err := WriteHTML(&buf, res, "test", Options{}); err != nil {
+		t.Fatalf("WriteHTML: %v", err)
+	}
+	out := buf.String()
+
+	for _, external := range []string{"http://", "https://cdn", "<script src", "@import", "url(http"} {
+		if strings.Contains(out, external) {
+			t.Errorf("the HTML report reaches out to the network: found %q", external)
+		}
+	}
+	for _, want := range []string{"<!doctype html>", "Findings", "</html>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the HTML report is missing %q", want)
+		}
+	}
+}
+
+func TestSARIFStructure(t *testing.T) {
+	res := run(t)
+
+	var buf bytes.Buffer
+	if err := WriteSARIF(&buf, res, "test", Options{Indent: true}); err != nil {
+		t.Fatalf("WriteSARIF: %v", err)
+	}
+
+	var log struct {
+		Version string `json:"version"`
+		Runs    []struct {
+			Tool struct {
+				Driver struct {
+					Name  string `json:"name"`
+					Rules []struct {
+						ID string `json:"id"`
+					} `json:"rules"`
+				} `json:"driver"`
+			} `json:"tool"`
+			Results []struct {
+				RuleID string `json:"ruleId"`
+				Level  string `json:"level"`
+			} `json:"results"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &log); err != nil {
+		t.Fatalf("the SARIF output is not valid JSON: %v", err)
+	}
+
+	if log.Version != "2.1.0" {
+		t.Errorf("version = %q, want 2.1.0", log.Version)
+	}
+	if len(log.Runs) != 1 {
+		t.Fatalf("got %d runs, want 1", len(log.Runs))
+	}
+	r := log.Runs[0]
+	if len(r.Results) == 0 {
+		t.Fatal("the fixtures produce findings; SARIF should carry them")
+	}
+
+	// Every result must reference a rule declared in the catalogue, or
+	// consumers will reject the document.
+	declared := make(map[string]bool)
+	for _, rule := range r.Tool.Driver.Rules {
+		declared[rule.ID] = true
+	}
+	for _, res := range r.Results {
+		if !declared[res.RuleID] {
+			t.Errorf("result references undeclared rule %q", res.RuleID)
+		}
+		switch res.Level {
+		case "error", "warning", "note":
+		default:
+			t.Errorf("invalid SARIF level %q", res.Level)
+		}
+	}
 }

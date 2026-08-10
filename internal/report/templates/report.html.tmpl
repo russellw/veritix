@@ -1,0 +1,179 @@
+{{- /*
+A single self-contained page. No stylesheet, script, font, or image is fetched
+from anywhere: a data-quality report is emailed to a finance team and opened
+on a laptop with no network, and a report that phones home to render is also a
+report that tells someone else which datasets you are auditing.
+*/ -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Veritix audit — {{.Dataset.Root}}</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #5c5c5c; --line: #e2e2e2;
+    --panel: #f7f7f5; --error: #b3261e; --warning: #9a6700; --info: #3d5a80;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a6; --line: #2c3038;
+      --panel: #1d2026; --error: #f2705f; --warning: #e0b341; --info: #7fb0e0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.25rem 4rem;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 60rem; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.2rem; margin: 2.5rem 0 .75rem; padding-bottom: .3rem; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.75rem 0 .5rem; font-family: var(--mono); }
+  p { margin: .4rem 0; }
+  .sub { color: var(--muted); font-size: .9rem; }
+  code, .mono { font-family: var(--mono); font-size: .85em; }
+
+  .tiles { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.25rem 0 0; }
+  .tile {
+    flex: 1 1 7rem; padding: .7rem .9rem; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--panel);
+  }
+  .tile .n { font-size: 1.5rem; font-weight: 600; line-height: 1.1; }
+  .tile .k { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .tile.error .n { color: var(--error); }
+  .tile.warning .n { color: var(--warning); }
+  .tile.info .n { color: var(--info); }
+
+  .finding { border-left: 3px solid var(--line); padding: .1rem 0 .1rem 1rem; margin: 1.5rem 0; }
+  .finding.error { border-left-color: var(--error); }
+  .finding.warning { border-left-color: var(--warning); }
+  .finding.info { border-left-color: var(--info); }
+  .finding h4 { margin: 0 0 .3rem; font-size: 1rem; font-weight: 600; }
+  .finding .where { font-family: var(--mono); font-size: .82rem; color: var(--muted); }
+  .finding .detail { margin: .5rem 0; }
+  .finding .remedy { margin: .5rem 0 0; padding-left: .9rem; border-left: 2px solid var(--line); color: var(--muted); }
+  .badge {
+    display: inline-block; font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
+    padding: .1rem .45rem; border-radius: 3px; vertical-align: .1em; margin-right: .4rem;
+  }
+  .badge.error { background: var(--error); color: #fff; }
+  .badge.warning { background: var(--warning); color: #fff; }
+  .badge.info { background: var(--info); color: #fff; }
+
+  details { margin-top: .5rem; }
+  summary { cursor: pointer; font-size: .85rem; color: var(--muted); }
+  pre {
+    overflow-x: auto; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 5px; padding: .6rem .8rem; font-family: var(--mono); font-size: .8rem;
+    margin: .5rem 0 0;
+  }
+
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .flag { color: var(--warning); }
+  .clean { color: var(--muted); }
+  footer { margin-top: 3rem; color: var(--muted); font-size: .8rem; border-top: 1px solid var(--line); padding-top: .75rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Data audit</h1>
+<p class="sub mono">{{.Dataset.Root}}</p>
+<p class="sub">
+  {{.Dataset.FileCount}} files · {{.Dataset.TableCount}} tables ·
+  {{.Dataset.ColumnCount}} columns · {{.Dataset.RowCount}} rows ·
+  {{.Run.DurationMS}} ms
+</p>
+
+<div class="tiles">
+  <div class="tile error"><div class="n">{{.FindingSummary.Errors}}</div><div class="k">Errors</div></div>
+  <div class="tile warning"><div class="n">{{.FindingSummary.Warnings}}</div><div class="k">Warnings</div></div>
+  <div class="tile info"><div class="n">{{.FindingSummary.Info}}</div><div class="k">Notes</div></div>
+  {{if .Dataset.UnreadableRows}}
+  <div class="tile error"><div class="n">{{.Dataset.UnreadableRows}}</div><div class="k">Unreadable rows</div></div>
+  {{end}}
+</div>
+
+<h2>Findings</h2>
+{{if not .Findings}}
+  <p>No problems found.</p>
+{{else}}
+  {{range .Findings}}
+  <div class="finding {{.Severity}}">
+    <h4><span class="badge {{.Severity}}">{{.Severity}}</span>{{.Title}}</h4>
+    <div class="where">
+      {{.Source}}{{if .Column}}.{{.Column}}{{end}}
+      &nbsp;·&nbsp; {{.Rule}}
+      {{if eq .Origin "rule"}}&nbsp;·&nbsp; your rule{{end}}
+      {{if eq .Origin "agent"}}&nbsp;·&nbsp; proposed by the model, verified{{end}}
+    </div>
+    {{if .Detail}}<p class="detail">{{.Detail}}</p>{{end}}
+    {{if .Remedy}}<p class="remedy">{{.Remedy}}</p>{{end}}
+    {{if .Query}}
+    <details>
+      <summary>Evidence — check this yourself</summary>
+      <pre>{{.Query}}</pre>
+    </details>
+    {{end}}
+  </div>
+  {{end}}
+{{end}}
+
+<h2>Tables</h2>
+{{range .Tables}}
+<h3>{{.Source}}</h3>
+<p class="sub">
+  {{.RowCount}} rows, {{len .Columns}} columns
+  {{if .Reading}}· {{.Reading.Format}}{{if .Reading.Delimiter}}, delimiter {{.Reading.Delimiter}}{{end}}{{if .Reading.Encoding}}, {{.Reading.Encoding}}{{end}}{{end}}
+  {{if .Rejected}}· <span class="flag">{{.Rejected.Count}} unreadable rows</span>{{end}}
+</p>
+<div class="scroll">
+<table>
+  <thead>
+    <tr>
+      <th>Column</th><th>Type</th><th class="num">Missing</th>
+      <th class="num">Distinct</th><th>Observations</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Columns}}
+    <tr>
+      <td class="mono">{{.Name}}</td>
+      <td>{{.InferredType}}{{if .Nonconforming}} <span class="flag">({{.Nonconforming}} bad)</span>{{end}}</td>
+      <td class="num">{{if .Missing}}{{.Missing}}{{else}}<span class="clean">—</span>{{end}}</td>
+      <td class="num">{{.Distinct}}{{if .Unique}} <span class="clean">uniq</span>{{end}}</td>
+      <td>{{$obs := columnNotes .}}{{if $obs}}<span class="flag">{{$obs}}</span>{{else}}<span class="clean">—</span>{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
+{{if .Skipped}}
+<h2>Files not read</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>File</th><th>Reason</th></tr></thead>
+  <tbody>
+  {{range .Skipped}}<tr><td class="mono">{{.File}}</td><td>{{.Reason}}</td></tr>{{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
+<footer>
+  Generated by Veritix {{.Version}}.
+  {{if .Redacted.Note}}{{.Redacted.Note}}{{end}}
+</footer>
+
+</main>
+</body>
+</html>

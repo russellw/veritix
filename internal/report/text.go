@@ -21,6 +21,8 @@ func WriteText(w io.Writer, res *audit.Result, opts Options) error {
 	fmt.Fprintf(w, "Dataset: %s\n", doc.Dataset.Root)
 	fmt.Fprintf(w, "  %s\n\n", res.Summarise())
 
+	writeFindingsText(w, doc)
+
 	if len(doc.Skipped) > 0 {
 		fmt.Fprintf(w, "Files not read (%d)\n", len(doc.Skipped))
 		for _, s := range doc.Skipped {

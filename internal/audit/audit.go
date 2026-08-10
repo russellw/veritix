@@ -13,10 +13,13 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/russellwallace/veritix/internal/checks"
 	"github.com/russellwallace/veritix/internal/config"
 	"github.com/russellwallace/veritix/internal/engine"
+	"github.com/russellwallace/veritix/internal/finding"
 	"github.com/russellwallace/veritix/internal/ingest"
 	"github.com/russellwallace/veritix/internal/profile"
+	"github.com/russellwallace/veritix/internal/rules"
 	"github.com/russellwallace/veritix/internal/source"
 )
 
@@ -32,6 +35,9 @@ type Options struct {
 	// instead of memory, so a later run can query it without re-reading the
 	// source files.
 	DatabasePath string
+	// Rules are the customer's own expectations, applied after the built-in
+	// checks.
+	Rules *rules.File
 }
 
 // Result is everything a run produced.
@@ -42,6 +48,8 @@ type Result struct {
 	Loaded *ingest.Result
 	// Profile is what the data actually contains.
 	Profile *profile.Dataset
+	// Findings are the problems found, most severe first.
+	Findings *finding.Set
 	// StartedAt and Duration describe the run itself.
 	StartedAt time.Time
 	Duration  time.Duration
@@ -102,6 +110,35 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 		return nil, err
 	}
 	res.Profile = prof
+
+	found, err := checks.Run(ctx, e, prof, log)
+	if err != nil {
+		_ = e.Close()
+		return nil, err
+	}
+
+	ruleFindings, err := rules.Evaluate(ctx, e, prof, opts.Rules, log)
+	if err != nil {
+		_ = e.Close()
+		return nil, err
+	}
+	found.AddAll(ruleFindings)
+
+	// Re-run every finding's evidence before reporting it. For the built-in
+	// checks this is close to a tautology; it exists because the same set will
+	// later carry agent-proposed findings, and the rule that a finding must
+	// reproduce has to apply to all of them equally rather than being switched
+	// on for the ones we already distrust.
+	dropped, err := found.Verify(ctx, e)
+	if err != nil {
+		_ = e.Close()
+		return nil, err
+	}
+	for _, d := range dropped {
+		log.Warn("dropped a finding that did not reproduce",
+			"rule", d.Rule, "location", d.Location.String())
+	}
+	res.Findings = found
 
 	res.Duration = time.Since(started)
 	log.Info("audit complete", "duration", res.Duration.Round(time.Millisecond))

@@ -70,6 +70,51 @@ func nonBlank(col string) string {
 	return fmt.Sprintf("(%s IS NOT NULL AND trim(%s) <> '')", col, col)
 }
 
+// The exported wrappers below let the checks package build evidence queries
+// from the same expressions the profiler measured with. Two definitions of
+// "is this a valid date" would eventually disagree, and then a finding's
+// evidence would contradict the profile it came from.
+
+// SQLNonBlank is the predicate for a value that carries content.
+func SQLNonBlank(quotedCol string) string { return nonBlank(quotedCol) }
+
+// SQLTextSentinelList renders the textual placeholder values as a SQL list.
+func SQLTextSentinelList() string { return quotedTextSentinels() }
+
+// SQLIsSentinel is the predicate for a recognised "missing" placeholder.
+func SQLIsSentinel(quotedCol string) string {
+	return fmt.Sprintf("lower(trim(%s)) IN (%s)", quotedCol, quotedTextSentinels())
+}
+
+// SQLMatchesKind is the predicate for a value conforming to a type. It returns
+// an empty string for kinds that have no meaningful test.
+func SQLMatchesKind(kind Kind, quotedCol string) string {
+	switch kind {
+	case KindInteger:
+		return integerExpr(quotedCol)
+	case KindDecimal:
+		return fmt.Sprintf("TRY_CAST(%s AS DOUBLE) IS NOT NULL", quotedCol)
+	case KindBoolean:
+		return fmt.Sprintf("TRY_CAST(%s AS BOOLEAN) IS NOT NULL", quotedCol)
+	case KindDate:
+		return anyDateExpr(quotedCol)
+	case KindTimestamp:
+		return fmt.Sprintf("TRY_CAST(%s AS TIMESTAMP) IS NOT NULL", quotedCol)
+	default:
+		return ""
+	}
+}
+
+// SQLAmbiguousDate is the predicate for a value that reads as a valid but
+// different date under day-first and month-first conventions.
+func SQLAmbiguousDate(quotedCol string) string {
+	return fmt.Sprintf(
+		`try_strptime(trim(%[1]s), '%%d/%%m/%%Y') IS NOT NULL `+
+			`AND try_strptime(trim(%[1]s), '%%m/%%d/%%Y') IS NOT NULL `+
+			`AND try_strptime(trim(%[1]s), '%%d/%%m/%%Y') <> try_strptime(trim(%[1]s), '%%m/%%d/%%Y')`,
+		quotedCol)
+}
+
 // integerExpr tests whether a value is written as a whole number.
 //
 // A cast is not good enough here: DuckDB accepts TRY_CAST('89.99' AS BIGINT)

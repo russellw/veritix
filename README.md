@@ -16,7 +16,7 @@ Early development. See `.claude/plans/` for the build plan; the milestones are:
 |---|---|
 | M0 | Skeleton, CLI, config, CI — **done** |
 | M1 | Ingest and profile CSV/Excel into DuckDB — **done** |
-| M2 | Deterministic checks, relationships, rules, reports |
+| M2 | Deterministic checks, relationships, rules, reports — **done** |
 | M3 | HTTP server and React web interface |
 | M4 | Agentic LLM auditor with a strict data-egress guard |
 | M5 | MCP server and client |
@@ -39,6 +39,12 @@ records carries the query that produced it, and that query is re-run
 deterministically when the report is built. A finding either reproduces or it
 is dropped.
 
+**Findings carry their evidence.** Every finding names the query that produced
+it, and that query is re-run before the finding is reported. Nothing reaches a
+report that the engine will not reproduce on demand — which is what will let
+model-proposed findings sit in the same list as deterministic ones without
+being taken on trust.
+
 **Your data does not leave the process.** With a cloud model provider, the
 agent sees schemas, aggregates, distributions, and pattern signatures — never
 cell values. Sending samples requires an explicit opt-in, and even then they
@@ -60,8 +66,12 @@ make lint       # go vet plus golangci-lint if present
 
 ```sh
 # Audit a dataset from the shell or CI
+veritix audit ./data
 veritix audit ./data --format json
-veritix audit ./data --fail-on error
+veritix audit ./data --format html -o report.html
+veritix audit ./data --format sarif -o veritix.sarif   # for code scanning
+veritix audit ./data --rules my-expectations.yaml
+veritix audit ./data --fail-on error                   # non-zero exit for CI
 
 # Run the server and web interface (loopback by default)
 veritix serve

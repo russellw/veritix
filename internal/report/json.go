@@ -33,10 +33,15 @@ type Options struct {
 
 // Document is the root of the JSON report.
 type Document struct {
-	Schema   string       `json:"schema"`
-	Version  string       `json:"veritix_version,omitempty"`
-	Run      RunInfo      `json:"run"`
-	Dataset  DatasetInfo  `json:"dataset"`
+	Schema  string      `json:"schema"`
+	Version string      `json:"veritix_version,omitempty"`
+	Run     RunInfo     `json:"run"`
+	Dataset DatasetInfo `json:"dataset"`
+
+	// Findings lead the document: they are the reason to read it.
+	FindingSummary FindingSummary `json:"finding_summary"`
+	Findings       []FindingInfo  `json:"findings"`
+
 	Tables   []TableInfo  `json:"tables"`
 	Skipped  []SkipInfo   `json:"skipped_files,omitempty"`
 	Warnings []NoteInfo   `json:"warnings,omitempty"`
@@ -238,6 +243,8 @@ func Build(res *audit.Result, version string, opts Options) *Document {
 		},
 		Redacted: RedactedInfo{ValuesIncluded: opts.IncludeValues},
 	}
+
+	doc.Findings, doc.FindingSummary = buildFindings(res)
 	if !opts.IncludeValues {
 		doc.Redacted.Note = "Verbatim cell values are omitted. Counts, distributions, " +
 			"and value shapes are complete. Re-run with values included to see examples."

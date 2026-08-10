@@ -1,0 +1,66 @@
+# Example Veritix rules.
+#
+# The built-in checks find defects that are wrong in any dataset. Rules say
+# what is wrong in *this* one — the expectations only the business knows.
+#
+#   veritix audit testdata/dirty-retail --rules testdata/dirty-retail/veritix-rules.yaml
+
+version: 1
+
+rules:
+  - id: order_amount_positive
+    description: An order line is a charge, so its amount is always above zero.
+    table: orders.csv
+    column: amount
+    expect: positive
+    allow_missing: true
+    remedy: Record refunds as a distinct transaction type rather than a negative charge.
+
+  - id: customer_status_domain
+    description: Status drives billing, so only these four values are recognised.
+    table: customers.csv
+    column: status
+    expect: one_of
+    values: [Active, Inactive, Suspended, Closed]
+    ignore_case: true
+    allow_missing: true
+
+  - id: customer_id_format
+    description: Customer identifiers are issued as CUS- followed by six digits.
+    table: "*.csv"
+    column: customer_id
+    expect: matches
+    pattern: 'CUS-[0-9]{6}'
+    allow_missing: true
+
+  - id: signup_not_in_future
+    description: A signup is an event that has already happened.
+    table: customers.csv
+    column: signup_date
+    expect: not_future
+    severity: warning
+
+  - id: orders_reference_customers
+    description: Every order belongs to a customer we hold a record for.
+    table: orders.csv
+    column: customer_id
+    expect: references
+    references: customers_csv.customer_id
+    ignore_case: true
+
+  - id: no_implausible_order_value
+    description: >-
+      An order above one million is either a units error or needs sign-off;
+      either way it should not appear in an export unreviewed.
+    table: orders.csv
+    expect: sql
+    where: "TRY_CAST(amount AS DOUBLE) > 1000000"
+    severity: warning
+
+  # Deliberately targets a column that does not exist, to show that a rule
+  # which never runs is reported rather than passing quietly.
+  - id: legacy_account_code
+    description: Retained from the old export format.
+    table: customers.csv
+    column: account_code
+    expect: not_null
