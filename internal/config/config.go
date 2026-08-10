@@ -46,6 +46,10 @@ type Server struct {
 	AuthToken string `yaml:"auth_token"`
 	// DataDir holds the run store, uploaded datasets, and cached reports.
 	DataDir string `yaml:"data_dir"`
+	// MaxUploadBytes caps one dataset upload. Uploading is how a business
+	// user supplies data, so this has to be generous enough for a real export
+	// and small enough that one request cannot fill the disk.
+	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
 
 	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`
 	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"`
@@ -110,6 +114,7 @@ func Default() Config {
 		Server: Server{
 			Addr:              "127.0.0.1:8080",
 			DataDir:           defaultDataDir(),
+			MaxUploadBytes:    2 << 30, // 2 GiB
 			ReadHeaderTimeout: 10 * time.Second,
 			ShutdownTimeout:   15 * time.Second,
 		},
@@ -189,6 +194,7 @@ func applyEnv(cfg *Config) {
 	str(&cfg.Server.Addr, "ADDR")
 	str(&cfg.Server.AuthToken, "AUTH_TOKEN")
 	str(&cfg.Server.DataDir, "DATA_DIR")
+	num64(&cfg.Server.MaxUploadBytes, "MAX_UPLOAD_BYTES")
 
 	str(&cfg.Engine.MemoryLimit, "ENGINE_MEMORY_LIMIT")
 	num(&cfg.Engine.Threads, "ENGINE_THREADS")
@@ -231,6 +237,14 @@ func num(dst *int, key string) {
 	}
 }
 
+func num64(dst *int64, key string) {
+	if v, ok := os.LookupEnv(EnvPrefix + key); ok {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			*dst = n
+		}
+	}
+}
+
 func boolean(dst *bool, key string) {
 	if v, ok := os.LookupEnv(EnvPrefix + key); ok {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -263,6 +277,9 @@ func (c Config) Validate() error {
 	case ProviderNone, ProviderAnthropic, ProviderOpenAICompatible:
 	default:
 		return fmt.Errorf("llm.provider: want one of none|anthropic|openai-compatible, got %q", c.LLM.Provider)
+	}
+	if c.Server.MaxUploadBytes < 1 {
+		return fmt.Errorf("server.max_upload_bytes: want a positive size, got %d", c.Server.MaxUploadBytes)
 	}
 	if c.Engine.MaxResultRows < 1 {
 		return fmt.Errorf("engine.max_result_rows: want a positive count, got %d", c.Engine.MaxResultRows)

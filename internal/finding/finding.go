@@ -11,6 +11,8 @@ package finding
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -171,6 +173,19 @@ func (f Finding) key() string {
 	return strings.Join([]string{
 		f.Rule, f.Location.Table, f.Location.Column, fmt.Sprint(f.Location.Line),
 	}, "\x00")
+}
+
+// ID is a stable, URL-safe handle for a finding.
+//
+// It is a digest of the same key that de-duplicates findings, so it depends on
+// what the finding is about and not on where it landed in a list. That matters
+// because the API addresses findings by id — `/findings/{id}/rows` — and a
+// positional id would point at a different problem after a re-run that found
+// one more error. It is a digest rather than the key itself because the key
+// contains customer column names, and an id ends up in URLs and access logs.
+func (f Finding) ID() string {
+	sum := sha256.Sum256([]byte(f.key()))
+	return hex.EncodeToString(sum[:8])
 }
 
 // Set accumulates findings and keeps them ordered and unique.

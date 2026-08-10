@@ -19,18 +19,27 @@ development, scripting, and CI.
 
 ## Current state
 
-Branch `build/audit-engine`, three commits on top of `Initial commit`. Not
-merged to `main`. M0, M1, and M2 are done; M3 is next.
+Branch `build/audit-engine`, on top of `Initial commit`. Not merged to `main`.
+M0 through M2 are done, and M3's server half is done; the web interface is what
+remains of M3.
 
 | | | |
 |---|---|---|
 | M0 | Skeleton, CLI, config, CI | done |
 | M1 | Ingest and profile CSV/Excel into DuckDB | done |
 | M2 | Checks, relationships, rules, reports | done |
-| M3 | HTTP server and React web interface | **next** |
+| M3a | HTTP API, SSE, SQLite run store, `veritix serve` | done |
+| M3b | React web interface | **next** |
 | M4 | Agentic LLM auditor with the egress guard | |
 | M5 | MCP server and client | |
 | M6 | Hardening, evals, deployment | |
+
+**M3b needs a Node toolchain that is not installed on this machine** — no
+`node`, `npm`, `pnpm`, `yarn` or `bun`, no `web` target in the `Makefile`, and
+no Node step in `.github/workflows/ci.yml`. The product stays a single binary
+with no Node at *runtime*, but Vite has to run at build time. Install it before
+starting the SPA, and add both the Makefile target and the CI step in the same
+change.
 
 Working today:
 
@@ -41,6 +50,22 @@ make build test lint
 ./bin/veritix audit testdata/dirty-retail --format html -o /tmp/report.html
 ./bin/veritix audit testdata/dirty-retail --format sarif
 ./bin/veritix audit testdata/dirty-retail --fail-on error   # exits 1
+
+./bin/veritix serve                          # loopback, no token
+./bin/veritix serve --addr 0.0.0.0:8080 --auth-token "$(openssl rand -hex 16)"
+```
+
+Driving the API by hand:
+
+```sh
+curl -s localhost:8080/api/v1/health
+DS=$(curl -s -XPOST localhost:8080/api/v1/datasets -H 'Content-Type: application/json' \
+      -d "{\"path\":\"$PWD/testdata/dirty-retail\"}" | jq -r .id)
+ID=$(curl -s -XPOST localhost:8080/api/v1/runs -H 'Content-Type: application/json' \
+      -d "{\"dataset_id\":\"$DS\"}" | jq -r .id)
+curl -sN localhost:8080/api/v1/runs/$ID/events            # progress, then done
+curl -s  localhost:8080/api/v1/runs/$ID/report | jq .finding_summary
+curl -s  localhost:8080/api/v1/runs/$ID/findings/<fid>/rows   # the gated one
 ```
 
 ## Four ideas the design rests on
@@ -68,15 +93,23 @@ than merely plausible.
 `--include-values` is passed, and say so in the output. Columns are described
 by derived *shapes* instead — `CUS-000001` becomes `XXX-999999`, precise enough
 to reason about and useless for exfiltration. `TestDefaultReportContainsNoRawValues`
-asserts this across all four formats. M4's egress guard extends the same idea
-to the model.
+asserts this across all four formats, and `TestReportOmitsRawValuesByDefault`
+asserts it again over HTTP. M4's egress guard extends the same idea to the
+model.
+
+There is exactly one exception, and it is deliberate:
+`GET /runs/{id}/findings/{fid}/rows` returns the offending rows themselves,
+because showing somebody the three bad rows is the most useful thing the UI can
+do. It has to be asked for one finding at a time, it never appears in a list
+response, and its results are not logged. **Do not add a second way to get at
+raw values.**
 
 ## Package map
 
 ```
 cmd/veritix            main
 internal/
-  cli/                 cobra commands: audit, serve (stub), version
+  cli/                 cobra commands: audit, serve, version
   config/              defaults → YAML file → VERITIX_* env → flags
   telemetry/           slog setup (stderr; stdout stays clean for reports)
   engine/              DuckDB wrapper: limits, timeouts, SQL quoting, ResultSet
@@ -88,13 +121,42 @@ internal/
   finding/             the finding model, severity, evidence, Set.Verify
   report/              text, JSON, SARIF, self-contained HTML
   audit/               the orchestrator every entry point drives
+  store/               SQLite: datasets, runs, findings — the audit trail
+  api/                 REST + SSE over audit.Run; openapi.yaml is the contract
 testdata/dirty-retail/ fixtures with a known defect manifest
 ```
 
 `audit.Run` is the single pipeline: discover → engine → ingest → profile →
-checks → rules → verify. The CLI, and later the HTTP API and MCP server, all
-call it. Three entry points assembling the pipeline slightly differently is how
-a tool ends up reporting different results depending on how it was invoked.
+checks → rules → verify. The CLI and the HTTP API both call it, and the MCP
+server will. Three entry points assembling the pipeline slightly differently is
+how a tool ends up reporting different results depending on how it was invoked.
+
+## How the server is put together
+
+- **The API serves the same `report.Document` the JSON report writes.** It is
+  built once when the run finishes, stored as an opaque blob, and handed back
+  verbatim; `report.RenderHTML` renders the download from that same document.
+  The web UI and the JSON report cannot disagree because there is only one.
+- **Two databases, on purpose.** DuckDB holds dataset content: large,
+  disposable, re-creatable from the customer's files. SQLite holds the record
+  of what was done: small, long-lived, the thing somebody wants six months
+  later. `internal/store` knows nothing about the report's shape, so changing
+  the report schema is not a migration.
+- **A run outlives the request that started it.** `POST /runs` returns an id;
+  the run executes on a background context and progress arrives over SSE. A
+  closed browser tab must not abandon an audit. Cancellation is explicit.
+- **Progress events are the pipeline's own log lines.** `internal/api`'s
+  `progressHandler` wraps the `slog.Handler` handed to `audit.Run`, so a stage
+  that is logged is a stage the browser sees. A second notification mechanism
+  would drift from the first within a milestone.
+- **Each run keeps its DuckDB file** at `<DataDir>/runs/<id>/dataset.duckdb`,
+  so the rows endpoint can reopen it read-only afterwards. It is deleted when
+  its dataset is. The engine is closed *before* the run is recorded as
+  finished, because the file has to be flushed before anything reopens it.
+- **`finding.Finding.ID()`** is a digest of the same key that de-duplicates
+  findings, so it names a problem rather than a position: the id in a URL still
+  points at the same finding after a re-run that turns up one more error.
+  `TestFindingIDsAreStableAcrossRuns` pins this.
 
 ## Conventions
 
@@ -161,6 +223,25 @@ positives, both commented in place:
   disqualified `customers.customer_id` and hid both the duplicate and the
   orphaned reference pointing at it.
 
+**Server**
+- `http.Server.Shutdown` waits for connections to go idle and does *not* cancel
+  request contexts. An SSE stream is idle-never, so it would hold a graceful
+  shutdown open for the whole timeout. `api.Server.Close` is therefore called
+  **before** `Shutdown`: it closes a `stopping` channel the event handlers
+  select on, and only then does the drain finish quickly.
+- A run recorded as `running` that survives a restart belongs to a process that
+  is gone. `store.MarkInterrupted` closes those out at startup, or the history
+  lies and an events stream waits forever on nothing.
+- `golangci-lint`'s `gosec` taint analysis (G703/G304) flags every
+  filesystem call reachable from a request. Each one in `internal/api` carries
+  a `//nolint:gosec` naming the guard that makes it safe — sanitised name plus
+  generated id, base-name-only, or a `DataDir` prefix check. Do not add a bare
+  nolint; if there is no guard to name, there is a bug.
+- Repo-wide lint has **16 pre-existing findings on `HEAD`** (errcheck in
+  `report`, revive on some exported consts, and so on) from linter versions
+  drifting since M2. CI pins `version: latest`, so it will report them too.
+  They are not new; check a baseline before assuming a change introduced one.
+
 ## Testing
 
 `testdata/dirty-retail/` carries deliberately broken files. The defect
@@ -173,12 +254,24 @@ useless. Add to both lists when adding a check.
 cells, `#REF!`/`#DIV/0!`, a stacked TOTAL table, a hidden sheet). It was
 generated by a throwaway program; regenerate by hand if it ever needs changing.
 
-Run `go test -race ./...` before committing — `profile` and `ingest` both fan
-out across goroutines.
+`internal/api`'s tests drive the real pipeline over a real `httptest` server
+against those same fixtures, rather than stubbing `audit.Run`. The API's whole
+job is to expose that pipeline faithfully, and a fake would only test the fake.
+
+Run `go test -race ./...` before committing — `profile` and `ingest` fan out
+across goroutines, and `api` now runs audits on background goroutines while
+serving.
 
 ## Notes on working here
 
 - Commit only when asked. Work happens on a branch, not `main`.
 - The DuckDB driver needs CGO; prebuilt static libraries ship with the module,
   so plain `go build` works and the binary is ~61 MB with nothing to install.
+  The SQLite driver is `modernc.org/sqlite`, pure Go on purpose: a second C
+  library in the build is a second way to break the one CGO dependency that
+  actually matters.
+- `golangci-lint` is not in the `Makefile`'s dependency set. Install it with
+  `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`;
+  `make lint` falls back to `go vet` alone without it, which will not catch
+  what CI catches.
 - Module path is `github.com/russellwallace/veritix`. Licence AGPL-3.0.

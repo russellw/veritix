@@ -23,7 +23,17 @@ var htmlTemplate = template.Must(
 
 // WriteHTML renders a run as a single self-contained page.
 func WriteHTML(w io.Writer, res *audit.Result, version string, opts Options) error {
-	doc := Build(res, version, opts)
+	return RenderHTML(w, Build(res, version, opts))
+}
+
+// RenderHTML renders an already-built document.
+//
+// The server needs this: it stores the document when a run finishes and
+// releases the engine, so by the time somebody downloads the page there is no
+// audit.Result left to render from. Redaction is already settled in the
+// document, which is what keeps the downloaded page and the API's JSON telling
+// the same story.
+func RenderHTML(w io.Writer, doc *Document) error {
 	if err := htmlTemplate.Execute(w, doc); err != nil {
 		return fmt.Errorf("report: rendering HTML: %w", err)
 	}

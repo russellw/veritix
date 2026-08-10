@@ -11,6 +11,10 @@ import (
 
 // FindingInfo is one finding in the JSON report.
 type FindingInfo struct {
+	// ID addresses this finding in the API. It is derived from what the
+	// finding is about, so it survives a re-run that finds more or fewer
+	// problems alongside it.
+	ID       string `json:"id"`
 	Rule     string `json:"rule"`
 	Severity string `json:"severity"`
 	Origin   string `json:"origin"`
@@ -56,6 +60,7 @@ func buildFindings(res *audit.Result) ([]FindingInfo, FindingSummary) {
 
 	for _, f := range all {
 		out = append(out, FindingInfo{
+			ID:       f.ID(),
 			Rule:     f.Rule,
 			Severity: f.Severity.String(),
 			Origin:   string(f.Origin),

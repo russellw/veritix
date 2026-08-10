@@ -1,0 +1,537 @@
+openapi: 3.1.0
+
+info:
+  title: Veritix
+  version: "1"
+  summary: Audit datasets for integrity problems.
+  description: |
+    Veritix runs entirely on your own machine or your own cloud. Dataset
+    contents never leave the process except where this API says they do, and
+    the one place that serves raw customer data — a finding's offending rows —
+    has to be asked for by name, one finding at a time.
+
+    Bind address defaults to loopback. Exposing an instance to a network
+    requires an auth token; the server refuses to start otherwise.
+  license:
+    name: AGPL-3.0-or-later
+    identifier: AGPL-3.0-or-later
+
+servers:
+  - url: /api/v1
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: datasets
+    description: The folders and workbooks Veritix has been pointed at.
+  - name: runs
+    description: Audits, their progress, and their reports.
+
+paths:
+  /health:
+    get:
+      tags: [runs]
+      summary: Liveness check.
+      description: The only unauthenticated endpoint, so that a load balancer or
+        a container probe does not need a credential.
+      security: []
+      operationId: getHealth
+      responses:
+        "200":
+          description: The server is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, version]
+                properties:
+                  status: { type: string, const: ok }
+                  version: { type: string, examples: ["v0.2.0"] }
+
+  /openapi.yaml:
+    get:
+      summary: This document.
+      security: []
+      operationId: getOpenAPI
+      responses:
+        "200":
+          description: The API contract.
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /datasets:
+    get:
+      tags: [datasets]
+      summary: List registered datasets.
+      operationId: listDatasets
+      responses:
+        "200":
+          description: Datasets, most recently registered first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [datasets]
+                properties:
+                  datasets:
+                    type: array
+                    items: { $ref: "#/components/schemas/Dataset" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+    post:
+      tags: [datasets]
+      summary: Register a dataset, by server path or by upload.
+      description: |
+        A directory is one dataset, not one dataset per file: cross-file keys
+        and joins are checked, so the folder is the unit.
+
+        Registering a path is for an operator who already has the data on the
+        server. Uploading is how a business user supplies it from a Windows
+        desktop; uploaded files are written under the server's data directory
+        and never to a path the request controls.
+      operationId: createDataset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: A file or directory on the server's filesystem.
+                  examples: ["/srv/exports/retail-2026-08"]
+                name:
+                  type: string
+                  description: Defaults to the base name of the path.
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                name: { type: string }
+                files:
+                  type: array
+                  description: The files making up one dataset. Names are taken
+                    as base names; directory components are rejected.
+                  items: { type: string, format: binary }
+      responses:
+        "201":
+          description: Registered. Registering a path that is already known
+            returns the dataset that already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dataset" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413":
+          description: The upload exceeded the configured size limit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /datasets/{datasetId}:
+    parameters:
+      - $ref: "#/components/parameters/DatasetID"
+    get:
+      tags: [datasets]
+      summary: Fetch one dataset.
+      operationId: getDataset
+      responses:
+        "200":
+          description: The dataset.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dataset" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [datasets]
+      summary: Forget a dataset and its run history.
+      description: Files the server uploaded are deleted with it. A path an
+        operator registered in place is left alone — those bytes are theirs.
+      operationId: deleteDataset
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /runs:
+    get:
+      tags: [runs]
+      summary: List run history, most recent first.
+      operationId: listRuns
+      parameters:
+        - name: dataset_id
+          in: query
+          schema: { type: string }
+          description: Restrict to one dataset.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+      responses:
+        "200":
+          description: Runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs]
+                properties:
+                  runs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Run" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+    post:
+      tags: [runs]
+      summary: Start an audit.
+      description: Returns as soon as the run is accepted. An audit takes
+        seconds to minutes, so progress arrives over the events stream rather
+        than by holding the request open.
+      operationId: createRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dataset_id]
+              properties:
+                dataset_id: { type: string }
+                include_values:
+                  type: boolean
+                  default: false
+                  description: Permit verbatim cell values in this run's report.
+                    Off by default; a report is a file that gets emailed.
+                top_values:
+                  type: integer
+                  default: 10
+                  minimum: 0
+                  maximum: 100
+                  description: How many frequent values to record per column.
+                rules:
+                  type: string
+                  description: Path on the server to a YAML file of your own
+                    expectations, applied after the built-in checks.
+      responses:
+        "202":
+          description: Accepted, and queued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /runs/{runId}:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: Fetch a run's status and finding counts.
+      operationId: getRun
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /runs/{runId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+    post:
+      tags: [runs]
+      summary: Stop a run in progress.
+      operationId: cancelRun
+      responses:
+        "202":
+          description: Cancellation requested.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The run has already finished.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /runs/{runId}/report:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: The full audit report.
+      description: The same document the `veritix audit --format json` report
+        renders, so the web interface and the JSON report cannot disagree.
+        Available once the run has succeeded.
+      operationId: getRunReport
+      responses:
+        "200":
+          description: The report document.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Report" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No such run, or the run has not produced a report.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /runs/{runId}/report.html:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: The report as a self-contained HTML page, for download.
+      operationId: getRunReportHTML
+      responses:
+        "200":
+          description: One HTML file with no external references.
+          content:
+            text/html:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /runs/{runId}/events:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: Server-sent events for a run's progress.
+      description: |
+        Emits a `progress` event for each stage the pipeline reaches, then one
+        terminal `done` event carrying the finished run, and closes. A client
+        that connects after the run has finished receives the `done` event
+        immediately, so there is no race between starting a run and subscribing
+        to it.
+
+        M4's model traces will stream over this same channel.
+      operationId: getRunEvents
+      responses:
+        "200":
+          description: An event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /runs/{runId}/findings/{findingId}/rows:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+      - name: findingId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: limit
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+    get:
+      tags: [runs]
+      summary: The rows a finding is about.
+      description: |
+        **This endpoint serves raw customer data.** It exists because showing
+        somebody the three bad rows is the most useful thing an auditing tool
+        can do, and it is the only endpoint that does. It must be requested per
+        finding, it never appears inside a list response, and the rows are not
+        logged. This is the same boundary the report's `--include-values`
+        guards.
+
+        A finding id is stable across runs of the same dataset, so it is scoped
+        by run rather than global: the same problem found twice is the same id
+        in two runs.
+      operationId: getFindingRows
+      responses:
+        "200":
+          description: The offending rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [finding_id, columns, rows, truncated]
+                properties:
+                  finding_id: { type: string }
+                  title: { type: string }
+                  columns:
+                    type: array
+                    items: { type: string }
+                  rows:
+                    type: array
+                    description: One array of cell values per row, in column order.
+                    items:
+                      type: array
+                      items: { type: [string, "null"] }
+                  truncated:
+                    type: boolean
+                    description: True when more rows matched than the limit returned.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: This finding has no row query. Structural observations
+            made while reading a file have no SQL behind them.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Required only when the server was started with an auth
+        token. A token is mandatory for any non-loopback bind.
+
+  parameters:
+    DatasetID:
+      name: datasetId
+      in: path
+      required: true
+      schema: { type: string }
+    RunID:
+      name: runId
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: The request was malformed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or wrong bearer token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such resource.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: What went wrong, in words meant for a person.
+
+    Dataset:
+      type: object
+      required: [id, name, path, uploaded, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        path:
+          type: string
+          description: Where the data sits on the server.
+        uploaded:
+          type: boolean
+          description: True when the server holds the bytes itself.
+        created_at: { type: string, format: date-time }
+
+    Run:
+      type: object
+      required: [id, dataset_id, status, created_at, findings]
+      properties:
+        id: { type: string }
+        dataset_id: { type: string }
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, cancelled]
+          description: succeeded means the audit completed. It says nothing
+            about whether the data was clean.
+        message:
+          type: string
+          description: Why the run stopped, when it failed.
+        version: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+        findings:
+          type: object
+          required: [total, errors, warnings, info]
+          properties:
+            total: { type: integer }
+            errors: { type: integer }
+            warnings: { type: integer }
+            info: { type: integer }
+
+    Report:
+      type: object
+      description: |
+        The audit report. Its shape is versioned by its own `schema` field
+        rather than by this document, because the same structure is what
+        `veritix audit --format json` writes to a file. Findings lead it: they
+        are the reason to read it.
+      required: [schema, run, dataset, finding_summary, redaction]
+      properties:
+        schema: { type: string, examples: ["veritix.audit/v1"] }
+        veritix_version: { type: string }
+        run: { type: object }
+        dataset: { type: object }
+        finding_summary: { type: object }
+        findings:
+          type: array
+          items: { $ref: "#/components/schemas/Finding" }
+        tables: { type: array, items: { type: object } }
+        skipped_files: { type: array, items: { type: object } }
+        redaction:
+          type: object
+          description: What was withheld, so a reader can tell "nothing notable
+            here" apart from "values were not included".
+          properties:
+            values_included: { type: boolean }
+            note: { type: string }
+
+    Finding:
+      type: object
+      required: [id, rule, severity, origin, title, verified]
+      properties:
+        id:
+          type: string
+          description: Stable across runs. Use it to request the finding's rows.
+        rule: { type: string, examples: ["column.mixed_date_formats"] }
+        severity: { type: string, enum: [info, warning, error] }
+        origin:
+          type: string
+          enum: [check, rule, agent]
+          description: What produced it, so a reader can weigh it.
+        title: { type: string }
+        detail:
+          type: string
+          description: Why it matters downstream, not what the check looked at.
+        remedy: { type: string }
+        table: { type: string }
+        source: { type: string }
+        column: { type: string }
+        file: { type: string }
+        line: { type: integer }
+        affected_count: { type: integer }
+        total: { type: integer }
+        affected_share: { type: number }
+        expected: { type: string }
+        observed: { type: string }
+        evidence_query:
+          type: string
+          description: The statement that reproduces the finding, included so a
+            reader can check the claim rather than take it on trust.
+        verified:
+          type: boolean
+          description: The evidence was re-run and the number reproduced. A
+            finding that does not reproduce is dropped rather than reported.
