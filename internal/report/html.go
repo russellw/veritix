@@ -40,7 +40,7 @@ func RenderHTML(w io.Writer, doc *Document) error {
 	return nil
 }
 
-// columnNotes summarises a column's irregularities for the table view. It
+// columnNotes summarizes a column's irregularities for the table view. It
 // reuses the terminal report's flags so the two never drift apart.
 func columnNotes(c ColumnInfo) string {
 	flags := columnFlags(c)

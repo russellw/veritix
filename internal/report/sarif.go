@@ -85,7 +85,7 @@ type sarifRegion struct {
 func WriteSARIF(w io.Writer, res *audit.Result, version string, opts Options) error {
 	doc := Build(res, version, opts)
 
-	// SARIF separates the rule catalogue from the results, so collect the
+	// SARIF separates the rule catalog from the results, so collect the
 	// distinct rules first.
 	seen := make(map[string]sarifRule)
 	for _, f := range doc.Findings {

@@ -97,10 +97,10 @@ veritix serve --addr 0.0.0.0:8080 --auth-token "$TOKEN"
 Configuration comes from `./veritix.yaml`, then `VERITIX_*` environment
 variables, then flags. See `internal/config/config.go` for every field.
 
-## Licence
+## License
 
 Veritix is dual licensed: **AGPL-3.0-or-later** (the full text is in
-`LICENSE`), or a **commercial licence** for anyone who needs terms the AGPL
+`LICENSE`), or a **commercial license** for anyone who needs terms the AGPL
 cannot give — shipping it inside a product of their own, running a modified
 copy as a service without publishing the modifications, or getting a warranty
 and a support commitment on paper.

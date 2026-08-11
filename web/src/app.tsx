@@ -86,8 +86,8 @@ users the source of the version they are using. The URL comes from the server
 (`server.source_url`, reported by /health) rather than being baked into this
 bundle, so an operator running a modified build points it at their own
 repository without needing Node to rebuild the interface. An operator who sets
-it empty gets no link, which is the right behaviour for a build shipped under
-the commercial licence instead.
+it empty gets no link, which is the right behavior for a build shipped under
+the commercial license instead.
 
 The link leaves the origin. That is not a hole in `connect-src 'self'`: it is a
 navigation the user asks for, carrying no data, not a fetch this page makes.
@@ -137,7 +137,7 @@ function Route({
 
 function Welcome() {
   return (
-    <div className="centre">
+    <div className="center">
       <h1>Audit a dataset</h1>
       <p className="sub">
         Drop a folder of exports into the panel on the left. Veritix reads the
@@ -154,7 +154,7 @@ function Welcome() {
 
 function NotFound({ path }: { path: string }) {
   return (
-    <div className="centre">
+    <div className="center">
       <h1>Nothing here</h1>
       <p className="sub mono">{path}</p>
       <p>
@@ -181,13 +181,13 @@ function TokenGate({ onAccepted }: { onAccepted: () => void }) {
   }
 
   return (
-    <form className="centre" onSubmit={submit}>
+    <form className="center" onSubmit={submit}>
       <h1>Token needed</h1>
       <p className="sub">
         This Veritix server was started with an access token. It is the token
         passed to <code>--auth-token</code>.
       </p>
-      <p className="row centred gap-l">
+      <p className="row centered gap-l">
         <input
           type="password"
           value={token}

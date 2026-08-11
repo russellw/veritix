@@ -88,11 +88,11 @@ func hasShapedColumn(aggregate []bool) bool {
 // query parses, runs, and caps one model-authored statement.
 //
 // The parse is what makes the statement safe to run at all, and it happens
-// before execution rather than after: AnalyseSelect refuses anything that is
+// before execution rather than after: AnalyzeSelect refuses anything that is
 // not a single SELECT, and the engine's Lockdown has already taken away its
 // access to the filesystem.
 func (w *World) query(ctx context.Context, q string) (*engine.ResultSet, *engine.Analysis, error) {
-	analysis, err := w.Engine.AnalyseSelect(ctx, q)
+	analysis, err := w.Engine.AnalyzeSelect(ctx, q)
 	if err != nil {
 		return nil, nil, fmt.Errorf("that statement was refused: %v", w.Guard.EngineError(err))
 	}
@@ -392,7 +392,7 @@ func sampleValues() *Tool {
 	}
 }
 
-// asInt normalises the integer types DuckDB returns for counts, which vary by
+// asInt normalizes the integer types DuckDB returns for counts, which vary by
 // expression: count() gives int64 and some aggregates give uint64.
 func asInt(v any) int64 {
 	switch n := v.(type) {

@@ -16,7 +16,7 @@ import (
 // told that a model examined their sales ledger is entitled to see exactly what
 // it was sent and exactly what it sent back, and that is what a trace is: every
 // tool call's arguments as the model wrote them, and every result as the exact
-// bytes the egress guard released. Nothing is summarised, because a summary of
+// bytes the egress guard released. Nothing is summarized, because a summary of
 // what left the process is not evidence about what left the process.
 type Trace struct {
 	Provider string `json:"provider"`
@@ -145,8 +145,8 @@ const (
 	StoppedProviderError Stopped = "provider_error"
 	// StoppedRefused means the provider declined the request.
 	StoppedRefused Stopped = "refused"
-	// StoppedCancelled means somebody stopped the run.
-	StoppedCancelled Stopped = "cancelled"
+	// StoppedCanceled means somebody stopped the run.
+	StoppedCanceled Stopped = "canceled"
 )
 
 // Complete reports whether the agent finished its own investigation rather than

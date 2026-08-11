@@ -11,7 +11,7 @@ import (
 	"github.com/russellwallace/veritix/internal/source"
 )
 
-// excelDialect is how a materialised worksheet is read back. The CSV written
+// excelDialect is how a materialized worksheet is read back. The CSV written
 // by the Excel reader is always UTF-8, comma-separated, and RFC 4180 quoted,
 // so nothing needs sniffing.
 func excelDialect() source.CSVDialect {
@@ -45,7 +45,7 @@ func loadOne(ctx context.Context, e *engine.Engine, p *planned, log *slog.Logger
 		t.Notes = append(t.Notes, dialect.Notes...)
 	}
 
-	// Excel sheets always have a header written by the materialiser, but the
+	// Excel sheets always have a header written by the materializer, but the
 	// names come from the worksheet, so sniff the schema to learn them.
 	cols, err := columnsFor(ctx, e, p, dialect)
 	if err != nil {
@@ -82,9 +82,9 @@ func columnsFor(ctx context.Context, e *engine.Engine, p *planned, d source.CSVD
 	sniffed := d.SniffedTypes
 	if len(sniffed) == 0 {
 		// The Excel path has no sniff result yet; ask DuckDB about the
-		// materialised CSV so that guessed types are available for comparison.
+		// materialized CSV so that guessed types are available for comparison.
 		var err error
-		sniffed, err = sniffMaterialised(ctx, e, p.readPath)
+		sniffed, err = sniffMaterialized(ctx, e, p.readPath)
 		if err != nil {
 			return nil, err
 		}
@@ -119,12 +119,12 @@ func columnsFor(ctx context.Context, e *engine.Engine, p *planned, d source.CSVD
 	return cols, nil
 }
 
-func sniffMaterialised(ctx context.Context, e *engine.Engine, path string) ([]source.SniffedColumn, error) {
+func sniffMaterialized(ctx context.Context, e *engine.Engine, path string) ([]source.SniffedColumn, error) {
 	q := "SELECT unnest(Columns).name AS name, unnest(Columns).type AS type FROM sniff_csv(" +
 		engine.Literal(path) + ")"
 	rs, err := e.Collect(ctx, q, 10_000)
 	if err != nil {
-		return nil, fmt.Errorf("ingest: sniffing materialised sheet: %w", err)
+		return nil, fmt.Errorf("ingest: sniffing materialized sheet: %w", err)
 	}
 	out := make([]source.SniffedColumn, 0, len(rs.Rows))
 	for _, r := range rs.Rows {
@@ -302,7 +302,7 @@ func attachRejects(ctx context.Context, e *engine.Engine, tables []*Table) error
 }
 
 // readPathOf recovers the path a table's data was read from. For CSV that is
-// the file itself; for Excel it is the materialised worksheet.
+// the file itself; for Excel it is the materialized worksheet.
 func readPathOf(t *Table) string {
 	if t.readPath != "" {
 		return t.readPath
@@ -310,7 +310,7 @@ func readPathOf(t *Table) string {
 	return t.Ref.File.Path
 }
 
-// toInt64 normalises the integer types the DuckDB driver can hand back. The
+// toInt64 normalizes the integer types the DuckDB driver can hand back. The
 // reject tables use unsigned counters, so uint64 is the common case here
 // rather than the exception.
 func toInt64(v any) int64 {

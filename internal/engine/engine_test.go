@@ -323,7 +323,7 @@ func writeTempFile(t *testing.T, content string) string {
 // Model-authored SQL is classified by DuckDB's own parser rather than by
 // matching patterns in the text, and the classification decides whether a
 // result is shown as a number or as a shape.
-func TestAnalyseSelectClassifiesOutputColumns(t *testing.T) {
+func TestAnalyzeSelectClassifiesOutputColumns(t *testing.T) {
 	ctx := t.Context()
 	e := testEngine(t)
 	if err := e.Exec(ctx, `CREATE TABLE orders AS SELECT 'ACME' AS customer, 89.99 AS amount`); err != nil {
@@ -352,9 +352,9 @@ func TestAnalyseSelectClassifiesOutputColumns(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		a, err := e.AnalyseSelect(ctx, tc.query)
+		a, err := e.AnalyzeSelect(ctx, tc.query)
 		if err != nil {
-			t.Errorf("AnalyseSelect(%q): %v", tc.query, err)
+			t.Errorf("AnalyzeSelect(%q): %v", tc.query, err)
 			continue
 		}
 		if len(a.Aggregate) != len(tc.want) {
@@ -371,7 +371,7 @@ func TestAnalyseSelectClassifiesOutputColumns(t *testing.T) {
 
 // Everything that is not one read-only statement is refused by the parser, so
 // Veritix never has to hold an opinion about what a write looks like.
-func TestAnalyseSelectRefusesEverythingElse(t *testing.T) {
+func TestAnalyzeSelectRefusesEverythingElse(t *testing.T) {
 	ctx := t.Context()
 	e := testEngine(t)
 	if err := e.Exec(ctx, `CREATE TABLE orders AS SELECT 1 AS a`); err != nil {
@@ -389,8 +389,8 @@ func TestAnalyseSelectRefusesEverythingElse(t *testing.T) {
 		"SET enable_external_access = true",
 		"SELEC nonsense",
 	} {
-		if _, err := e.AnalyseSelect(ctx, q); err == nil {
-			t.Errorf("AnalyseSelect accepted %q", q)
+		if _, err := e.AnalyzeSelect(ctx, q); err == nil {
+			t.Errorf("AnalyzeSelect accepted %q", q)
 		}
 	}
 

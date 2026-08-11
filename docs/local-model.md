@@ -196,7 +196,7 @@ no cell values were sent to the model; 17 were replaced by their shape
 ! the investigation stopped early (step_budget), so it may be incomplete
 ```
 
-Which is the right behaviour and worth keeping: a truncated investigation that
+Which is the right behavior and worth keeping: a truncated investigation that
 says it was truncated is honest, where a truncated investigation reported as a
 clean bill of health would be the worst thing this product could do.
 
@@ -270,7 +270,7 @@ exercised here for free, and one real defect (the retry above) fell out of the
 first hour.
 
 Not good for: whether the agent finds *good* problems. Nothing about a 4B model
-on a 2017 laptop CPU generalises to that, and pretending otherwise would be the
+on a 2017 laptop CPU generalizes to that, and pretending otherwise would be the
 same mistake as trusting a model's own count.
 
 The egress check, though, is the one that transfers completely — it is a property

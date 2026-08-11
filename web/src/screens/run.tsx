@@ -26,7 +26,7 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
       setReport(await api.getReport(id, signal))
     } catch (e) {
       if (signal?.aborted) return
-      // A failed or cancelled run legitimately has no report; that is not an
+      // A failed or canceled run legitimately has no report; that is not an
       // error to shout about, the run's own status already says what happened.
       setReport(null)
       if (e instanceof api.Unauthorized) throw e

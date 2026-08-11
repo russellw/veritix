@@ -604,7 +604,7 @@ tbody tr:hover {
 }
 
 .status.failed,
-.status.cancelled {
+.status.canceled {
   color: var(--error);
 }
 
@@ -780,7 +780,7 @@ internal/api/spa.go.
   flex-direction: column;
 }
 
-.centred {
+.centered {
   justify-content: center;
 }
 
@@ -788,7 +788,7 @@ internal/api/spa.go.
   font-size: 0.8rem;
 }
 
-.centre {
+.center {
   max-width: 30rem;
   margin: 15vh auto;
   text-align: center;

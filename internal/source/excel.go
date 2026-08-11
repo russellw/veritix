@@ -113,7 +113,7 @@ func InspectWorkbook(f File, tmpDir string) (*Workbook, map[string]string, error
 			})
 		}
 
-		sheet.Notes = append(sheet.Notes, summariseSheet(&sheet)...)
+		sheet.Notes = append(sheet.Notes, summarizeSheet(&sheet)...)
 		wb.Sheets = append(wb.Sheets, sheet)
 		paths[name] = csvPath
 	}
@@ -313,8 +313,8 @@ func countFormulaErrors(cells []string, into map[string]int) {
 	}
 }
 
-// summariseSheet turns the counters gathered during the walk into notes.
-func summariseSheet(s *Sheet) []Note {
+// summarizeSheet turns the counters gathered during the walk into notes.
+func summarizeSheet(s *Sheet) []Note {
 	var notes []Note
 
 	if s.HeaderRow > 1 {

@@ -4,7 +4,7 @@
 **Scope:** the web interface in `web/`, and the dependency policy governing it.
 
 This records what was chosen and why, so that a future reader does not have to
-re-derive it — and so that the parts which look over-cautious are recognisable
+re-derive it — and so that the parts which look over-cautious are recognizable
 as deliberate rather than accidental.
 
 The sibling project `tadmor` ratified a similar policy on 2026-06-19
@@ -65,7 +65,7 @@ why the CSP is treated as a tested guarantee rather than a header.
 - **Delivery:** served by the Go binary behind a strict CSP with no
   `unsafe-inline` anywhere.
 - **Go modules:** not vendored; `go mod verify` and `govulncheck` in CI instead.
-- **Licences:** permissive only, npm and Go alike — see §6.2.
+- **Licenses:** permissive only, npm and Go alike — see §6.2.
 
 ### 3.1 Why no other runtime dependencies
 
@@ -76,7 +76,7 @@ grouped by severity, and two tables. There are no charts, no editable forms
 beyond two checkboxes, and no grid mechanics.
 
 At that size the usual velocity argument for a UI kit does not apply, so the
-metric this document optimises — **distinct maintainers whose code we must trust
+metric this document optimizes — **distinct maintainers whose code we must trust
 at runtime** — can be driven almost to zero. It is:
 
 | | Veritix | tadmor |
@@ -92,7 +92,7 @@ Two things were hand-written rather than taken as dependencies:
   hand-rolled History-API router stays small only until you need route params,
   nested layouts, scroll restoration and dirty-form navigation guards. That
   reasoning is sound and does not apply: Veritix has five flat routes, one of
-  them parameterised, and no forms to guard. If that stops being true,
+  them parameterized, and no forms to guard. If that stops being true,
   `react-router-dom` is the right thing to adopt — it was measured as the
   smallest full-featured option at 4 packages and 3 maintainers.
 - **The styling** (`web/src/index.css`). The palette is lifted verbatim from
@@ -127,7 +127,7 @@ ask whether the dependency is worth it.
 
 They look like the same idea and are not. `node_modules/` is hundreds of
 megabytes of platform-specific native binaries — a build artifact, wrong on any
-machine but the one that produced it. The npm ecosystem's actual analogue of
+machine but the one that produced it. The npm ecosystem's actual analog of
 `go.sum` is the **lockfile**, which carries an exact version and an integrity
 hash per package. That is what is committed.
 
@@ -254,21 +254,21 @@ verified by nothing beyond a `go.sum` hash of the blob itself. That was accepted
 at M1 as the price of not writing a query engine, and it remains accepted — but
 it should be named rather than obscured by the care taken elsewhere.
 
-### 6.2 Licences are an adoption criterion, on both sides of the build
+### 6.2 Licenses are an adoption criterion, on both sides of the build
 
 Veritix is dual licensed — AGPL-3.0-or-later, or commercial terms for customers
-who cannot take the AGPL (`LICENSING.md`). A commercial licence can only
+who cannot take the AGPL (`LICENSING.md`). A commercial license can only
 deliver what the project has the right to deliver, so **a copyleft dependency
 is not adoptable here at any technical merit**, npm or Go. GPL, AGPL and SSPL
 are all out; so is anything with a field-of-use restriction, which is the
-common failure mode of the newer "source-available" licences.
+common failure mode of the newer "source-available" licenses.
 
 Everything linked or embedded today clears this: MIT, BSD-3-Clause or
 Apache-2.0 across the Go modules, and MIT for `react` and `react-dom`. That is
 partly luck of the ecosystem and partly M1's choices — `modernc.org/sqlite` was
 taken for being pure Go, and is BSD-3-Clause; DuckDB is MIT.
 
-Check the licence first. It is a cheaper test than the module count and it
+Check the license first. It is a cheaper test than the module count and it
 disqualifies faster: a dependency that fails it does not get measured.
 
 ## 7. What this does not solve
@@ -328,7 +328,7 @@ binary lists exactly those. **`fonts-liberation` is not optional and is easy to
 miss**: fonts are runtime data found through fontconfig rather than a linked
 library, so a machine without any launches Chromium perfectly happily and then
 renders every page with no glyphs at all. The failure looks like a CSS bug —
-correct layout, correct colours, invisible text — which is a confusing hour if
+correct layout, correct colors, invisible text — which is a confusing hour if
 you have not seen it before.
 
 Playwright's own `playwright install-deps` covers all of this but pulls several

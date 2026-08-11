@@ -39,7 +39,7 @@ func TestServeRefusesNetworkBindWithoutAToken(t *testing.T) {
 			}
 			cmd.SetArgs(args)
 
-			// A context that is already cancelled: an accepted configuration
+			// A context that is already canceled: an accepted configuration
 			// should get as far as starting a server and then stop, and a
 			// refused one should never get that far at all.
 			ctx, cancel := context.WithCancel(context.Background())

@@ -38,7 +38,7 @@ jobs:
 
       # --frozen-lockfile: an install that would rewrite pnpm-lock.yaml fails
       # instead. The lockfile carries the exact version and an integrity hash
-      # for every package, which is what makes the committed file the analogue
+      # for every package, which is what makes the committed file the analog
       # of go.sum. See docs/frontend-stack.md.
       - name: Install web dependencies (frozen)
         run: make web-install

@@ -1,7 +1,7 @@
 # The installed tree is a build artifact, not source: hundreds of megabytes,
 # platform-specific native binaries, and wrong on any machine but the one that
 # produced it. The lockfile is what pins and integrity-checks it — that is the
-# go.sum analogue, and it is committed deliberately.
+# go.sum analog, and it is committed deliberately.
 node_modules/
 .pnpm-store/
 

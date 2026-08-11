@@ -126,7 +126,7 @@ func TestSentinelDoesNotDemoteColumnType(t *testing.T) {
 	}
 }
 
-// A value that is neither valid nor a recognised way of writing "missing" is a
+// A value that is neither valid nor a recognized way of writing "missing" is a
 // genuine type violation and must be reported as one.
 func TestGenuineTypeViolationIsReported(t *testing.T) {
 	ds := profileFixture(t)
@@ -195,9 +195,9 @@ func TestCaseAndWhitespaceVariantsAreVisible(t *testing.T) {
 	customers := table(t, ds, "customers.csv")
 
 	status := column(t, customers, "status")
-	if status.Distinct <= status.DistinctNormalised {
+	if status.Distinct <= status.DistinctNormalized {
 		t.Errorf("status has Active/active/ACTIVE and should have more raw distinct values "+
-			"(%d) than normalised ones (%d)", status.Distinct, status.DistinctNormalised)
+			"(%d) than normalized ones (%d)", status.Distinct, status.DistinctNormalized)
 	}
 
 	name := column(t, customers, "name")

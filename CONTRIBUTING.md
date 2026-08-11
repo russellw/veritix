@@ -1,17 +1,17 @@
 # Contributing to Veritix
 
 Veritix is a one-person project with a commercial future, which shapes two
-things: contributions need a licence grant before they can be merged, and a
+things: contributions need a license grant before they can be merged, and a
 few design constraints are not open to being traded away for convenience.
 Everything else is ordinary.
 
-## Before a patch: the licence
+## Before a patch: the license
 
 Veritix is dual licensed — AGPL-3.0-or-later, or commercial terms — as
 described in [`LICENSING.md`](LICENSING.md). Contributions are accepted under
-the Contributor Licence Agreement in [`CLA.md`](CLA.md). You keep your
+the Contributor License Agreement in [`CLA.md`](CLA.md). You keep your
 copyright; you grant the project the right to ship your code under both
-licences.
+licenses.
 
 Signing is a `Signed-off-by` trailer on every commit:
 
@@ -81,8 +81,8 @@ reasoning is in `CLAUDE.md`, and each is pinned by a test.
 4. **Do not add a runtime dependency to the web interface casually.** It has
    three, it is served under a strict CSP, and the page can display customer
    data. [`docs/frontend-stack.md`](docs/frontend-stack.md) is the argument and
-   the policy, including the release-age cooldown and the licence constraint —
-   a copyleft dependency cannot be adopted here, because the commercial licence
+   the policy, including the release-age cooldown and the license constraint —
+   a copyleft dependency cannot be adopted here, because the commercial license
    could not deliver it.
 
 ## Tests

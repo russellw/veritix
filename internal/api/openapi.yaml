@@ -15,7 +15,7 @@ info:
   license:
     # Dual licensed: the AGPL to everyone, or commercial terms for anyone who
     # needs terms it cannot give. See LICENSING.md in the repository.
-    name: AGPL-3.0-or-later, or a commercial licence
+    name: AGPL-3.0-or-later, or a commercial license
     identifier: AGPL-3.0-or-later OR LicenseRef-Veritix-Commercial
 
 servers:
@@ -371,7 +371,7 @@ paths:
       description: |
         Every step of the agentic investigation: the model's own words, each
         tool call's arguments, and each result exactly as the egress guard
-        released it. Nothing is summarised — a summary of what left the process
+        released it. Nothing is summarized — a summary of what left the process
         is not evidence about what left the process — so this is how a customer
         checks the egress promise rather than taking it on trust.
 
@@ -535,7 +535,7 @@ components:
         dataset_id: { type: string }
         status:
           type: string
-          enum: [pending, running, succeeded, failed, cancelled]
+          enum: [pending, running, succeeded, failed, canceled]
           description: succeeded means the audit completed. It says nothing
             about whether the data was clean.
         message:
@@ -575,7 +575,7 @@ components:
         token_budget: { type: integer }
         stopped:
           type: string
-          enum: [finished, step_budget, token_budget, provider_error, refused, cancelled]
+          enum: [finished, step_budget, token_budget, provider_error, refused, canceled]
         error:
           type: string
           description: Set when the run ended because the provider failed.
@@ -684,7 +684,7 @@ components:
               description: How many values were replaced by their shape.
             stopped:
               type: string
-              enum: [finished, step_budget, token_budget, provider_error, refused, cancelled]
+              enum: [finished, step_budget, token_budget, provider_error, refused, canceled]
             complete:
               type: boolean
               description: False when the investigation was cut short, so a

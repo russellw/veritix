@@ -10,7 +10,7 @@ right fidelity.
 
 It speaks the OpenAI chat-completions dialect, which is what `veritix serve`
 talks to any local runtime with, so the provider, the loop and the egress guard
-are all on the tested path — only the model's judgement is faked.
+are all on the tested path — only the model's judgment is faked.
 
 Run:  node stub-model.mjs [port]
 */

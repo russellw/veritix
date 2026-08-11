@@ -33,7 +33,7 @@ const (
 
 // Options controls a load.
 type Options struct {
-	// TempDir is where Excel worksheets are materialised. If empty, a
+	// TempDir is where Excel worksheets are materialized. If empty, a
 	// directory is created and removed automatically.
 	TempDir string
 }
@@ -63,7 +63,7 @@ type Table struct {
 	Notes []source.Note
 
 	// readPath is the file DuckDB actually scanned. For CSV it is the source
-	// file; for Excel it is the materialised worksheet, which is what DuckDB
+	// file; for Excel it is the materialized worksheet, which is what DuckDB
 	// records against a rejected row.
 	readPath string
 }
@@ -149,7 +149,7 @@ func Load(ctx context.Context, e *engine.Engine, ds *source.Dataset, opts Option
 }
 
 // planned is one table about to be loaded, together with the path the data
-// will actually be read from. For Excel that is a materialised CSV rather than
+// will actually be read from. For Excel that is a materialized CSV rather than
 // the workbook itself.
 type planned struct {
 	table    *Table

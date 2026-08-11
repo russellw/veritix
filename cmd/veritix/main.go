@@ -25,7 +25,7 @@ func run() int {
 	defer stop()
 
 	if err := cli.Execute(ctx); err != nil {
-		// Cobra has already reported the error; a cancelled context is a
+		// Cobra has already reported the error; a canceled context is a
 		// deliberate Ctrl-C rather than a failure worth shouting about.
 		if errors.Is(err, context.Canceled) {
 			return 130

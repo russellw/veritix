@@ -23,14 +23,14 @@
 //     and the only way to make one is a Guard method that applies the policy.
 //   - [Sealed] is the only thing the agent loop will put in a message to the
 //     model, and the only way to make one is [Guard.Seal], which refuses to
-//     serialise a value carrying unclassified content.
+//     serialize a value carrying unclassified content.
 //
 // A new tool that returns a struct full of raw strings does not compile into a
 // leak: it fails to seal, at the point where the result would have been sent.
 //
 // # What it does not claim
 //
-// The guard bounds what Veritix *sends*. It is not a defence against a model
+// The guard bounds what Veritix *sends*. It is not a defense against a model
 // that is actively trying to smuggle data out through the channel it is given:
 // aggregates can encode values if you choose them carefully enough, and any
 // tool surface rich enough to audit a dataset is rich enough to do that
@@ -91,7 +91,7 @@ type Stats struct {
 	Passed int `json:"passed"`
 	// Truncated is how many were cut for length.
 	Truncated int `json:"truncated"`
-	// Sealed is how many tool results were serialised for the model.
+	// Sealed is how many tool results were serialized for the model.
 	Sealed int `json:"sealed"`
 	// Bytes is how many bytes of tool results were sent.
 	Bytes int `json:"bytes"`
@@ -173,7 +173,7 @@ func (g *Guard) Shape(s string) Text {
 }
 
 // Derived wraps content the profiler already reduced to a shape or to a
-// recognised placeholder token, and which therefore contains nothing to
+// recognized placeholder token, and which therefore contains nothing to
 // withhold.
 //
 // It exists so the counters keep meaning something. Shapes are fixed points of
@@ -286,7 +286,7 @@ func (s Sealed) String() string { return string(s.b) }
 // Len is the size of the payload.
 func (s Sealed) Len() int { return len(s.b) }
 
-// Seal serialises a tool result for the model, refusing anything that carries
+// Seal serializes a tool result for the model, refusing anything that carries
 // content the guard has not cleared.
 //
 // The check is structural: a string reached through an `any` — a query result
@@ -403,7 +403,7 @@ func inspect(v reflect.Value, viaAny bool, path string) error {
 		return nil
 
 	case reflect.Chan, reflect.Func, reflect.UnsafePointer:
-		return fmt.Errorf("redact: %s cannot be serialised at %s", v.Kind(), pathOr(path))
+		return fmt.Errorf("redact: %s cannot be serialized at %s", v.Kind(), pathOr(path))
 
 	default:
 		return nil

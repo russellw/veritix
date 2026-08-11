@@ -31,7 +31,7 @@ func shape(s string) string {
 	return b.String()
 }
 
-// The patterns below are the identifiers that are recognisable enough to strip
+// The patterns below are the identifiers that are recognizable enough to strip
 // without knowing anything about the dataset. This is not a PII classifier: a
 // column of surnames is personal data and no regex will say so. It is a last
 // line under --allow-sample-values, where the operator has already decided
@@ -47,7 +47,7 @@ var (
 	ssnPattern = regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`)
 )
 
-// mask removes recognisable identifiers from a value that policy allows
+// mask removes recognizable identifiers from a value that policy allows
 // through, and reports whether it changed anything.
 func mask(s string) (string, bool) {
 	out := emailPattern.ReplaceAllString(s, "[email]")

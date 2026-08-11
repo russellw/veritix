@@ -1,7 +1,7 @@
 # pnpm hardening knobs. See docs/frontend-stack.md.
 
 # Refuse any version published less than 7 days ago, in minutes. This is the
-# single most effective defence against the commonest real attack: a legitimate
+# single most effective defense against the commonest real attack: a legitimate
 # package that ships one malicious release, caught and yanked within days.
 #
 # A fresh install refusing a version published this week is the feature working,

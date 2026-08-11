@@ -160,7 +160,7 @@ func checkMissingValues(tc *tableContext, c *profile.Column) []finding.Finding {
 }
 
 // checkTypeViolations reports values that do not fit their column's type and
-// are not a recognised way of writing "missing".
+// are not a recognized way of writing "missing".
 func checkTypeViolations(tc *tableContext, c *profile.Column) []finding.Finding {
 	if c.Inferred.Nonconforming == 0 {
 		return nil
@@ -181,7 +181,7 @@ func checkTypeViolations(tc *tableContext, c *profile.Column) []finding.Finding 
 			c.Name, c.Inferred.Nonconforming, describeKind(c.Inferred.Kind)),
 		Detail: fmt.Sprintf(
 			"%.0f%% of the values in this column are %s, so it is a %s column. The "+
-				"remaining %d cannot be read as one, and are not a recognised way of "+
+				"remaining %d cannot be read as one, and are not a recognized way of "+
 				"writing \"missing\" either. An import that types this column will turn "+
 				"each of them into a null without reporting anything.",
 			c.Inferred.Conformance*100, describeKind(c.Inferred.Kind),
@@ -287,7 +287,7 @@ func checkMixedDateFormats(tc *tableContext, c *profile.Column) []finding.Findin
 				"them into the wrong dates. Sorting and date filtering on this column "+
 				"are unreliable until it is consistent.",
 			strings.Join(descriptions, " and ")),
-		Remedy:   "Normalise the column to one format, ideally ISO 8601 (YYYY-MM-DD).",
+		Remedy:   "Normalize the column to one format, ideally ISO 8601 (YYYY-MM-DD).",
 		Location: tc.location(c),
 		Count:    minority,
 		Total:    c.Temporal.Count,
@@ -415,13 +415,13 @@ func checkWhitespacePadding(tc *tableContext, c *profile.Column) []finding.Findi
 
 // checkCaseVariants reports values that differ only by case or spacing.
 func checkCaseVariants(tc *tableContext, c *profile.Column) []finding.Finding {
-	extra := c.Distinct - c.DistinctNormalised
+	extra := c.Distinct - c.DistinctNormalized
 	if extra <= 0 {
 		return nil
 	}
 	// A free-text column will differ in case constantly and meaninglessly;
 	// this only matters for columns behaving like a category.
-	if c.DistinctNormalised > 100 || float64(c.DistinctNormalised) > float64(c.Populated())*0.5 {
+	if c.DistinctNormalized > 100 || float64(c.DistinctNormalized) > float64(c.Populated())*0.5 {
 		return nil
 	}
 
@@ -441,14 +441,14 @@ func checkCaseVariants(tc *tableContext, c *profile.Column) []finding.Finding {
 				"spaces are ignored. Grouping or filtering on this column will split "+
 				"what is really one category across several, so counts per category "+
 				"will be wrong without anything looking wrong.",
-			c.Distinct, c.DistinctNormalised),
-		Remedy:   "Normalise the column to a single casing, and constrain it at source if it is a category.",
+			c.Distinct, c.DistinctNormalized),
+		Remedy:   "Normalize the column to a single casing, and constrain it at source if it is a category.",
 		Location: tc.location(c),
 		Count:    extra,
 		Total:    c.Distinct,
 		Evidence: finding.Evidence{
 			CountQuery: q,
-			Expected:   fmt.Sprintf("%d distinct values", c.DistinctNormalised),
+			Expected:   fmt.Sprintf("%d distinct values", c.DistinctNormalized),
 			Observed:   fmt.Sprintf("%d, differing only by case or spacing", c.Distinct),
 		},
 	}}

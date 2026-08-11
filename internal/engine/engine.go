@@ -33,8 +33,8 @@ type Engine struct {
 	// agent starts, and only read afterwards.
 	locked bool
 
-	// aggregateCache memoises DuckDB's aggregate-function catalogue, which
-	// AnalyseSelect consults for every model-authored query.
+	// aggregateCache memoizes DuckDB's aggregate-function catalog, which
+	// AnalyzeSelect consults for every model-authored query.
 	aggregateCache
 }
 
@@ -103,7 +103,7 @@ func (e *Engine) applyLimits(ctx context.Context) error {
 	}
 
 	for _, s := range settings {
-		// Settings are not parameterisable, so quote the value as a literal.
+		// Settings are not parameterizable, so quote the value as a literal.
 		stmt := fmt.Sprintf("SET %s = %s", s.name, Literal(s.value))
 		if _, err := e.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("engine: applying %s=%s: %w", s.name, s.value, err)

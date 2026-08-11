@@ -91,12 +91,12 @@ func newVersionCmd() *cobra.Command {
 		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			// The licence and a pointer to the source are part of what a
+			// The license and a pointer to the source are part of what a
 			// version report is for: AGPL section 6 wants the source offer to
 			// travel with the binary, and this is the one command that answers
 			// "what am I running" without a config file or a browser.
 			_, err := fmt.Fprintf(out, "veritix %s\n%s\nSource: %s\n",
-				buildinfo.Short(), buildinfo.Licence, buildinfo.SourceURL)
+				buildinfo.Short(), buildinfo.License, buildinfo.SourceURL)
 			return err
 		},
 	}

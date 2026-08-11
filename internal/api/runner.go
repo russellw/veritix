@@ -202,7 +202,7 @@ func (rn *runner) execute(
 	s := rn.srv
 
 	// The store write is done on a context that outlives cancellation: a
-	// cancelled run still has to be recorded as cancelled.
+	// canceled run still has to be recorded as canceled.
 	recordCtx := context.WithoutCancel(ctx)
 
 	if err := s.store.StartRun(recordCtx, run.ID); err != nil {
@@ -215,12 +215,12 @@ func (rn *runner) execute(
 
 	res, err := audit.Run(ctx, opts, log)
 	if err != nil {
-		// A cancelled context is reported as cancellation whatever error the
+		// A canceled context is reported as cancellation whatever error the
 		// pipeline surfaced on the way out, because the layer that noticed
 		// first varies with where the run had got to.
 		status, message := store.StatusFailed, err.Error()
 		if ctx.Err() != nil {
-			status, message = store.StatusCancelled, "cancelled"
+			status, message = store.StatusCanceled, "canceled"
 		}
 		if err := s.store.StopRun(recordCtx, run.ID, status, message); err != nil {
 			s.log.Error("could not record the run's failure", "run", run.ID, "error", err)
@@ -238,7 +238,7 @@ func (rn *runner) execute(
 	}
 
 	if ctx.Err() != nil {
-		if err := s.store.StopRun(recordCtx, run.ID, store.StatusCancelled, "cancelled"); err != nil {
+		if err := s.store.StopRun(recordCtx, run.ID, store.StatusCanceled, "canceled"); err != nil {
 			s.log.Error("could not record the cancellation", "run", run.ID, "error", err)
 		}
 		return

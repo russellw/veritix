@@ -150,7 +150,7 @@ internal/
 web/                   React + TS + Vite → dist, //go:embed-ed; embed.go
 testdata/dirty-retail/ fixtures with a known defect manifest
 docs/frontend-stack.md the front end's dependency and supply-chain policy
-LICENSING.md           the dual licence: AGPL, or commercial terms
+LICENSING.md           the dual license: AGPL, or commercial terms
 CLA.md                 the contributor agreement that makes the second possible
 CONTRIBUTING.md        how to work on it, and the four things a patch must not do
 ```
@@ -240,18 +240,18 @@ what is true.**
   `lock_configuration=true`, irreversibly, so `read_text('/etc/passwd')` and
   `COPY … TO` are refused by DuckDB rather than by Veritix's opinion of what a
   dangerous statement looks like.
-- **`Engine.AnalyseSelect` parses agent SQL with DuckDB's own parser**
-  (`json_serialize_sql`). Anything that is not one SELECT fails to serialise.
-  The select list is classified against DuckDB's aggregate catalogue: aggregates
+- **`Engine.AnalyzeSelect` parses agent SQL with DuckDB's own parser**
+  (`json_serialize_sql`). Anything that is not one SELECT fails to serialize.
+  The select list is classified against DuckDB's aggregate catalog: aggregates
   come back as numbers, everything else as shapes. An expression built only from
-  aggregates and constants counts as a statistic; anything unrecognised is
+  aggregates and constants counts as a statistic; anything unrecognized is
   treated as a value, which is the safe direction.
 - **No model-supplied identifier reaches SQL.** A table or column name is looked
   up in the profile and the *profile's* name is what gets quoted.
 - **The trace is a product feature.** It records every payload verbatim on both
   sides, is served at `/runs/{id}/trace`, and is written by `audit --trace-out`.
   It is how a customer checks the egress promise instead of taking it on trust,
-  which is why nothing in it is summarised. Both entry points emit the same
+  which is why nothing in it is summarized. Both entry points emit the same
   document — the CLI encodes `audit.Result.Trace`, which is what the API stores
   — so there is one answer to "what was the model sent", not two.
 - **A model that misbehaves is not an error.** Bad arguments, refused SQL, a
@@ -259,7 +259,7 @@ what is true.**
   it can correct itself. A run ends when the model stops or a budget does.
 
 The honest limit, stated in `redact`'s doc comment: the guard bounds what
-Veritix *sends*. It is not a defence against a model deliberately smuggling data
+Veritix *sends*. It is not a defense against a model deliberately smuggling data
 out through carefully chosen aggregates. The guarantee is that ordinary
 operation discloses no cell values, and that everything sent is in the trace.
 
@@ -292,7 +292,7 @@ Each of these cost a debugging cycle; the fix is in the code with a comment.
 **DuckDB**
 - `sniff_csv` returns the literal string `(empty)`, not an empty string, for
   unset dialect options. Passing it back is rejected as an over-long quote.
-  Normalised in `source.CSVDialect.normalise`.
+  Normalized in `source.CSVDialect.normalize`.
 - `TRY_CAST('89.99' AS BIGINT)` **succeeds**, truncating. Integers are matched
   on their written form via `regexp_full_match` instead.
 - `new_line` wants the escaped text `\n`, not a real newline character.
@@ -339,7 +339,7 @@ positives, both commented in place:
   lies and an events stream waits forever on nothing.
 - `golangci-lint`'s `gosec` taint analysis (G703/G304) flags every
   filesystem call reachable from a request. Each one in `internal/api` carries
-  a `//nolint:gosec` naming the guard that makes it safe — sanitised name plus
+  a `//nolint:gosec` naming the guard that makes it safe — sanitized name plus
   generated id, base-name-only, or a `DataDir` prefix check. Do not add a bare
   nolint; if there is no guard to name, there is a bug.
 - Repo-wide lint is **clean, and should stay that way**. CI pins
@@ -355,11 +355,11 @@ positives, both commented in place:
   `CAST(... AS VARCHAR)` before `database/sql` will scan it into a string.
 - `count(*)` appears in the parse tree as `count_star`, which is why the
   aggregate set is read from `duckdb_functions()` rather than written down.
-- A UNION has no `select_list` at the top level, so `AnalyseSelect` reports no
+- A UNION has no `select_list` at the top level, so `AnalyzeSelect` reports no
   aggregate columns and every cell is shaped. That is the intended failure
   direction and worth keeping if the parse-tree reader is ever extended.
 - `max(name)` is an aggregate but returns a cell value, so `Guard.Cell` treats
-  every string as a value regardless of the aggregate flag. Do not "optimise"
+  every string as a value regardless of the aggregate flag. Do not "optimize"
   that away.
 - Shapes are fixed points of the shape function (`shape("XXX-999") == "XXX-999"`),
   which is why `Guard.Derived` can wrap a profiler shape without re-shaping it.
@@ -461,14 +461,14 @@ libatspi2.0-0t64 libgbm1 libxcomposite1 libxdamage1 libxfixes3 libxrandr2
 fonts-liberation`. `playwright install-deps` also works but pulls several
 hundred packages a headless run never uses. **Do not drop the font package**:
 with no fonts installed Chromium starts fine and renders every page with no
-glyphs, which presents as a CSS bug — right layout, right colours, invisible
+glyphs, which presents as a CSS bug — right layout, right colors, invisible
 text — rather than as a missing dependency.
 
 ## Notes on working here
 
 - Work goes straight onto `main` — this is a one-person project, and a branch
   here buys review that nobody is going to do. Do not create feature branches.
-  Use your judgement about when a piece of work is worth committing.
+  Use your judgment about when a piece of work is worth committing.
 - The DuckDB driver needs CGO; prebuilt static libraries ship with the module,
   so plain `go build` works and the binary is ~71 MB with nothing to install.
   The SQLite driver is `modernc.org/sqlite`, pure Go on purpose: a second C
@@ -507,8 +507,8 @@ text — rather than as a missing dependency.
   code. First, **a copyleft dependency is not adoptable at any technical
   merit**: everything linked or embedded today is MIT, BSD-3-Clause or
   Apache-2.0, and a GPL/AGPL/SSPL library would be a term the commercial
-  licence could not deliver. Check the licence before measuring the module
+  license could not deliver. Check the license before measuring the module
   count. Second, contributions from anyone but the copyright holder need the
   CLA in `CLA.md`, signed by a `Signed-off-by` trailer — code without one
   cannot go into a commercially licensed build, and merging it anyway is how a
-  dual licence quietly stops being true.
+  dual license quietly stops being true.

@@ -24,14 +24,14 @@ const (
 	StatusSucceeded Status = "succeeded"
 	// StatusFailed means the audit could not be completed.
 	StatusFailed Status = "failed"
-	// StatusCancelled means a caller stopped the run.
-	StatusCancelled Status = "cancelled"
+	// StatusCanceled means a caller stopped the run.
+	StatusCanceled Status = "canceled"
 )
 
 // Terminal reports whether a run has stopped moving, which is what tells an
 // SSE stream it can close.
 func (s Status) Terminal() bool {
-	return s == StatusSucceeded || s == StatusFailed || s == StatusCancelled
+	return s == StatusSucceeded || s == StatusFailed || s == StatusCanceled
 }
 
 // Dataset is a registered dataset root.
@@ -241,7 +241,7 @@ func (s *Store) StartRun(ctx context.Context, id string) error {
 		string(StatusRunning), formatTime(time.Now()), id)
 }
 
-// Counts summarises a run's findings by severity.
+// Counts summarizes a run's findings by severity.
 type Counts struct {
 	Errors   int
 	Warnings int

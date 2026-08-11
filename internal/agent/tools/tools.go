@@ -76,7 +76,7 @@ func (w *World) log() *slog.Logger {
 }
 
 // table finds a profiled table by SQL name or by the display name a person
-// would recognise. Returning the profile's own record is what keeps
+// would recognize. Returning the profile's own record is what keeps
 // model-supplied text out of SQL.
 func (w *World) table(name string) (*profile.Table, error) {
 	for _, t := range w.Profile.Tables {
@@ -178,7 +178,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, args json.RawMessage
 
 	sealed, err := g.Seal(value)
 	if err != nil {
-		// The guard refused to serialise the result. That is a bug in the tool
+		// The guard refused to serialize the result. That is a bug in the tool
 		// rather than a mistake by the model, so it is logged loudly and the
 		// model is told nothing about the data.
 		r.world.log().Error("a tool result could not be sealed for egress",

@@ -18,7 +18,7 @@ import (
 	"github.com/russellwallace/veritix/internal/store"
 )
 
-// datasetJSON is the wire shape. The store's types are not serialised
+// datasetJSON is the wire shape. The store's types are not serialized
 // directly, so that renaming a field in Go is not a breaking API change.
 type datasetJSON struct {
 	ID        string    `json:"id"`
@@ -190,7 +190,7 @@ func (s *Server) uploadDir(name string) (string, error) {
 	}
 
 	// SafeName reduces the caller's name to letters, digits, and underscores,
-	// so the only part of this path that is not a constant is a sanitised name
+	// so the only part of this path that is not a constant is a sanitized name
 	// followed by bytes from crypto/rand.
 	safe := engine.SafeName(name)
 	for attempt := 0; attempt < 5; attempt++ {
@@ -200,7 +200,7 @@ func (s *Server) uploadDir(name string) (string, error) {
 		}
 
 		dir := filepath.Join(root, safe+"-"+hex.EncodeToString(suffix[:]))
-		err := os.Mkdir(dir, 0o750) //nolint:gosec // name is sanitised, suffix is random, root is the data dir
+		err := os.Mkdir(dir, 0o750) //nolint:gosec // name is sanitized, suffix is random, root is the data dir
 		if err == nil {
 			return dir, nil
 		}

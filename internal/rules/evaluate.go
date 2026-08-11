@@ -273,7 +273,7 @@ func violationPredicate(r *Rule, tbl, col string) (predicate, expected string, e
 }
 
 // comparableList renders the left-hand side and the permitted values for
-// one_of, honouring ignore_case.
+// one_of, honoring ignore_case.
 func comparableList(r *Rule, col string) (lhs string, values []string) {
 	lhs = col
 	values = make([]string, len(r.Values))

@@ -316,7 +316,7 @@ func TestReportOmitsRawValuesByDefault(t *testing.T) {
 	body := ts.do(http.MethodGet, "/api/v1/runs/"+run.ID+"/report", nil).Body
 
 	// Values that exist only inside the fixture's cells. If one of these
-	// reaches the default report, something started serialising raw data.
+	// reaches the default report, something started serializing raw data.
 	for _, secret := range []string{"eve@example.com", "Eve Black", "CUS-000005"} {
 		if strings.Contains(string(body), secret) {
 			t.Errorf("the default report contains the cell value %q", secret)
@@ -480,7 +480,7 @@ func TestUploadedFilenamesCannotEscapeTheDataDirectory(t *testing.T) {
 	}
 }
 
-// Cancelling something that has already finished is a mistake worth reporting,
+// Canceling something that has already finished is a mistake worth reporting,
 // not a silent no-op that leaves the caller thinking they stopped it.
 func TestCancellingAFinishedRunConflicts(t *testing.T) {
 	ts := newTestServer(t, "")

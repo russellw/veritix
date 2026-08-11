@@ -9,7 +9,7 @@ import (
 )
 
 // NewLogger builds a slog.Logger from the configured level and format.
-// Unrecognised values fall back to info/text rather than failing, because
+// Unrecognized values fall back to info/text rather than failing, because
 // config.Validate has already rejected genuinely invalid input and a logger
 // that refuses to exist is worse than a logger with the wrong verbosity.
 func NewLogger(w io.Writer, level, format string) *slog.Logger {

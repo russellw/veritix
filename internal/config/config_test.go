@@ -116,7 +116,7 @@ func TestValidateRejectsBadInput(t *testing.T) {
 }
 
 // An empty source URL is a decision, not a mistake: it is how a build shipped
-// under the commercial licence turns the offer off.
+// under the commercial license turns the offer off.
 func TestValidateAcceptsNoSourceURL(t *testing.T) {
 	cfg := Default()
 	cfg.Server.SourceURL = ""

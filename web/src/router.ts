@@ -4,7 +4,7 @@ A router in about sixty lines, in place of a dependency.
 The usual argument for taking react-router is that a hand-rolled router stays
 small only until you need route params, nested layouts, scroll restoration and
 navigation guards. Veritix needs none of those: five flat routes, one of them
-parameterised, and no forms to guard. The dependency would be four packages and
+parameterized, and no forms to guard. The dependency would be four packages and
 three maintainers in a bundle whose entire point is that it handles commercially
 sensitive data — see docs/frontend-stack.md.
 

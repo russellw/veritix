@@ -274,7 +274,7 @@ func TestTheEngineDecidesWhatIsTrue(t *testing.T) {
 }
 
 // A SELECT is a way out of the process unless something stops it. Nothing here
-// depends on Veritix recognising a dangerous statement — the engine refuses.
+// depends on Veritix recognizing a dangerous statement — the engine refuses.
 func TestTheAgentCannotReachTheHost(t *testing.T) {
 	in := fixture(t)
 	orders := tableNamed(t, in, "order")

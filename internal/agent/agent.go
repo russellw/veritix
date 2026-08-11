@@ -80,7 +80,7 @@ type Input struct {
 }
 
 // Run drives the loop until the model stops, the budget runs out, or the
-// context is cancelled.
+// context is canceled.
 //
 // It returns an error only when the run could not happen at all — no provider,
 // a model that cannot be reached. A model that misbehaves is not an error: it
@@ -133,7 +133,7 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 
 	for step := 1; ; step++ {
 		if err := ctx.Err(); err != nil {
-			trace.Stopped = StoppedCancelled
+			trace.Stopped = StoppedCanceled
 			break
 		}
 		if step > opts.MaxSteps {
@@ -286,7 +286,7 @@ func complete(ctx context.Context, opts Options, req *llm.Request, log *slog.Log
 		}
 
 		// Plain exponential backoff. There is no jitter because there is one
-		// client here, not a fleet of them synchronising on a shared outage.
+		// client here, not a fleet of them synchronizing on a shared outage.
 		wait := time.Duration(1<<attempt) * time.Second
 		log.Warn("retrying the model call", "attempt", attempt, "wait", wait, "error", err)
 		select {

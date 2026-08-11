@@ -1,4 +1,4 @@
-# Veritix Contributor Licence Agreement
+# Veritix Contributor License Agreement
 
 **Version 1.0.**
 
@@ -7,14 +7,14 @@
 Veritix is dual licensed: AGPL-3.0-or-later to everyone, and on commercial
 terms to anyone who needs terms the AGPL cannot give (see
 [`LICENSING.md`](LICENSING.md)). The project can only offer a commercial
-licence for code it holds the rights to offer it for. Code contributed under
+license for code it holds the rights to offer it for. Code contributed under
 the AGPL alone could not go into a commercially licensed build, which would
 mean either turning contributions away or quietly shipping them anyway. This
 agreement is the honest version of that.
 
-**This is a licence, not an assignment.** You keep the copyright in everything
+**This is a license, not an assignment.** You keep the copyright in everything
 you write. You keep the right to use your own contribution however you like,
-including in other projects and under other licences. What you grant is
+including in other projects and under other licenses. What you grant is
 permission for the Project to use it — including in a commercially licensed
 build — and nothing you grant here is exclusive.
 
@@ -25,7 +25,7 @@ useful as a bug report, a failing test, or a description of the fix.
 ## Agreement
 
 By signing this agreement, You accept and agree to the following terms for
-Your present and future Contributions to the Project. Except for the licences
+Your present and future Contributions to the Project. Except for the licenses
 granted here, You reserve all right, title and interest in and to Your
 Contributions.
 
@@ -50,32 +50,32 @@ Project's repositories, issue tracker, or discussion channels, including a
 pull request, a patch, or a commit pushed to a branch of the Project. It
 excludes anything You conspicuously mark, in writing, as "Not a Contribution".
 
-### 2. Copyright licence
+### 2. Copyright license
 
 You grant to the Maintainer a perpetual, worldwide, non-exclusive, no-charge,
-royalty-free and irrevocable copyright licence to reproduce, prepare
+royalty-free and irrevocable copyright license to reproduce, prepare
 derivative works of, publicly display, publicly perform, sublicense and
 distribute Your Contributions and such derivative works.
 
-That licence expressly includes the right to sublicense and distribute Your
-Contributions, and works derived from them, **under any licence terms,
-including the AGPL, other open-source licences, and proprietary or commercial
+That license expressly includes the right to sublicense and distribute Your
+Contributions, and works derived from them, **under any license terms,
+including the AGPL, other open-source licenses, and proprietary or commercial
 terms** — with or without a requirement to make source code available.
 
-### 3. Patent licence
+### 3. Patent license
 
 You grant to the Maintainer and to recipients of software distributed by the
 Maintainer a perpetual, worldwide, non-exclusive, no-charge, royalty-free and
-irrevocable (except as stated in this section) patent licence to make, have
+irrevocable (except as stated in this section) patent license to make, have
 made, use, offer to sell, sell, import and otherwise transfer Your
-Contributions. This licence extends only to those patent claims licensable by
+Contributions. This license extends only to those patent claims licensable by
 You that are necessarily infringed by Your Contributions alone or by the
 combination of Your Contributions with the Project.
 
 If any entity institutes patent litigation against You or any other entity
 alleging that Your Contribution, or the Project to which You contributed,
 constitutes direct or contributory patent infringement, then any patent
-licence granted to that entity under this agreement for that Contribution or
+license granted to that entity under this agreement for that Contribution or
 Project terminates as of the date such litigation is filed.
 
 ### 4. Your representations
@@ -83,9 +83,9 @@ Project terminates as of the date such litigation is filed.
 You represent that:
 
 a. Each of Your Contributions is Your original creation, or You otherwise have
-   the legal right to grant the licences in sections 2 and 3.
+   the legal right to grant the licenses in sections 2 and 3.
 
-b. You are legally entitled to grant those licences. If Your employer has
+b. You are legally entitled to grant those licenses. If Your employer has
    rights to intellectual property You create — which is common — You
    represent that You have received permission to make the Contribution on
    behalf of that employer, that Your employer has waived such rights, or that
@@ -96,17 +96,17 @@ c. Your Contributions do not, to the best of Your knowledge, infringe anyone
 
 d. Any Contribution that is not Your original creation is submitted separately
    from Your original Contributions, is identified as such in the submission,
-   and carries the complete details of its source and of any licence or other
-   restriction attached to it — including a licence that the Project could not
+   and carries the complete details of its source and of any license or other
+   restriction attached to it — including a license that the Project could not
    accept. Third-party material that arrives silently is the one thing this
    agreement cannot survive.
 
 ### 5. Legal entities
 
 If You are signing on behalf of a legal entity, You represent that You are
-authorised to bind that entity to this agreement, and "You" in every section
+authorized to bind that entity to this agreement, and "You" in every section
 above means that entity. The entity should keep a record of which of its
-people are authorised to submit Contributions on its behalf, and tell the
+people are authorized to submit Contributions on its behalf, and tell the
 Maintainer if that changes.
 
 ### 6. No obligation

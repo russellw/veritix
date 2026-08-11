@@ -21,20 +21,20 @@ type Analysis struct {
 	// value out of a row.
 	//
 	// It is conservative in the safe direction: an expression the parser
-	// describes in a way this code does not recognise is reported as not an
+	// describes in a way this code does not recognize is reported as not an
 	// aggregate, so it is shaped rather than disclosed.
 	Aggregate []bool
 }
 
-// AnalyseSelect parses a statement and describes it, refusing anything that is
+// AnalyzeSelect parses a statement and describes it, refusing anything that is
 // not a single SELECT.
 //
-// The refusal is DuckDB's, not Veritix's: json_serialize_sql only serialises
+// The refusal is DuckDB's, not Veritix's: json_serialize_sql only serializes
 // SELECT statements, so a COPY, an ATTACH, a DDL statement, or two statements
 // separated by a semicolon fail here without Veritix needing an opinion about
 // what those look like. What that does *not* cover — a SELECT that reads a file
 // through a table function — is covered by Lockdown instead.
-func (e *Engine) AnalyseSelect(ctx context.Context, query string) (*Analysis, error) {
+func (e *Engine) AnalyzeSelect(ctx context.Context, query string) (*Analysis, error) {
 	var raw string
 	stmt := "SELECT CAST(json_serialize_sql(" + Literal(query) + ") AS VARCHAR)"
 	if err := e.ScanOne(ctx, stmt, []any{&raw}); err != nil {
@@ -85,7 +85,7 @@ func (e *Engine) AnalyseSelect(ctx context.Context, query string) (*Analysis, er
 	return a, nil
 }
 
-// exprNode is the part of DuckDB's serialised expression tree this code reads.
+// exprNode is the part of DuckDB's serialized expression tree this code reads.
 type exprNode struct {
 	Class        string     `json:"class"`
 	FunctionName string     `json:"function_name"`
@@ -97,7 +97,7 @@ type exprNode struct {
 //
 // A constant discloses nothing. An aggregate call reduces many rows to one
 // number. And an expression built only from those — round(avg(x), 2),
-// sum(bad) / count(*) — is still a summary, which is worth recognising because
+// sum(bad) / count(*) — is still a summary, which is worth recognizing because
 // otherwise the useful half of what an auditor asks for comes back shaped.
 // Anything else may be a cell value and is treated as one.
 func isStatistic(e exprNode, aggregates map[string]bool) bool {
@@ -124,14 +124,14 @@ func isStatistic(e exprNode, aggregates map[string]bool) bool {
 		return true
 
 	default:
-		// COLUMN_REF, STAR, SUBQUERY, WINDOW, and anything else unrecognised.
+		// COLUMN_REF, STAR, SUBQUERY, WINDOW, and anything else unrecognized.
 		return false
 	}
 }
 
-// aggregateFunctions reads DuckDB's own catalogue of aggregate functions.
+// aggregateFunctions reads DuckDB's own catalog of aggregate functions.
 //
-// Reading the catalogue rather than keeping a list means the set cannot drift
+// Reading the catalog rather than keeping a list means the set cannot drift
 // out of date with the engine, and a DuckDB upgrade that adds an aggregate does
 // not quietly start shaping its results.
 func (e *Engine) aggregateFunctions(ctx context.Context) (map[string]bool, error) {
@@ -152,7 +152,7 @@ func (e *Engine) aggregateFunctions(ctx context.Context) (map[string]bool, error
 		e.aggNames = set
 	})
 	if e.aggErr != nil {
-		return nil, fmt.Errorf("engine: reading the aggregate catalogue: %w", e.aggErr)
+		return nil, fmt.Errorf("engine: reading the aggregate catalog: %w", e.aggErr)
 	}
 	return e.aggNames, nil
 }

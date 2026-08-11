@@ -97,7 +97,7 @@ func SniffCSV(ctx context.Context, e *engine.Engine, f File) (CSVDialect, error)
 	}); err != nil {
 		return d, fmt.Errorf("source: sniffing %s: %w", f.Rel, err)
 	}
-	d.normalise()
+	d.normalize()
 
 	// Second pass: check that proposal against Veritix's own scoring, and
 	// re-sniff with the chosen delimiter if they disagree. Getting this wrong
@@ -114,7 +114,7 @@ func SniffCSV(ctx context.Context, e *engine.Engine, f File) (CSVDialect, error)
 			&retry.SkipRows, &retry.HasHeader,
 		})
 		if err == nil {
-			retry.normalise()
+			retry.normalize()
 			d.Quote, d.Escape, d.NewLine = retry.Quote, retry.Escape, retry.NewLine
 			d.Comment, d.SkipRows, d.HasHeader = retry.Comment, retry.SkipRows, retry.HasHeader
 		} else {
@@ -179,9 +179,9 @@ func SniffCSV(ctx context.Context, e *engine.Engine, f File) (CSVDialect, error)
 // passing it back to read_csv is rejected as an over-long quote character.
 const duckdbEmptySentinel = "(empty)"
 
-// normalise converts DuckDB's sentinel values into the empty strings the rest
+// normalize converts DuckDB's sentinel values into the empty strings the rest
 // of the package expects.
-func (d *CSVDialect) normalise() {
+func (d *CSVDialect) normalize() {
 	for _, p := range []*string{&d.Delimiter, &d.Quote, &d.Escape, &d.NewLine, &d.Comment} {
 		if *p == duckdbEmptySentinel {
 			*p = ""

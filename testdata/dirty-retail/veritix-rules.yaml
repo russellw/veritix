@@ -17,7 +17,7 @@ rules:
     remedy: Record refunds as a distinct transaction type rather than a negative charge.
 
   - id: customer_status_domain
-    description: Status drives billing, so only these four values are recognised.
+    description: Status drives billing, so only these four values are recognized.
     table: customers.csv
     column: status
     expect: one_of

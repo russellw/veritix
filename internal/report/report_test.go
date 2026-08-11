@@ -262,7 +262,7 @@ func TestSARIFStructure(t *testing.T) {
 		t.Fatal("the fixtures produce findings; SARIF should carry them")
 	}
 
-	// Every result must reference a rule declared in the catalogue, or
+	// Every result must reference a rule declared in the catalog, or
 	// consumers will reject the document.
 	declared := make(map[string]bool)
 	for _, rule := range r.Tool.Driver.Rules {

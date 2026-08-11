@@ -143,7 +143,7 @@ func Discover(paths []string) (*Dataset, error) {
 	}
 
 	ds.Root = commonRoot(paths)
-	ds.finalise()
+	ds.finalize()
 
 	if len(ds.Files) == 0 {
 		return ds, ErrNoTables
@@ -189,16 +189,16 @@ func (ds *Dataset) add(path string, info fs.FileInfo, seen map[string]bool) {
 		f.Kind = KindExcel
 	default:
 		if _, ok := csvExtensions[ext]; !ok {
-			return // not a data file we recognise; not worth reporting
+			return // not a data file we recognize; not worth reporting
 		}
 		f.Kind = KindCSV
 	}
 	ds.Files = append(ds.Files, f)
 }
 
-// finalise fills in relative paths and sorts everything into a stable order so
+// finalize fills in relative paths and sorts everything into a stable order so
 // that two runs over the same directory produce identical reports.
-func (ds *Dataset) finalise() {
+func (ds *Dataset) finalize() {
 	for i := range ds.Files {
 		ds.Files[i].Rel = relTo(ds.Root, ds.Files[i].Path)
 	}

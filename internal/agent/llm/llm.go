@@ -178,7 +178,7 @@ func (u *Usage) Add(o Usage) {
 	u.Reasoning += o.Reasoning
 }
 
-// Stop reasons, normalised across providers.
+// Stop reasons, normalized across providers.
 const (
 	// StopEndTurn means the model finished speaking.
 	StopEndTurn = "end_turn"

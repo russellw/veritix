@@ -215,7 +215,7 @@ func translateResponse(msg *sdk.Message) *llm.Response {
 	return res
 }
 
-// translateError normalises an SDK error, keeping whether a retry could help.
+// translateError normalizes an SDK error, keeping whether a retry could help.
 func translateError(err error) error {
 	var apiErr *sdk.Error
 	if errors.As(err, &apiErr) {

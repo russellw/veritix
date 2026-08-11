@@ -195,8 +195,8 @@ type Summary struct {
 	StartedAt time.Time
 }
 
-// Summarise reduces a run to its headline numbers.
-func (r *Result) Summarise() Summary {
+// Summarize reduces a run to its headline numbers.
+func (r *Result) Summarize() Summary {
 	s := Summary{
 		Root:      r.Dataset.Root,
 		Files:     len(r.Dataset.Files),

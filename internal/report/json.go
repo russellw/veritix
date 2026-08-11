@@ -14,7 +14,7 @@ import (
 
 // SchemaVersion identifies the JSON contract. It is declared in the output so
 // that a consumer can tell when the shape has changed; internal types are
-// deliberately not serialised directly, so refactoring them cannot silently
+// deliberately not serialized directly, so refactoring them cannot silently
 // break somebody's pipeline.
 const SchemaVersion = "veritix.audit/v1"
 
@@ -178,7 +178,7 @@ type ColumnInfo struct {
 	Blanks             int64 `json:"blanks"`
 	Missing            int64 `json:"missing_total"`
 	Distinct           int64 `json:"distinct"`
-	DistinctNormalised int64 `json:"distinct_normalised"`
+	DistinctNormalized int64 `json:"distinct_normalized"`
 	Unique             bool  `json:"unique"`
 
 	MinLength int64   `json:"min_length"`
@@ -208,7 +208,7 @@ type ValueInfo struct {
 	Share float64 `json:"share"`
 }
 
-// NumericInfo summarises numeric content.
+// NumericInfo summarizes numeric content.
 type NumericInfo struct {
 	Count    int64   `json:"count"`
 	Min      float64 `json:"min"`
@@ -223,7 +223,7 @@ type NumericInfo struct {
 	Outliers int64   `json:"outliers"`
 }
 
-// TemporalInfo summarises date content.
+// TemporalInfo summarizes date content.
 type TemporalInfo struct {
 	Count       int64        `json:"count"`
 	Earliest    string       `json:"earliest,omitempty"`
@@ -264,7 +264,7 @@ func WriteJSON(w io.Writer, res *audit.Result, version string, opts Options) err
 	return enc.Encode(doc)
 }
 
-// buildAgent summarises the agent's trace for the report.
+// buildAgent summarizes the agent's trace for the report.
 func buildAgent(t *agent.Trace) *AgentInfo {
 	if t == nil {
 		return nil
@@ -292,7 +292,7 @@ func buildAgent(t *agent.Trace) *AgentInfo {
 
 // Build converts a run into the report document.
 func Build(res *audit.Result, version string, opts Options) *Document {
-	s := res.Summarise()
+	s := res.Summarize()
 
 	doc := &Document{
 		Schema:  SchemaVersion,
@@ -410,7 +410,7 @@ func buildColumn(c *profile.Column, opts Options) ColumnInfo {
 		Blanks:             c.Blanks,
 		Missing:            c.Missing(),
 		Distinct:           c.Distinct,
-		DistinctNormalised: c.DistinctNormalised,
+		DistinctNormalized: c.DistinctNormalized,
 		Unique:             c.Unique(),
 		MinLength:          c.MinLength,
 		MaxLength:          c.MaxLength,

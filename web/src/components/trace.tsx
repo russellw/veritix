@@ -164,7 +164,7 @@ function stoppedReason(trace: AgentTrace): string {
       return `The model could not be reached: ${trace.error ?? 'no reason given'}.`
     case 'refused':
       return 'The model declined the request.'
-    case 'cancelled':
+    case 'canceled':
       return 'The audit was stopped while the investigation was running.'
     default:
       return 'The investigation ended early.'

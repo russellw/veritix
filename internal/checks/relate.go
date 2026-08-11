@@ -322,7 +322,7 @@ func evaluateReference(ctx context.Context, e *engine.Engine, c candidate) ([]fi
 	parentT := engine.Ident(c.parent.table.Name)
 	parentC := engine.Ident(c.parent.column.Name)
 
-	// Compare on the normalised value so that a reference is not reported as
+	// Compare on the normalized value so that a reference is not reported as
 	// broken purely because of casing or padding — that is a separate finding
 	// with a separate remedy.
 	orphanPred := fmt.Sprintf(
@@ -405,7 +405,7 @@ func sharedDomainFindings(ctx context.Context, e *engine.Engine, ds *profile.Dat
 	for _, t := range ds.Tables {
 		for _, c := range t.Columns {
 			// Only categorical columns: a small, repeated set of values.
-			if c.Populated() == 0 || c.DistinctNormalised > 50 {
+			if c.Populated() == 0 || c.DistinctNormalized > 50 {
 				continue
 			}
 			// Identifiers are handled by the reference check, which can say
@@ -414,7 +414,7 @@ func sharedDomainFindings(ctx context.Context, e *engine.Engine, ds *profile.Dat
 			if looksLikeIdentifier(c.Name) {
 				continue
 			}
-			if c.DistinctNormalised >= c.Populated() {
+			if c.DistinctNormalized >= c.Populated() {
 				continue // every value differs; not a category
 			}
 			byName[strings.ToLower(c.Name)] = append(byName[strings.ToLower(c.Name)],
@@ -477,7 +477,7 @@ func sharedDomainFindings(ctx context.Context, e *engine.Engine, ds *profile.Dat
 					Column:  other.column.Name,
 				},
 				Count: extra,
-				Total: other.column.DistinctNormalised,
+				Total: other.column.DistinctNormalized,
 				Evidence: finding.Evidence{
 					CountQuery: q,
 					Expected:   fmt.Sprintf("the same value set as %s", base.table.Display),

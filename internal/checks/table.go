@@ -112,7 +112,7 @@ func checkDuplicateRows(ctx context.Context, e *engine.Engine, tc *tableContext)
 			"Either the same record was exported twice, or a genuine repeat has no " +
 			"identifier to tell the two occurrences apart. Any sum or count over this " +
 			"file double-counts them.",
-		Remedy: "Establish whether the repeats are real events or an export artefact. " +
+		Remedy: "Establish whether the repeats are real events or an export artifact. " +
 			"If they are real, the file needs a column that distinguishes them.",
 		Location: tc.location(nil),
 		Count:    surplus,
@@ -230,7 +230,7 @@ func checkStructure(tc *tableContext) []finding.Finding {
 			Rule:     n.Code,
 			Severity: meta.severity,
 			Origin:   finding.OriginCheck,
-			Title:    summarise(n.Message),
+			Title:    summarize(n.Message),
 			Detail:   n.Message,
 			Remedy:   meta.remedy,
 			Location: tc.location(nil),
@@ -239,9 +239,9 @@ func checkStructure(tc *tableContext) []finding.Finding {
 	return out
 }
 
-// summarise reduces a long explanation to a headline. The messages are written
+// summarize reduces a long explanation to a headline. The messages are written
 // as "what happened; why it matters", so the first clause is the headline.
-func summarise(msg string) string {
+func summarize(msg string) string {
 	for _, sep := range []string{"; ", ", which ", ". "} {
 		if i := strings.Index(msg, sep); i > 0 {
 			return msg[:i]

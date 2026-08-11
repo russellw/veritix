@@ -72,9 +72,9 @@ type columnInfo struct {
 	Blanks   int64 `json:"blanks,omitempty"`
 	Missing  int64 `json:"missing_total,omitempty"`
 	Distinct int64 `json:"distinct"`
-	// DistinctNormalised is the distinct count after trimming and lower-casing.
+	// DistinctNormalized is the distinct count after trimming and lower-casing.
 	// Below Distinct means the column holds variants of the same value.
-	DistinctNormalised int64 `json:"distinct_normalised,omitempty"`
+	DistinctNormalized int64 `json:"distinct_normalized,omitempty"`
 	Unique             bool  `json:"unique,omitempty"`
 
 	LeadingWhitespace  int64 `json:"leading_whitespace,omitempty"`
@@ -82,7 +82,7 @@ type columnInfo struct {
 
 	// Shapes describe the column's formats without disclosing a value.
 	Shapes []countedText `json:"shapes,omitempty"`
-	// Sentinels are recognised placeholders — "N/A", "-", "unknown". They are
+	// Sentinels are recognized placeholders — "N/A", "-", "unknown". They are
 	// sent verbatim because they come from Veritix's own vocabulary of ways to
 	// write "missing", not from the customer's data.
 	Sentinels []countedText `json:"sentinels,omitempty"`
@@ -129,7 +129,7 @@ type formatInfo struct {
 	Count   int64       `json:"count"`
 }
 
-func summariseColumn(g *redact.Guard, c *profile.Column, full bool) columnInfo {
+func summarizeColumn(g *redact.Guard, c *profile.Column, full bool) columnInfo {
 	info := columnInfo{
 		Name:               c.Name,
 		DeclaredType:       c.DeclaredType,
@@ -141,7 +141,7 @@ func summariseColumn(g *redact.Guard, c *profile.Column, full bool) columnInfo {
 		Blanks:             c.Blanks,
 		Missing:            c.Missing(),
 		Distinct:           c.Distinct,
-		DistinctNormalised: c.DistinctNormalised,
+		DistinctNormalized: c.DistinctNormalized,
 		Unique:             c.Unique(),
 		LeadingWhitespace:  c.LeadingWhitespace,
 		TrailingWhitespace: c.TrailingWhitespace,
@@ -152,7 +152,7 @@ func summariseColumn(g *redact.Guard, c *profile.Column, full bool) columnInfo {
 	}
 	if c.Original != c.Name {
 		// The heading as it appears in the file. It matters because a finding
-		// about "order_ref" has to be recognisable to somebody looking at a
+		// about "order_ref" has to be recognizable to somebody looking at a
 		// spreadsheet column headed "Order Ref.".
 		info.Original = c.Original
 	}
@@ -238,7 +238,7 @@ func describeTable() *Tool {
 			}{Table: t.Name, Source: t.Display, Rows: t.RowCount}
 
 			for _, c := range t.Columns {
-				out.Columns = append(out.Columns, summariseColumn(w.Guard, c, false))
+				out.Columns = append(out.Columns, summarizeColumn(w.Guard, c, false))
 			}
 			return out, nil
 		},
@@ -279,7 +279,7 @@ func profileColumn() *Tool {
 			return struct {
 				Table  string     `json:"table"`
 				Column columnInfo `json:"column"`
-			}{Table: t.Name, Column: summariseColumn(w.Guard, c, true)}, nil
+			}{Table: t.Name, Column: summarizeColumn(w.Guard, c, true)}, nil
 		},
 	}
 }

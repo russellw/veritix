@@ -72,7 +72,7 @@ func SafeName(s string) string {
 	return name
 }
 
-// ResultSet is a fully-read query result. Results are materialised rather than
+// ResultSet is a fully-read query result. Results are materialized rather than
 // streamed because they are small by construction: every caller either caps
 // rows or is running an aggregate that returns a handful of them.
 type ResultSet struct {

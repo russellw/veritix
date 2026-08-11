@@ -70,7 +70,7 @@ func runCmd(t *testing.T, args ...string) (string, error) {
 }
 
 // Both refusals happen before the audit does, because an audit is minutes of
-// work and a flag that cannot be honoured should not cost them.
+// work and a flag that cannot be honored should not cost them.
 func TestTraceOutRefusesWhatItCannotDo(t *testing.T) {
 	t.Run("no model to trace", func(t *testing.T) {
 		// The dataset path does not exist either. The trace refusal is the error

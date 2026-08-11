@@ -11,7 +11,7 @@ var (
 	Date    = ""
 )
 
-// Licence and SourceURL are what the binary says about its own terms, in the
+// License and SourceURL are what the binary says about its own terms, in the
 // version output and in the web interface's footer.
 //
 // SourceURL is a var rather than a const because a fork has to be able to
@@ -21,7 +21,7 @@ var (
 // complying; an operator who does not rebuild sets server.source_url instead,
 // which is why config carries the same field and this is only its default.
 var (
-	Licence   = "AGPL-3.0-or-later, or a commercial licence"
+	License   = "AGPL-3.0-or-later, or a commercial license"
 	SourceURL = "https://github.com/russellwallace/veritix"
 )
 

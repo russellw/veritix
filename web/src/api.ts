@@ -13,7 +13,7 @@ refused by the browser, and this file is written to match.
 
 export type Severity = 'error' | 'warning' | 'info'
 
-export type RunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type RunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled'
 
 export interface Dataset {
   id: string
@@ -86,7 +86,7 @@ export interface Column {
   blanks: number
   missing_total: number
   distinct: number
-  distinct_normalised: number
+  distinct_normalized: number
   unique: boolean
   min_length: number
   max_length: number
@@ -126,7 +126,7 @@ export interface Table {
 }
 
 /**
- * AgentInfo summarises the model-driven investigation, when one ran.
+ * AgentInfo summarizes the model-driven investigation, when one ran.
  *
  * Absent from a deterministic-only audit rather than present and empty, so the
  * interface can tell at a glance whether a model was involved at all.
@@ -142,7 +142,7 @@ export interface AgentInfo {
   output_tokens: number
   values_sent_to_model: boolean
   values_withheld: number
-  stopped: 'finished' | 'step_budget' | 'token_budget' | 'provider_error' | 'refused' | 'cancelled'
+  stopped: 'finished' | 'step_budget' | 'token_budget' | 'provider_error' | 'refused' | 'canceled'
   complete: boolean
   duration_ms: number
 }
@@ -202,7 +202,7 @@ export interface TokenUsage {
  *
  * It is the artifact that makes the egress promise checkable rather than
  * merely stated, which is why the interface shows every payload verbatim
- * instead of summarising it.
+ * instead of summarizing it.
  */
 export interface AgentTrace {
   provider: string

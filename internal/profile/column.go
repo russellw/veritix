@@ -81,7 +81,7 @@ func SQLNonBlank(quotedCol string) string { return nonBlank(quotedCol) }
 // SQLTextSentinelList renders the textual placeholder values as a SQL list.
 func SQLTextSentinelList() string { return quotedTextSentinels() }
 
-// SQLIsSentinel is the predicate for a recognised "missing" placeholder.
+// SQLIsSentinel is the predicate for a recognized "missing" placeholder.
 func SQLIsSentinel(quotedCol string) string {
 	return fmt.Sprintf("lower(trim(%s)) IN (%s)", quotedCol, quotedTextSentinels())
 }
@@ -247,7 +247,7 @@ func (c *Column) readBasics(ctx context.Context, e *engine.Engine, table string)
 	c.Nulls = total - nonNull
 	c.Blanks = blanks
 	c.Distinct = distinctAll
-	c.DistinctNormalised = distinctNorm
+	c.DistinctNormalized = distinctNorm
 	c.MinLength, c.MaxLength, c.AvgLength = minLen, maxLen, avgLen
 	c.LeadingWhitespace, c.TrailingWhitespace = leadWS, trailWS
 	c.MinValue, c.MaxValue = minVal.String, maxVal.String

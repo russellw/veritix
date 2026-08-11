@@ -126,7 +126,7 @@ rules:
 		t.Fatal("the explicit rule should have fired")
 	}
 	if explicit.Severity != finding.Info {
-		t.Errorf("severity = %v, want the explicit info to be honoured", explicit.Severity)
+		t.Errorf("severity = %v, want the explicit info to be honored", explicit.Severity)
 	}
 }
 

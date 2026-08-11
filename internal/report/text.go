@@ -20,7 +20,7 @@ func WriteText(w io.Writer, res *audit.Result, opts Options) error {
 	p := &printer{w: w}
 
 	p.printf("Dataset: %s\n", doc.Dataset.Root)
-	p.printf("  %s\n", res.Summarise())
+	p.printf("  %s\n", res.Summarize())
 	writeAgentText(p, doc.Agent)
 	p.newline()
 
@@ -194,9 +194,9 @@ func columnFlags(c ColumnInfo) []string {
 		flags = append(flags, fmt.Sprintf("%d values padded with spaces",
 			c.LeadingWhitespace+c.TrailingWhitespace))
 	}
-	if c.Distinct > c.DistinctNormalised {
+	if c.Distinct > c.DistinctNormalized {
 		flags = append(flags, fmt.Sprintf("%d case/spacing variants",
-			c.Distinct-c.DistinctNormalised))
+			c.Distinct-c.DistinctNormalized))
 	}
 	if c.Temporal != nil {
 		if len(c.Temporal.Formats) > 1 {

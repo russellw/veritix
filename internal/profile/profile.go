@@ -109,10 +109,10 @@ type Column struct {
 	// equal values compare unequal: " ACME" and "Acme" are one customer.
 	LeadingWhitespace  int64
 	TrailingWhitespace int64
-	// DistinctNormalised is the distinct count after trimming and
+	// DistinctNormalized is the distinct count after trimming and
 	// lower-casing. Where it is below Distinct, the column holds variants of
 	// the same value.
-	DistinctNormalised int64
+	DistinctNormalized int64
 
 	// Shapes are value patterns with digits rendered as 9 and letters as X,
 	// most frequent first. They describe the column's format without
@@ -141,7 +141,7 @@ type Column struct {
 // Inference is the conclusion about a column's type.
 //
 // It is measured over the column's *data* values: non-null, non-blank, and not
-// a recognised textual placeholder. Sentinels are accounted for as missing
+// a recognized textual placeholder. Sentinels are accounted for as missing
 // values instead, so a numeric column peppered with "N/A" is still reported as
 // numeric rather than being demoted to text.
 type Inference struct {

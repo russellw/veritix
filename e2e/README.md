@@ -22,7 +22,7 @@ sudo apt-get install -y libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 \
 The nine libraries are what the browser links against. **`fonts-liberation` is
 just as necessary**: a machine with no fonts runs Chromium happily and renders
 every page with no glyphs, which looks like a CSS bug rather than a missing
-package — right layout, right colours, invisible text.
+package — right layout, right colors, invisible text.
 
 `playwright install-deps` covers all of it but pulls several hundred packages,
 including Xvfb and soundfonts, that a headless run never uses.

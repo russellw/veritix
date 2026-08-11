@@ -105,7 +105,7 @@ type chatRequest struct {
 type chatMessage struct {
 	Role string `json:"role"`
 	// Content is a pointer so that an assistant turn carrying only tool calls
-	// serialises as null rather than "", which some servers reject.
+	// serializes as null rather than "", which some servers reject.
 	Content    *string    `json:"content"`
 	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
