@@ -19,9 +19,8 @@ development, scripting, and CI.
 
 ## Current state
 
-Branch `build/audit-engine`, on top of `Initial commit`. Not merged to `main`.
-M0 through M2 are done, and M3's server half is done; the web interface is what
-remains of M3.
+Everything is on `main`. M0 through M2 are done, and M3's server half is done;
+the web interface is what remains of M3.
 
 | | | |
 |---|---|---|
@@ -264,7 +263,9 @@ serving.
 
 ## Notes on working here
 
-- Commit only when asked. Work happens on a branch, not `main`.
+- Commit only when asked. Work goes straight onto `main` — this is a one-person
+  project, and a branch here buys review that nobody is going to do. Do not
+  create feature branches.
 - The DuckDB driver needs CGO; prebuilt static libraries ship with the module,
   so plain `go build` works and the binary is ~61 MB with nothing to install.
   The SQLite driver is `modernc.org/sqlite`, pure Go on purpose: a second C
