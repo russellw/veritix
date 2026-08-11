@@ -604,6 +604,121 @@ tbody tr:hover {
   border-left-color: var(--error);
 }
 
+.notice.warn {
+  border-left-color: var(--warning);
+}
+
+.notice p {
+  margin: 0 0 0.5rem;
+}
+
+.notice p:last-child,
+.notice label:last-child {
+  margin-bottom: 0;
+}
+
+/* ── the agentic auditor ──────────────────────────────────────────────── */
+
+/*
+The banner sits above the findings rather than below them, and the trace view
+shows every payload in full. Both are deliberate: a reader weighing a
+model-proposed finding needs to know what the model was given before they read
+it, and a summary of what left the process would not be evidence about what
+left the process.
+*/
+
+.agent-banner {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 5px 5px 0;
+  background: var(--panel);
+  padding: 0.7rem 0.9rem;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+
+.agent-banner.incomplete {
+  border-left-color: var(--warning);
+}
+
+.agent-banner p {
+  margin: 0;
+}
+
+.agent-banner p + p {
+  margin-top: 0.35rem;
+}
+
+.trace .steps {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+
+.trace .steps > li {
+  border-top: 1px solid var(--line);
+  padding: 0.9rem 0;
+}
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.step-n {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.trace .thinking {
+  margin: 0.5rem 0;
+  padding-left: 0.8rem;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.trace .said {
+  margin: 0.5rem 0;
+  font-size: 0.92rem;
+}
+
+.call {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  margin-top: 0.5rem;
+  padding: 0 0.7rem 0.1rem;
+}
+
+.call.failed {
+  border-color: var(--warning);
+}
+
+.call-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.call-head code {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.call pre {
+  max-height: 22rem;
+  overflow: auto;
+}
+
 .empty {
   color: var(--muted);
   padding: 2rem 0;

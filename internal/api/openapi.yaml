@@ -61,6 +61,39 @@ paths:
             application/yaml:
               schema: { type: string }
 
+  /capabilities:
+    get:
+      tags: [system]
+      summary: What this server can do.
+      description: Authenticated, unlike health — whether a machine has a model
+        configured, and which one, is the operator's business rather than
+        something to publish to anybody who can reach the port. The interface
+        uses it to offer the agentic audit only where one will actually work.
+      operationId: getCapabilities
+      responses:
+        "200":
+          description: The server's capabilities.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent:
+                    type: object
+                    required: [available]
+                    properties:
+                      available:
+                        type: boolean
+                        description: Whether a model provider is configured.
+                      provider: { type: string }
+                      model: { type: string }
+                      values_allowed_by_default:
+                        type: boolean
+                        description: Whether the operator has already permitted
+                          cell values to reach the model in this server's own
+                          configuration.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /datasets:
     get:
       tags: [datasets]

@@ -9,9 +9,13 @@
 # tests upload fixtures and audit them, and a suite that accumulated datasets in
 # somebody's real data directory would be a nasty surprise.
 #
+# A scripted stand-in for a local model runs alongside it, so the agentic
+# screens can be driven without a network model. See stub-model.mjs.
+#
 # Overridable:
 #   BASE_URL   where Playwright looks (default http://localhost:8080)
 #   PORT       what the server binds (default 8080, derived from BASE_URL)
+#   MODEL_PORT what the stub model binds (default 11435)
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,18 +27,29 @@ host_port="${host_port%%/*}"
 host="${host_port%%:*}"
 port="${host_port##*:}"
 
+MODEL_PORT="${MODEL_PORT:-11435}"
+
 data_dir="$(mktemp -d -t veritix-e2e-XXXXXX)"
 
 echo "==> Building the web interface and the server"
 make release
 
+echo "==> Starting the stub model on 127.0.0.1:${MODEL_PORT}"
+node "${repo_root}/e2e/stub-model.mjs" "$MODEL_PORT" &
+model_pid=$!
+
 echo "==> Starting veritix serve on ${host}:${port} (data dir ${data_dir})"
-./bin/veritix serve --addr "${host}:${port}" --data-dir "$data_dir" &
+VERITIX_LLM_PROVIDER=openai-compatible \
+	VERITIX_LLM_BASE_URL="http://127.0.0.1:${MODEL_PORT}/v1" \
+	VERITIX_LLM_MODEL=stub-model \
+	./bin/veritix serve --addr "${host}:${port}" --data-dir "$data_dir" &
 server_pid=$!
 
 cleanup() {
 	kill "$server_pid" 2>/dev/null || true
+	kill "$model_pid" 2>/dev/null || true
 	wait "$server_pid" 2>/dev/null || true
+	wait "$model_pid" 2>/dev/null || true
 	rm -rf "$data_dir"
 }
 trap cleanup EXIT

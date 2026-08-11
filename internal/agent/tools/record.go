@@ -31,10 +31,13 @@ func recordFinding() *Tool {
 			Description: "Record a problem you have found. This is the only way to produce " +
 				"output: anything you do not record here is not in the report. You must supply " +
 				"a count_query — a SELECT returning one number, the count of affected rows — " +
-				"and Veritix will run it. The number it returns is what gets reported, not the " +
-				"number you claim, and a query that returns zero records nothing. Write the " +
+				"and Veritix will run it. You must also state affected_count, the number you " +
+				"believe it will return: if the two disagree, nothing is recorded and you are " +
+				"told the real figure, and a query returning zero records nothing either. Run " +
+				"the query with run_sql first and you will always agree with it. Write the " +
 				"title and detail for the person who has to fix the data: say what will go " +
-				"wrong downstream, not which check noticed it.",
+				"wrong downstream, not which check noticed it, and make sure any number in the " +
+				"title is the one the query returns.",
 			Properties: map[string]any{
 				"rule": str("a short stable slug for this kind of problem, e.g. orphaned_reference " +
 					"or mixed_currency_units; the same problem found again should use the same slug"),
@@ -51,12 +54,15 @@ func recordFinding() *Tool {
 				"remedy": str("what to do about it"),
 				"count_query": str("a SELECT returning exactly one row and one integer: the number " +
 					"of affected rows. This is re-run before the report is written."),
+				"affected_count": integer("how many rows you expect count_query to return. It is " +
+					"checked against what it actually returns, and a disagreement records nothing."),
 				"row_query": str("optional: a SELECT returning the offending rows themselves, so a " +
 					"person can inspect them. It is never run automatically and never shown to you."),
 				"expected": str("what should have been true, in words"),
 				"observed": str("what was actually found, in words"),
 			},
-			Required: []string{"rule", "severity", "table", "title", "detail", "count_query"},
+			Required: []string{"rule", "severity", "table", "title", "detail",
+				"count_query", "affected_count"},
 		},
 
 		invoke: func(ctx context.Context, w *World, args json.RawMessage) (any, error) {
@@ -69,6 +75,7 @@ func recordFinding() *Tool {
 				Detail     string `json:"detail"`
 				Remedy     string `json:"remedy"`
 				CountQuery string `json:"count_query"`
+				Claimed    *int64 `json:"affected_count"`
 				RowQuery   string `json:"row_query"`
 				Expected   string `json:"expected"`
 				Observed   string `json:"observed"`
@@ -133,6 +140,36 @@ func recordFinding() *Tool {
 					"nothing was recorded: the count_query returned 0, so this problem does not "+
 						"reproduce. Either the query is wrong, or the data is fine here. Check the "+
 						"query against %s with run_sql before recording it again", t.Name)
+			}
+
+			// The claim and the measurement have to agree.
+			//
+			// Correcting the number silently is not enough, and the reason is
+			// the title: it is model-authored prose, it usually contains the
+			// figure, and it is the most prominent thing a reader sees. A
+			// finding headed "400 orders have a negative amount" above a count
+			// of 1 is worse than no finding, because it looks like Veritix
+			// vouched for the 400. Requiring the model to state the number
+			// separately turns a discrepancy that would have hidden in prose
+			// into one the engine can see — and the refusal hands back the real
+			// figure, so the retry says the right thing in every place at once.
+			if in.Claimed == nil {
+				return nil, fmt.Errorf(
+					"affected_count is required: state how many rows you expect count_query to " +
+						"return, so that a disagreement with the engine is caught rather than " +
+						"printed")
+			}
+			if *in.Claimed != count {
+				w.mu.Lock()
+				w.refused++
+				w.mu.Unlock()
+				w.log().Info("declined a finding whose claim did not match the measurement",
+					"rule", "agent."+slug, "table", t.Name,
+					"claimed", *in.Claimed, "measured", count)
+				return nil, fmt.Errorf(
+					"nothing was recorded: you said %d rows, but the count_query returned %d. "+
+						"If %d is right, record it again with that figure and with a title that "+
+						"says %d; if not, fix the query", *in.Claimed, count, count, count)
 			}
 
 			if in.RowQuery != "" {

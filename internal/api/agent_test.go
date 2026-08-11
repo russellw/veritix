@@ -126,6 +126,7 @@ func TestAnAgenticRunProducesAFindingAndATrace(t *testing.T) {
 			"detail":   "a refund recorded as an order will understate revenue",
 			"count_query": "SELECT count(*) FROM orders_csv " +
 				"WHERE TRY_CAST(amount AS DOUBLE) < 0",
+			"affected_count": 1,
 		}),
 	)
 	ts := newAgentServer(t, model)

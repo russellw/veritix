@@ -18,7 +18,7 @@ Early development. See `.claude/plans/` for the build plan; the milestones are:
 | M1 | Ingest and profile CSV/Excel into DuckDB — **done** |
 | M2 | Deterministic checks, relationships, rules, reports — **done** |
 | M3 | HTTP server and React web interface — **done** |
-| M4 | Agentic LLM auditor with a strict data-egress guard |
+| M4 | Agentic LLM auditor with a strict data-egress guard — **done** |
 | M5 | MCP server and client |
 | M6 | Hardening, evals, deployment |
 
@@ -34,22 +34,25 @@ columnar engine, and profiles and checks are SQL aggregates over it. DuckDB is
 statically linked into the binary — there is nothing to install.
 
 **The model explores; the engine measures.** The agentic auditor decides *what*
-to investigate, but it never reports a number it made up: every finding it
-records carries the query that produced it, and that query is re-run
-deterministically when the report is built. A finding either reproduces or it
-is dropped.
+to investigate and writes the explanation, but it never reports a number it
+made up. To record a finding it supplies the query that would demonstrate it
+and states what it expects that query to return; Veritix runs the query, and a
+disagreement records nothing and hands back the real figure. Everything
+recorded is then re-run again with the deterministic findings before the report
+is written. A finding either reproduces or it is dropped.
 
 **Findings carry their evidence.** Every finding names the query that produced
-it, and that query is re-run before the finding is reported. Nothing reaches a
-report that the engine will not reproduce on demand — which is what will let
-model-proposed findings sit in the same list as deterministic ones without
-being taken on trust.
+it, so a reader can check the claim rather than take it on trust — which is
+what lets model-proposed findings sit in the same list as deterministic ones.
 
 **Your data does not leave the process.** With a cloud model provider, the
-agent sees schemas, aggregates, distributions, and pattern signatures — never
-cell values. Sending samples requires an explicit opt-in, and even then they
-pass through PII redaction first. A local model (Ollama, vLLM, llama.cpp) is a
-first-class option for customers who want no network egress at all.
+agent sees schemas, aggregates, distributions, and value *shapes* —
+`CUS-004417` reaches it as `XXX-999999` — never cell values. Sending samples
+requires an explicit opt-in, and even then they are masked and truncated first.
+Afterwards you can read every payload that left the machine, verbatim, on the
+run's trace. A local model (Ollama, vLLM, LM Studio) is a first-class option
+for customers who want no network egress at all, and no model at all is the
+default: Veritix without one is a complete deterministic auditor.
 
 ## Building
 

@@ -28,12 +28,13 @@ Everything is on `main`. M0 through M3 are done.
 | M2 | Checks, relationships, rules, reports | done |
 | M3a | HTTP API, SSE, SQLite run store, `veritix serve` | done |
 | M3b | React web interface, embedded and served behind a CSP | done |
-| M4 | Agentic LLM auditor with the egress guard | **next** |
-| M5 | MCP server and client | |
+| M4 | Agentic LLM auditor with the egress guard | done |
+| M5 | MCP server and client | **next** |
 | M6 | Hardening, evals, deployment | |
 
-The web interface still owes browser-driven end-to-end tests; it has been driven
-over HTTP end to end but not in a real browser. See `docs/frontend-stack.md` §8.
+M4 is off by default: `llm.provider: none` is the complete deterministic
+auditor, and over HTTP the agent is per-run (`"agent": true`) rather than a
+server-wide setting.
 
 Working today:
 
@@ -49,8 +50,13 @@ make audit          # typecheck, pnpm audit, go mod verify, govulncheck
 ./bin/veritix audit testdata/dirty-retail --format sarif
 ./bin/veritix audit testdata/dirty-retail --fail-on error   # exits 1
 
+./bin/veritix audit testdata/dirty-retail --llm anthropic
+./bin/veritix audit testdata/dirty-retail \
+    --llm openai-compatible --llm-base-url http://localhost:11434/v1 --llm-model qwen3
+
 ./bin/veritix serve                          # loopback, no token
 ./bin/veritix serve --addr 0.0.0.0:8080 --auth-token "$(openssl rand -hex 16)"
+VERITIX_LLM_PROVIDER=anthropic ./bin/veritix serve   # offers the agent in the UI
 ```
 
 Driving the API by hand:
@@ -64,6 +70,7 @@ ID=$(curl -s -XPOST localhost:8080/api/v1/runs -H 'Content-Type: application/jso
 curl -sN localhost:8080/api/v1/runs/$ID/events            # progress, then done
 curl -s  localhost:8080/api/v1/runs/$ID/report | jq .finding_summary
 curl -s  localhost:8080/api/v1/runs/$ID/findings/<fid>/rows   # the gated one
+curl -s  localhost:8080/api/v1/runs/$ID/trace | jq .steps     # what the model saw
 ```
 
 ## Four ideas the design rests on
@@ -81,9 +88,9 @@ what it holds.
 
 **Findings carry re-runnable evidence.** Every finding has a `CountQuery`, and
 `finding.Set.Verify` re-runs all of them before anything is reported; a finding
-that no longer reproduces is dropped. Right now that is nearly a tautology,
-because the checks are deterministic. It exists for M4: the agent chooses what
-to look at, but a number only reaches the report if the engine produces it.
+that no longer reproduces is dropped. For the deterministic checks that is
+nearly a tautology. For the agent it is the whole mechanism: it chooses what to
+look at, but a number only reaches the report if the engine produces it.
 **Do not weaken this.** It is what makes an agentic auditor sellable rather
 than merely plausible.
 
@@ -94,6 +101,9 @@ to reason about and useless for exfiltration. `TestDefaultReportContainsNoRawVal
 asserts this across all four formats, and `TestReportOmitsRawValuesByDefault`
 asserts it again over HTTP. M4's egress guard extends the same idea to the
 model.
+
+The model is the fourth place this has to hold, and `internal/agent/redact` is
+the single path to it. See "How the agent is put together" below.
 
 There is exactly one exception, and it is deliberate:
 `GET /runs/{id}/findings/{fid}/rows` returns the offending rows themselves,
@@ -129,13 +139,20 @@ internal/
   audit/               the orchestrator every entry point drives
   store/               SQLite: datasets, runs, findings — the audit trail
   api/                 REST + SSE over audit.Run; openapi.yaml is the contract
+  agent/               the tool-calling loop, the system prompt, the trace
+    llm/               provider-agnostic message and tool types
+      anthropic/       Claude, through the official SDK
+      openaicompat/    Ollama, vLLM, LM Studio: hand-written, no SDK exists
+      llmtest/         a scripted model, so the loop is testable without one
+    redact/            the egress guard: the only path from process to model
+    tools/             what the model may touch; record_finding is its only output
 web/                   React + TS + Vite → dist, //go:embed-ed; embed.go
 testdata/dirty-retail/ fixtures with a known defect manifest
 docs/frontend-stack.md the front end's dependency and supply-chain policy
 ```
 
 `audit.Run` is the single pipeline: discover → engine → ingest → profile →
-checks → rules → verify. The CLI and the HTTP API both call it, and the MCP
+checks → rules → *lockdown → agent* → verify. The CLI and the HTTP API both call it, and the MCP
 server will. Three entry points assembling the pipeline slightly differently is
 how a tool ends up reporting different results depending on how it was invoked.
 
@@ -176,6 +193,59 @@ how a tool ends up reporting different results depending on how it was invoked.
   `fs.FS`; `internal/cli/serve.go` passes `web.FS()`. That keeps the API's tests
   free of a front-end build, so they can serve a stub and also test the binary
   built without an interface at all — which is what plain `go build` produces.
+
+## How the agent is put together
+
+`internal/agent` is off unless a provider is configured, and `audit.Run` with a
+nil `Agent` is exactly the auditor M2 shipped. Everything below exists to make
+one claim true: **the model chooses what to look at, and the engine decides
+what is true.**
+
+- **`record_finding` is the agent's only output**, and it takes a claim plus the
+  query that would demonstrate it. Veritix runs the query. The model must also
+  state `affected_count`, and a disagreement records *nothing* — it hands back
+  the real figure and asks for the finding again. Correcting the number quietly
+  is not enough, because the title is model-authored prose that usually carries
+  the figure: a finding headed "400 orders have a negative amount" above a
+  count of 1 looks like Veritix vouching for the 400. A query returning zero
+  records nothing either. What is recorded then goes through `Set.Verify` with
+  everything else, so it is measured twice.
+- **The egress guard is enforced by two types, not by diligence.**
+  `redact.Text` is the only string type that may hold customer content and only
+  a `Guard` method makes one; `redact.Sealed` is the only thing the loop sends
+  and only `Guard.Seal` makes one. `Seal` walks a result and refuses a string
+  reached through an `any` — a query cell, anything whose type stopped saying
+  what it holds. A new tool returning raw values does not compile into a leak;
+  it fails to seal, at the point where it would have been sent. Use
+  `Guard.Derived` for shapes the profiler already derived, so the "withheld"
+  counters mean what they say.
+- **DuckDB errors are scrubbed of single-quoted content.** "Could not convert
+  string 'N/A' to INT" is a cell value escaping through a diagnostic.
+- **`Engine.Lockdown` runs before the agent starts**, from `audit.Run` rather
+  than from a caller who has to remember. `enable_external_access=false` then
+  `lock_configuration=true`, irreversibly, so `read_text('/etc/passwd')` and
+  `COPY … TO` are refused by DuckDB rather than by Veritix's opinion of what a
+  dangerous statement looks like.
+- **`Engine.AnalyseSelect` parses agent SQL with DuckDB's own parser**
+  (`json_serialize_sql`). Anything that is not one SELECT fails to serialise.
+  The select list is classified against DuckDB's aggregate catalogue: aggregates
+  come back as numbers, everything else as shapes. An expression built only from
+  aggregates and constants counts as a statistic; anything unrecognised is
+  treated as a value, which is the safe direction.
+- **No model-supplied identifier reaches SQL.** A table or column name is looked
+  up in the profile and the *profile's* name is what gets quoted.
+- **The trace is a product feature.** It records every payload verbatim on both
+  sides and is served at `/runs/{id}/trace`. It is how a customer checks the
+  egress promise instead of taking it on trust, which is why nothing in it is
+  summarised.
+- **A model that misbehaves is not an error.** Bad arguments, refused SQL, a
+  finding that does not reproduce — all come back to the model as tool errors so
+  it can correct itself. A run ends when the model stops or a budget does.
+
+The honest limit, stated in `redact`'s doc comment: the guard bounds what
+Veritix *sends*. It is not a defence against a model deliberately smuggling data
+out through carefully chosen aggregates. The guarantee is that ordinary
+operation discloses no cell values, and that everything sent is in the trace.
 
 ## Conventions
 
@@ -264,6 +334,30 @@ positives, both commented in place:
   success after its output had gone nowhere, and `os.Exit` skipping `main`'s
   deferred signal cleanup).
 
+**The agent**
+- `json_serialize_sql` returns a JSON *object*, so it needs a
+  `CAST(... AS VARCHAR)` before `database/sql` will scan it into a string.
+- `count(*)` appears in the parse tree as `count_star`, which is why the
+  aggregate set is read from `duckdb_functions()` rather than written down.
+- A UNION has no `select_list` at the top level, so `AnalyseSelect` reports no
+  aggregate columns and every cell is shaped. That is the intended failure
+  direction and worth keeping if the parse-tree reader is ever extended.
+- `max(name)` is an aggregate but returns a cell value, so `Guard.Cell` treats
+  every string as a value regardless of the aggregate flag. Do not "optimise"
+  that away.
+- Shapes are fixed points of the shape function (`shape("XXX-999") == "XXX-999"`),
+  which is why `Guard.Derived` can wrap a profiler shape without re-shaping it.
+
+**Uploads**
+- The upload directory used to be named with the first eight characters of a
+  UUIDv7, and the comment called them random. They are the high bits of the
+  millisecond timestamp and do not change for about a minute, so two uploads of
+  the same folder within a minute shared a directory; `MkdirAll` returned the
+  existing one happily and the upload failed later on the first file that was
+  already there. It is `os.Mkdir` with a `crypto/rand` suffix now, so the
+  uniqueness is structural. Found by the browser tests, once a second spec
+  uploaded the same fixture.
+
 **Web build**
 - Vite's `emptyOutDir` wipes `web/dist/.gitkeep`, and without that placeholder
   `//go:embed all:dist` stops compiling on a clean checkout. `make web`
@@ -306,6 +400,17 @@ API is not shadowed, and the binary built without an interface — against a
 `make web` having been run. `web/embed_test.go` checks the real bundle when one
 is present and skips when it is not.
 
+`internal/agent`'s tests drive the real loop over the same fixtures with a
+scripted provider (`llm/llmtest`): every outbound payload is scanned for the
+same values `rawValuesInFixture` lists in the report tests, nine escape attempts
+are refused, an inflated claim is corrected, an invented finding is declined,
+and both budgets stop a runaway. `internal/api` goes further and points the
+server at a real HTTP endpoint speaking chat-completions, so the provider, the
+loop, the guard, the store and the handler are all on the tested path — that is
+`stubModel` in `agent_test.go`, and the browser tests use the same idea through
+`e2e/stub-model.mjs`. No test calls a real model: they are about what Veritix
+does with what a model said.
+
 `e2e/` covers what happens once a browser executes it: Playwright against the Go
 binary serving the embedded build. `make e2e` builds, serves on a throwaway data
 directory, runs the suite and tears it all down. It is a separate pnpm workspace
@@ -313,6 +418,10 @@ with its own lockfile so Playwright never enters the shipped interface's
 dependency tree, and the browser download is an explicit step rather than an
 install script — see `e2e/README.md` and `docs/frontend-stack.md` §8. There is no
 JavaScript unit-test runner; that is a dependency the current UI does not earn.
+
+`make e2e` also starts `e2e/stub-model.mjs`, a scripted chat-completions
+endpoint, and points the server at it with `VERITIX_LLM_*`, so the agentic
+screens can be driven without a network model.
 
 Running the browser tests needs system packages once, and they need root:
 `sudo apt-get install -y libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64
@@ -350,4 +459,13 @@ text — rather than as a missing dependency.
   `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`;
   `make lint` falls back to `go vet` alone without it, which will not catch
   what CI catches.
+- **The Anthropic SDK is the one dependency M4 added** — eleven modules with
+  its transitive set, measured before adopting it, reasoning in
+  `docs/frontend-stack.md` §6.1. The OpenAI-compatible provider is hand-written
+  and stays that way: there is no official SDK for "whatever Ollama is serving
+  today", and the servers implementing that dialect disagree about corners a
+  client written for the reference implementation would hide.
+- A default install talks to nobody. `llm.provider` is `none`, and both entry
+  points make turning it on a deliberate act: `--llm` on the CLI, `"agent": true`
+  per run over HTTP.
 - Module path is `github.com/russellwallace/veritix`. Licence AGPL-3.0.

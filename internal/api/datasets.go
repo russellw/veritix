@@ -1,17 +1,18 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/russellwallace/veritix/internal/engine"
 	"github.com/russellwallace/veritix/internal/store"
@@ -171,22 +172,43 @@ func (s *Server) createDatasetFromUpload(w http.ResponseWriter, r *http.Request)
 }
 
 // uploadDir makes a fresh directory under the data directory for one upload.
-// The name is only a readable prefix; the random suffix is what makes it
-// unique, so two uploads called "exports" cannot land on top of each other.
+// The name is only a readable prefix; the suffix is what makes it unique, so
+// two uploads called "exports" cannot land on top of each other.
+//
+// Mkdir rather than MkdirAll, with a random suffix: Mkdir creates the
+// directory or fails, so the uniqueness is structural rather than hoped for.
+// The previous version appended the first eight characters of a UUIDv7 and
+// described them as random — they are the high bits of the millisecond
+// timestamp and do not change for about a minute, so two uploads of the same
+// folder within a minute shared a directory. MkdirAll returned the existing one
+// without complaint, and the upload failed later on the first file that was
+// already there.
 func (s *Server) uploadDir(name string) (string, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
+	root := filepath.Join(s.cfg.Server.DataDir, "datasets")
+	if err := os.MkdirAll(root, 0o750); err != nil {
 		return "", err
 	}
+
 	// SafeName reduces the caller's name to letters, digits, and underscores,
-	// so the only parts of this path that are not constants are a sanitised
-	// name and a generated id.
-	dir := filepath.Join(s.cfg.Server.DataDir, "datasets",
-		engine.SafeName(name)+"-"+id.String()[:8])
-	if err := os.MkdirAll(dir, 0o750); err != nil { //nolint:gosec // path components are sanitised above
-		return "", err
+	// so the only part of this path that is not a constant is a sanitised name
+	// followed by bytes from crypto/rand.
+	safe := engine.SafeName(name)
+	for attempt := 0; attempt < 5; attempt++ {
+		var suffix [6]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return "", fmt.Errorf("could not name the upload directory: %w", err)
+		}
+
+		dir := filepath.Join(root, safe+"-"+hex.EncodeToString(suffix[:]))
+		err := os.Mkdir(dir, 0o750) //nolint:gosec // name is sanitised, suffix is random, root is the data dir
+		if err == nil {
+			return dir, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
 	}
-	return dir, nil
+	return "", fmt.Errorf("could not find an unused directory for the upload")
 }
 
 // saveUpload writes one uploaded file into dir.

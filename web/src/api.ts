@@ -125,6 +125,28 @@ export interface Table {
   notes?: Note[]
 }
 
+/**
+ * AgentInfo summarises the model-driven investigation, when one ran.
+ *
+ * Absent from a deterministic-only audit rather than present and empty, so the
+ * interface can tell at a glance whether a model was involved at all.
+ */
+export interface AgentInfo {
+  provider: string
+  model: string
+  steps: number
+  tool_calls: number
+  findings: number
+  not_reproduced: number
+  input_tokens: number
+  output_tokens: number
+  values_sent_to_model: boolean
+  values_withheld: number
+  stopped: 'finished' | 'step_budget' | 'token_budget' | 'provider_error' | 'refused' | 'cancelled'
+  complete: boolean
+  duration_ms: number
+}
+
 export interface Report {
   schema: string
   veritix_version?: string
@@ -143,6 +165,77 @@ export interface Report {
   skipped_files?: { file: string; reason: string }[]
   warnings?: Note[]
   redaction: { values_included: boolean; note?: string }
+  agent?: AgentInfo
+}
+
+// ── the agent's trace ────────────────────────────────────────────────────
+
+export interface TraceCall {
+  tool: string
+  arguments?: unknown
+  /** The exact bytes sent back to the model. */
+  result?: string
+  is_error?: boolean
+  duration_ms: number
+}
+
+export interface TraceStep {
+  step: number
+  thinking?: string
+  text?: string
+  calls?: TraceCall[]
+  stop_reason?: string
+  usage: TokenUsage
+  duration_ms: number
+}
+
+export interface TokenUsage {
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens?: number
+  cache_write_tokens?: number
+  reasoning_tokens?: number
+}
+
+/**
+ * AgentTrace is the record of what the model was told and what it answered.
+ *
+ * It is the artifact that makes the egress promise checkable rather than
+ * merely stated, which is why the interface shows every payload verbatim
+ * instead of summarising it.
+ */
+export interface AgentTrace {
+  provider: string
+  model: string
+  steps: TraceStep[]
+  usage: TokenUsage
+  redaction: {
+    shaped: number
+    masked: number
+    passed: number
+    truncated: number
+    sealed: number
+    bytes: number
+  }
+  values_allowed: boolean
+  findings: number
+  not_reproduced: number
+  max_steps: number
+  token_budget?: number
+  stopped: AgentInfo['stopped']
+  error?: string
+  started_at: string
+  duration_ms: number
+}
+
+/** Capabilities is what this server can do, which shapes what is offered. */
+export interface Capabilities {
+  agent: {
+    available: boolean
+    provider?: string
+    model?: string
+    values_allowed_by_default?: boolean
+  }
 }
 
 /** FindingRows is the one response that carries raw customer data. */
@@ -284,6 +377,10 @@ export interface RunRequest {
   include_values?: boolean
   top_values?: number
   rules?: string
+  /** Run the model-driven investigation as well as the deterministic checks. */
+  agent?: boolean
+  /** Permit the model to see cell values, masked, for this run alone. */
+  allow_sample_values?: boolean
 }
 
 export function startRun(req: RunRequest): Promise<Run> {
@@ -296,6 +393,21 @@ export function cancelRun(id: string): Promise<Run> {
 
 export function getReport(id: string, signal?: AbortSignal): Promise<Report> {
   return get<Report>(`/runs/${encodeURIComponent(id)}/report`, signal)
+}
+
+export function getCapabilities(signal?: AbortSignal): Promise<Capabilities> {
+  return get<Capabilities>('/capabilities', signal)
+}
+
+/**
+ * getTrace fetches what the model was sent and what it answered.
+ *
+ * 404 means the run was audited without a model, which is an ordinary answer
+ * rather than a failure — the caller distinguishes the two by the run it
+ * already has.
+ */
+export function getTrace(runId: string, signal?: AbortSignal): Promise<AgentTrace> {
+  return get<AgentTrace>(`/runs/${encodeURIComponent(runId)}/trace`, signal)
 }
 
 /**

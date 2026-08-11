@@ -32,7 +32,7 @@ records.
 So a compromised npm package in this bundle would not be a hygiene problem. It
 would sit next to exactly the data the product exists to keep in, with a network
 stack underneath it. **The browser is a third place the egress guarantee has to
-hold**, alongside the report and (at M4) the model.
+hold**, alongside the report and the model.
 
 That is the reasoning behind both the dependency policy and the CSP.
 
@@ -184,7 +184,7 @@ and rejected on measurement:
 
 | | tadmor | Veritix |
 |---|---|---|
-| Modules | 5 | 41 (8 direct) |
+| Modules | 5 | 37 linked into the binary (9 direct) |
 | `vendor/` size | ~8 MB, pure source | **728 MB** |
 | Largest items | — | five `libduckdb_static.a` blobs, 59–79 MB each (572 MB total) |
 
@@ -211,6 +211,31 @@ Adding `govulncheck` immediately paid for itself: it reported 16 standard-librar
 vulnerabilities reachable from this code, fixed in Go patch releases the project
 was not pinned to. `go.mod` now carries `toolchain go1.26.5` and the scan is
 clean.
+
+### 6.1 The one dependency M4 added
+
+`github.com/anthropics/anthropic-sdk-go` and ten transitive modules, measured
+before it was adopted:
+
+```
+anthropic-sdk-go, bahlo/generic-list-go, buger/jsonparser, invopop/jsonschema,
+pb33f/ordered-map, standard-webhooks/libraries, tidwall/gjson, tidwall/match,
+tidwall/pretty, tidwall/sjson, go.yaml.in/yaml/v4
+```
+
+Eleven modules for one HTTP call shape is not nothing, and the alternative —
+about 250 lines of `net/http` against `/v1/messages` — was real, because the
+OpenAI-compatible provider is hand-written anyway and the two would have been
+symmetric. The SDK won on the part that matters for correctness: it is generated
+from the API's own schema, so thinking-block replay, cache breakpoints, and the
+effort parameter are the vendor's problem rather than something to re-derive
+from documentation each time the API moves. `govulncheck` is clean across the
+addition.
+
+`internal/agent/llm/openaicompat` stays hand-written. There is no official SDK
+for "whatever Ollama is serving today", the dialect is small, and the servers
+implementing it disagree about corners in ways a client written for the
+reference implementation hides rather than reports.
 
 **The honest residual:** the largest single trust item in Veritix is not any npm
 package. It is the prebuilt DuckDB static libraries shipped inside a Go module,

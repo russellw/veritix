@@ -573,3 +573,60 @@ func TestOpenAPISpecIsServed(t *testing.T) {
 		t.Error("the served document is not an OpenAPI spec")
 	}
 }
+
+// Two uploads of the same folder must not land in the same directory.
+//
+// They used to. The upload directory was named with the first eight characters
+// of a UUIDv7, described in the code as random; they are the high bits of the
+// millisecond timestamp and do not change for about a minute. MkdirAll then
+// returned the existing directory happily, and the second upload failed on the
+// first file that was already there — which a user sees as "could not store
+// legacy.xls: file exists" after uploading a folder they have uploaded before.
+func TestUploadingTheSameFolderTwiceDoesNotCollide(t *testing.T) {
+	ts := newTestServer(t, "")
+
+	upload := func() datasetJSON {
+		t.Helper()
+		body := &bytes.Buffer{}
+		mw := multipart.NewWriter(body)
+		if err := mw.WriteField("name", "quarterly exports"); err != nil {
+			t.Fatalf("write field: %v", err)
+		}
+		part, err := mw.CreateFormFile("files", "orders.csv")
+		if err != nil {
+			t.Fatalf("create part: %v", err)
+		}
+		if _, err := io.WriteString(part, "id,amount\n1,10.00\n"); err != nil {
+			t.Fatalf("write part: %v", err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatalf("close writer: %v", err)
+		}
+
+		req, err := http.NewRequestWithContext(t.Context(),
+			http.MethodPost, ts.URL+"/api/v1/datasets", body)
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+
+		var ds datasetJSON
+		ts.decode(ts.send(req), http.StatusCreated, &ds)
+		return ds
+	}
+
+	first := upload()
+	second := upload()
+
+	if first.Path == second.Path {
+		t.Fatalf("both uploads landed in %s", first.Path)
+	}
+	if first.ID == second.ID {
+		t.Errorf("both uploads produced dataset %s", first.ID)
+	}
+	for _, path := range []string{first.Path, second.Path} {
+		if _, err := os.Stat(filepath.Join(path, "orders.csv")); err != nil {
+			t.Errorf("%s is missing its file: %v", path, err)
+		}
+	}
+}

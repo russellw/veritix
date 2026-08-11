@@ -4,10 +4,11 @@ import * as api from '../api'
 import type { Report, Run } from '../api'
 import { Findings } from '../components/findings'
 import { Profile } from '../components/profile'
+import { Trace } from '../components/trace'
 import { count, duration, when } from '../format'
 import { onLinkClick } from '../router'
 
-type Tab = 'findings' | 'tables'
+type Tab = 'findings' | 'tables' | 'trace'
 
 export function RunScreen({ runId, findingId }: { runId: string; findingId?: string }) {
   const [run, setRun] = useState<Run | null>(null)
@@ -165,6 +166,13 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
           */}
           {report.redaction.note && <p className="notice">{report.redaction.note}</p>}
 
+          {/*
+            And say a model was involved, before the findings rather than after
+            them: whether one looked at this data, and on what terms, changes
+            how a reader should weigh what follows.
+          */}
+          {report.agent && <AgentBanner agent={report.agent} />}
+
           <div className="tabs">
             <button
               className={tab === 'findings' ? 'current' : ''}
@@ -178,16 +186,61 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
             >
               Tables ({report.dataset.table_count})
             </button>
+            {report.agent && (
+              <button
+                className={tab === 'trace' ? 'current' : ''}
+                onClick={() => setTab('trace')}
+              >
+                What the model saw ({report.agent.steps})
+              </button>
+            )}
           </div>
 
-          {tab === 'findings' ? (
+          {tab === 'findings' && (
             <Findings runId={runId} findings={report.findings ?? []} openId={findingId} />
-          ) : (
-            <Profile report={report} />
           )}
+          {tab === 'tables' && <Profile report={report} />}
+          {tab === 'trace' && <Trace runId={runId} />}
         </>
       )}
     </>
+  )
+}
+
+/*
+The banner is deliberately plain about the two things a reader needs before
+weighing an agent's finding: whether their data was sent, and whether the
+investigation finished. Both are easy to leave as a footnote, and both change
+what the findings below are worth.
+*/
+function AgentBanner({ agent }: { agent: api.AgentInfo }) {
+  return (
+    <div className={`agent-banner${agent.complete ? '' : ' incomplete'}`}>
+      <p>
+        <strong>{agent.model}</strong> investigated this dataset alongside the
+        deterministic checks: {agent.steps} steps, {agent.tool_calls} tool calls,{' '}
+        {agent.findings} finding{agent.findings === 1 ? '' : 's'} proposed and proved.
+      </p>
+      <p className="sub">
+        {agent.values_sent_to_model ? (
+          <>Cell values were permitted for this run.</>
+        ) : (
+          <>
+            No cell value was sent to it: what it saw was counts, ratios, and
+            shapes.
+          </>
+        )}
+        {agent.not_reproduced > 0 && (
+          <>
+            {' '}
+            {agent.not_reproduced} further claim
+            {agent.not_reproduced === 1 ? '' : 's'} did not reproduce and{' '}
+            {agent.not_reproduced === 1 ? 'was' : 'were'} discarded.
+          </>
+        )}
+        {!agent.complete && <> The investigation stopped early ({agent.stopped}).</>}
+      </p>
+    </div>
   )
 }
 

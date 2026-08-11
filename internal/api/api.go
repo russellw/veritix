@@ -99,6 +99,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/openapi.yaml", s.handleOpenAPI)
 
 	authed := http.NewServeMux()
+	authed.HandleFunc("GET /api/v1/capabilities", s.handleCapabilities)
 	authed.HandleFunc("GET /api/v1/datasets", s.handleListDatasets)
 	authed.HandleFunc("POST /api/v1/datasets", s.handleCreateDataset)
 	authed.HandleFunc("GET /api/v1/datasets/{datasetId}", s.handleGetDataset)
@@ -151,6 +152,30 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		"status":  "ok",
 		"version": s.version,
 	})
+}
+
+// handleCapabilities tells the interface what this server can do, so that it
+// offers the agentic audit only where a model is actually configured rather
+// than presenting a control that fails when it is used.
+//
+// It is authenticated, unlike health. Whether a machine has a model wired up,
+// and which one, is the operator's business and not something to publish to
+// anybody who can reach the port. The API key is of course never included.
+func (s *Server) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
+	llm := s.cfg.LLM
+	configured := llm.Provider != "" && llm.Provider != config.ProviderNone
+
+	agentInfo := map[string]any{"available": configured}
+	if configured {
+		agentInfo["provider"] = llm.Provider
+		agentInfo["model"] = llm.Model
+		// Whether the operator has already lifted the egress policy in the
+		// server's own configuration, which the interface has to say plainly
+		// rather than showing an unticked box that is a lie.
+		agentInfo["values_allowed_by_default"] = llm.AllowSampleValues
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"agent": agentInfo})
 }
 
 func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {

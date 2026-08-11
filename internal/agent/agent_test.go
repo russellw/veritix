@@ -166,39 +166,62 @@ func TestNothingTheModelSeesContainsACellValue(t *testing.T) {
 }
 
 // The mechanism the whole design turns on: a claim is only a finding if the
-// engine reproduces it, and the engine's number wins.
+// engine reproduces it, and a claim the engine contradicts is refused rather
+// than quietly corrected.
+//
+// Quiet correction is not enough, and the title is why. It is model-authored
+// prose and it usually carries the figure, so a finding headed "9,999 orders"
+// above a count of 1 would look like Veritix vouching for the 9,999.
 func TestTheEngineDecidesWhatIsTrue(t *testing.T) {
 	in := fixture(t)
 	orders := tableNamed(t, in, "order")
 
+	// The fixture spells one currency "gbp" against nine "GBP".
+	caseQuery := "SELECT count(*) FROM " + engine.Ident(orders) +
+		" WHERE currency IS NOT NULL AND currency <> upper(currency)"
+
 	script := llmtest.New(
 		llmtest.Turn{Calls: []llmtest.Call{
-			// A real problem — the fixture spells one currency "gbp" — with a
-			// wildly inflated count.
+			// A real problem, with a wildly inflated count.
 			{Name: "record_finding", Input: map[string]any{
-				"rule":     "currency_case",
-				"severity": "warning",
-				"table":    orders,
-				"column":   "currency",
-				"title":    "9,999 orders record their currency in the wrong case",
-				"detail":   "grouping by currency will report one currency as two",
-				"count_query": "SELECT count(*) FROM " + engine.Ident(orders) +
-					" WHERE currency IS NOT NULL AND currency <> upper(currency)",
+				"rule":           "currency_case",
+				"severity":       "warning",
+				"table":          orders,
+				"column":         "currency",
+				"title":          "9,999 orders record their currency in the wrong case",
+				"detail":         "grouping by currency will report one currency as two",
+				"count_query":    caseQuery,
+				"affected_count": 9999,
 			}},
-			// A problem that does not exist.
+			// A problem that does not exist at all.
 			{Name: "record_finding", Input: map[string]any{
-				"rule":        "invented_problem",
-				"severity":    "error",
-				"table":       orders,
-				"title":       "every order is duplicated",
-				"detail":      "this was made up",
-				"count_query": "SELECT count(*) FROM " + engine.Ident(orders) + " WHERE 1 = 0",
+				"rule":           "invented_problem",
+				"severity":       "error",
+				"table":          orders,
+				"title":          "every order is duplicated",
+				"detail":         "this was made up",
+				"count_query":    "SELECT count(*) FROM " + engine.Ident(orders) + " WHERE 1 = 0",
+				"affected_count": 10,
+			}},
+		}},
+		// Told the real figure, the model records it correctly — with a title
+		// that now says the same thing the evidence does.
+		llmtest.Turn{Calls: []llmtest.Call{
+			{Name: "record_finding", Input: map[string]any{
+				"rule":           "currency_case",
+				"severity":       "warning",
+				"table":          orders,
+				"column":         "currency",
+				"title":          "1 order records its currency in the wrong case",
+				"detail":         "grouping by currency will report one currency as two",
+				"count_query":    caseQuery,
+				"affected_count": 1,
 			}},
 		}},
 		llmtest.Turn{Text: "finished"},
 	)
 
-	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 5}, nil)
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 6}, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -213,30 +236,37 @@ func TestTheEngineDecidesWhatIsTrue(t *testing.T) {
 	if f.Origin != finding.OriginAgent {
 		t.Errorf("origin = %q, want agent", f.Origin)
 	}
-	// The model claimed 9,999; the fixture contains one such row. The recorded
-	// number is the engine's.
 	if f.Count != 1 {
-		t.Errorf("count = %d, want the 1 the engine measured rather than the 9,999 claimed", f.Count)
+		t.Errorf("count = %d, want 1", f.Count)
+	}
+	if strings.Contains(f.Title, "9,999") {
+		t.Errorf("a title carrying the discredited figure was recorded: %q", f.Title)
 	}
 	if f.Location.Column != "currency" {
 		t.Errorf("column = %q, want currency", f.Location.Column)
 	}
-	if res.Trace.Refused != 1 {
-		t.Errorf("refused = %d, want 1 for the invented finding", res.Trace.Refused)
+	if res.Trace.Refused != 2 {
+		t.Errorf("refused = %d, want 2: the inflated claim and the invented one",
+			res.Trace.Refused)
 	}
 
-	// The model has to be told, in terms it can act on, that the invented
-	// finding was not recorded.
-	var refusal string
+	// Both refusals have to tell the model something it can act on.
+	var refusals []string
 	for _, s := range res.Trace.Steps {
 		for _, c := range s.Calls {
 			if c.IsError {
-				refusal = c.Result
+				refusals = append(refusals, c.Result)
 			}
 		}
 	}
-	if !strings.Contains(refusal, "does not reproduce") {
-		t.Errorf("the refusal did not explain itself: %q", refusal)
+	if len(refusals) != 2 {
+		t.Fatalf("got %d refusals, want 2", len(refusals))
+	}
+	if !strings.Contains(refusals[0], "the count_query returned 1") {
+		t.Errorf("the inflated claim was not corrected with the real figure: %q", refusals[0])
+	}
+	if !strings.Contains(refusals[1], "does not reproduce") {
+		t.Errorf("the invented finding's refusal did not explain itself: %q", refusals[1])
 	}
 }
 

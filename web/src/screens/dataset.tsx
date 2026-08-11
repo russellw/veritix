@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import * as api from '../api'
-import type { Dataset, Run } from '../api'
+import type { Capabilities, Dataset, Run } from '../api'
 import { count, duration, when } from '../format'
 import { navigate, onLinkClick } from '../router'
 
@@ -17,6 +17,9 @@ export function DatasetScreen({
   const [error, setError] = useState('')
   const [starting, setStarting] = useState(false)
   const [includeValues, setIncludeValues] = useState(false)
+  const [useAgent, setUseAgent] = useState(false)
+  const [sendValues, setSendValues] = useState(false)
+  const [caps, setCaps] = useState<Capabilities | null>(null)
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -45,11 +48,31 @@ export function DatasetScreen({
     return () => ac.abort()
   }, [load])
 
+  // The agentic audit is offered only where a model is actually configured.
+  // Showing a control that fails when it is used is worse than not showing it.
+  useEffect(() => {
+    const ac = new AbortController()
+    api
+      .getCapabilities(ac.signal)
+      .then((c) => {
+        if (!ac.signal.aborted) setCaps(c)
+      })
+      .catch(() => {
+        /* a server that will not say assumes no model, which is the safe read */
+      })
+    return () => ac.abort()
+  }, [])
+
   async function start() {
     setStarting(true)
     setError('')
     try {
-      const run = await api.startRun({ dataset_id: datasetId, include_values: includeValues })
+      const run = await api.startRun({
+        dataset_id: datasetId,
+        include_values: includeValues,
+        agent: useAgent,
+        allow_sample_values: useAgent && sendValues,
+      })
       navigate(`/runs/${run.id}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -98,6 +121,16 @@ export function DatasetScreen({
           />
           Include cell values in the report
         </label>
+        {caps?.agent.available && (
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={useAgent}
+              onChange={(e) => setUseAgent(e.target.checked)}
+            />
+            Also investigate with {caps.agent.model || caps.agent.provider}
+          </label>
+        )}
         <span className="spacer" />
         <button className="btn danger" onClick={forget}>
           Forget this dataset
@@ -109,6 +142,31 @@ export function DatasetScreen({
           that gets emailed and pasted into tickets — leave this off unless you
           need the examples.
         </p>
+      )}
+      {useAgent && (
+        <div className="notice">
+          <p>
+            The model will be sent this dataset's structure and measurements —
+            column names, counts, distributions, and value shapes such as
+            XXX-999999 — and nothing out of any row. It proposes findings; each
+            one is only reported if Veritix can reproduce it against your data.
+            Afterwards you can read every payload that left this machine.
+          </p>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={sendValues}
+              onChange={(e) => setSendValues(e.target.checked)}
+            />
+            Let it see cell values too, with obvious identifiers masked
+          </label>
+          {sendValues && (
+            <p className="sub">
+              Your data will be sent to {caps?.agent.provider}. Leave this off
+              unless the shapes are not telling you enough.
+            </p>
+          )}
+        </div>
       )}
       {error && <p className="notice error">{error}</p>}
 
