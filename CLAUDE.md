@@ -266,9 +266,9 @@ serving.
 
 ## Notes on working here
 
-- Commit only when asked. Work goes straight onto `main` — this is a one-person
-  project, and a branch here buys review that nobody is going to do. Do not
-  create feature branches.
+- Work goes straight onto `main` — this is a one-person project, and a branch
+  here buys review that nobody is going to do. Do not create feature branches.
+  Use your judgement about when a piece of work is worth committing.
 - The DuckDB driver needs CGO; prebuilt static libraries ship with the module,
   so plain `go build` works and the binary is ~61 MB with nothing to install.
   The SQLite driver is `modernc.org/sqlite`, pure Go on purpose: a second C
