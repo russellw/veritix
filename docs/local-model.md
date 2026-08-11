@@ -138,13 +138,27 @@ From the CLI:
     --llm-base-url http://localhost:11434/v1 \
     --llm-model qwen3:4b-instruct-2507-q4_K_M \
     --llm-max-steps 12 \
+    --trace-out trace.json \
     --log-level debug
 ```
 
-`--log-level debug` is worth it: `msg="tool call"` lines are the only view of
-what the model is doing from the CLI, because `veritix audit` does not surface
-the trace. Over HTTP it is stored per run and served at `/runs/{id}/trace`,
-which is the better way to watch a local model:
+`--trace-out` writes the same document the API serves at `/runs/{id}/trace`:
+every payload in both directions, verbatim, which is what you want when the
+question is why a model did something odd. It is refused up front if no model is
+configured, and refused alongside `--output -` rather than interleaving two
+documents on stdout. `--log-level debug` is still worth adding while a run is in
+progress, since `msg="tool call"` lines arrive as they happen where the trace
+only appears at the end.
+
+Checking the egress promise is then a line, against a real model rather than
+against `llmtest`'s scripted one:
+
+```sh
+grep -c 'CUS-000001' trace.json          # want 0
+```
+
+Over HTTP the same trace is stored per run, which is the better way to watch a
+long one:
 
 ```sh
 VERITIX_LLM_PROVIDER=openai-compatible \
@@ -154,14 +168,8 @@ VERITIX_LLM_MAX_STEPS=30 \
 ./bin/veritix serve
 ```
 
-then `POST /runs` with `"agent": true` and read the trace when it finishes. The
-trace records every payload verbatim in both directions, so it is also how you
-check the egress promise against a real model rather than against
-`llmtest`'s scripted one:
-
-```sh
-curl -s localhost:8080/api/v1/runs/$ID/trace | grep -c 'CUS-000001'   # want 0
-```
+then `POST /runs` with `"agent": true` and read
+`/api/v1/runs/$ID/trace` when it finishes.
 
 **This is deliberately not a `make` target.** `make e2e` drives
 `e2e/stub-model.mjs`, which is scripted, deterministic and takes seconds; a real

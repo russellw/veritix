@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,7 @@ type auditOptions struct {
 	database      string
 	rulesPath     string
 	topValues     int
+	traceOut      string
 
 	// The LLM flags override configuration for this run. They are here rather
 	// than on the root command because the agent is a property of an audit,
@@ -77,6 +79,8 @@ func newAuditCmd(e *env) *cobra.Command {
 	f.IntVar(&opts.llmMaxSteps, "llm-max-steps", 0, "cap the agent's tool-calling loop")
 	f.BoolVar(&opts.allowSampleValues, "allow-sample-values", false,
 		"permit the model to see cell values, masked; off by default, and the report says which was used")
+	f.StringVar(&opts.traceOut, "trace-out", "",
+		"write the agent's trace here as JSON: every payload sent and received (- for stdout)")
 
 	return cmd
 }
@@ -113,6 +117,15 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 	if agentOpts != nil {
 		agentOpts.MaxRows = e.cfg.Engine.MaxResultRows
 	}
+
+	// Both of these are settled before the audit runs, because an audit is
+	// minutes of work and finding out afterwards that its trace had nowhere to
+	// go is the expensive way to learn it.
+	traceOut, closeTrace, err := openTrace(cmd, opts, agentOpts != nil)
+	if err != nil {
+		return err
+	}
+	defer closeTrace()
 
 	var ruleFile *rules.File
 	if opts.rulesPath != "" {
@@ -157,7 +170,62 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 		return err
 	}
 
+	if traceOut != nil {
+		if err := writeTrace(traceOut, res, e); err != nil {
+			return err
+		}
+	}
+
 	return failOn(res, opts.failOn)
+}
+
+// openTrace resolves --trace-out, before the audit rather than after it.
+//
+// Asking for a trace with no model configured is refused rather than quietly
+// producing nothing: the flag exists to answer "what did the model see", and
+// silence in reply to that question is the one answer that could be
+// misread as "nothing".
+func openTrace(cmd *cobra.Command, opts auditOptions, haveModel bool) (io.Writer, func(), error) {
+	if opts.traceOut == "" {
+		return nil, func() {}, nil
+	}
+	if !haveModel {
+		return nil, nil, fmt.Errorf(
+			"--trace-out needs a model to trace: pass --llm, or set llm.provider in the configuration")
+	}
+	if opts.traceOut == "-" {
+		if opts.output == "" || opts.output == "-" {
+			return nil, nil, fmt.Errorf(
+				"--trace-out - and --output - would interleave two documents on stdout: send one of them to a file")
+		}
+		return cmd.OutOrStdout(), func() {}, nil
+	}
+	f, err := os.Create(opts.traceOut) //nolint:gosec // the path is the operator's choice
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating trace file: %w", err)
+	}
+	return f, func() { _ = f.Close() }, nil
+}
+
+// writeTrace saves the record of what the model was sent and what it sent back.
+//
+// It goes out before --fail-on decides the exit code, for the same reason the
+// report does: the run that fails a build is the one somebody most needs to be
+// able to read afterwards.
+func writeTrace(w io.Writer, res *audit.Result, e *env) error {
+	if res.Trace == nil {
+		// A configured model that produced no trace means the run ended before
+		// the agent started — a load failure, or a cancellation. Saying so beats
+		// leaving a file containing the word "null".
+		e.log.Warn("no trace was written: the run ended before the agent started")
+		return nil
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(res.Trace); err != nil {
+		return fmt.Errorf("writing the trace: %w", err)
+	}
+	return nil
 }
 
 // failOn implements the CI gate. The report is always written first: a

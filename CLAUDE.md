@@ -53,6 +53,7 @@ make audit          # typecheck, pnpm audit, go mod verify, govulncheck
 ./bin/veritix audit testdata/dirty-retail --llm anthropic
 ./bin/veritix audit testdata/dirty-retail \
     --llm openai-compatible --llm-base-url http://localhost:11434/v1 --llm-model qwen3
+./bin/veritix audit testdata/dirty-retail --llm anthropic --trace-out trace.json
 
 ./bin/veritix serve                          # loopback, no token
 ./bin/veritix serve --addr 0.0.0.0:8080 --auth-token "$(openssl rand -hex 16)"
@@ -235,9 +236,11 @@ what is true.**
 - **No model-supplied identifier reaches SQL.** A table or column name is looked
   up in the profile and the *profile's* name is what gets quoted.
 - **The trace is a product feature.** It records every payload verbatim on both
-  sides and is served at `/runs/{id}/trace`. It is how a customer checks the
-  egress promise instead of taking it on trust, which is why nothing in it is
-  summarised.
+  sides, is served at `/runs/{id}/trace`, and is written by `audit --trace-out`.
+  It is how a customer checks the egress promise instead of taking it on trust,
+  which is why nothing in it is summarised. Both entry points emit the same
+  document — the CLI encodes `audit.Result.Trace`, which is what the API stores
+  — so there is one answer to "what was the model sent", not two.
 - **A model that misbehaves is not an error.** Bad arguments, refused SQL, a
   finding that does not reproduce — all come back to the model as tool errors so
   it can correct itself. A run ends when the model stops or a budget does.
