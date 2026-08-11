@@ -348,6 +348,22 @@ positives, both commented in place:
 - Shapes are fixed points of the shape function (`shape("XXX-999") == "XXX-999"`),
   which is why `Guard.Derived` can wrap a profiler shape without re-shaping it.
 
+**Local models** — see `docs/local-model.md` for the whole setup.
+- Ollama sizes its context window from VRAM and picks **4096 tokens** when there
+  is no GPU. Veritix's first agent prompt is ~3540, so it fits, runs for a step
+  or two, and then llama.cpp discards from the front — taking the system prompt
+  with it. The model stops knowing it may not see cell values and starts
+  answering in prose, which reads as a stupid model rather than a truncated
+  context. `OLLAMA_CONTEXT_LENGTH=32768` before `ollama serve`, always.
+- Take a **non-thinking** model (Qwen3's `2507` instruct tags). A hybrid emits a
+  reasoning block before every tool call, which on a CPU costs the same per
+  token as useful output, and `openaicompat` drops it on the way back anyway.
+- Probe `/v1/chat/completions` with a two-tool payload before running a full
+  audit: twenty seconds to learn what a full run takes twenty minutes to prove.
+- A small model does not ration its step budget — the first run here spent six
+  consecutive steps on `describe_table` and finished with nothing recorded.
+  Budget for the model, not the dataset.
+
 **Uploads**
 - The upload directory used to be named with the first eight characters of a
   UUIDv7, and the comment called them random. They are the high bits of the

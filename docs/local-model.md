@@ -1,0 +1,267 @@
+# Running the agentic auditor against a local model
+
+Veritix's premise is that commercially sensitive data never leaves the
+customer's machine. A customer who will not send their ledger to a software
+vendor is usually the same customer who will not send it to a model vendor, so
+the local-model path is not a nice-to-have alongside Anthropic — for a large
+part of the addressable market it is the *only* path, and it has to work.
+
+This document is how to set one up, what it costs, and the two ways it fails
+quietly.
+
+It is also the cheapest way to develop against M4. A local model costs nothing
+per token, so the loop, the egress guard, the evidence re-execution and the
+budget stops can all be exercised as often as you like before spending money on
+a frontier model. A *weak* local model is arguably the better test of the
+harness: the "model misbehaves → tool error → it corrects itself" path that
+`internal/agent` claims to handle is one a small model exercises constantly and
+Claude rarely triggers at all.
+
+## Ollama
+
+`openaicompat.DefaultBaseURL` points at `http://localhost:11434/v1`, which is
+Ollama, because Ollama is what a customer running a model on their own hardware
+most often has. Any other server speaking the chat-completions dialect works
+the same way — vLLM, LM Studio, llama.cpp's `llama-server --jinja` — and only
+the base URL changes.
+
+Installed here the same way Node was: the official tarball with its published
+SHA-256 checked, unpacked under `~/.local`, no root and no `curl | sh`.
+
+```sh
+V=v0.32.9
+cd "$(mktemp -d)"
+curl -LO https://github.com/ollama/ollama/releases/download/$V/sha256sum.txt
+curl -LO https://github.com/ollama/ollama/releases/download/$V/ollama-linux-amd64.tar.zst
+grep 'ollama-linux-amd64.tar.zst' sha256sum.txt | sha256sum -c -   # must print OK
+mkdir -p ~/.local/lib/ollama
+tar --use-compress-program=unzstd -xf ollama-linux-amd64.tar.zst -C ~/.local/lib/ollama
+ln -sf ~/.local/lib/ollama/bin/ollama ~/.local/bin/ollama
+```
+
+The tarball is 1.4 GB and unpacks to 2.1 GB, of which about 2.0 GB is
+`lib/ollama/cuda_v12`, `cuda_v13` and `vulkan`. On a machine with no GPU that is
+dead weight and can be deleted to reclaim it; it is left in place here because
+an as-shipped install is easier to reason about than a pruned one.
+
+## Starting it: two settings that are not optional
+
+```sh
+OLLAMA_CONTEXT_LENGTH=32768 \
+OLLAMA_NO_CLOUD=1 \
+OLLAMA_KEEP_ALIVE=60m \
+OLLAMA_FLASH_ATTENTION=1 \
+ollama serve
+```
+
+**`OLLAMA_CONTEXT_LENGTH` is the one that will cost you a day.** Ollama sizes
+the context window from available VRAM and settles on **4096 tokens** when there
+is no GPU. Veritix's first agent prompt against `testdata/dirty-retail` measures
+**3540 tokens** — the system prompt, the tool schemas, and a brief listing what
+the deterministic pass already found. That *fits*. It fits for a step or two,
+and then tool results push the conversation past the window and llama.cpp
+discards from the front, which is where the system prompt lives.
+
+So the failure mode is not an error. It is a model that starts well, then
+forgets it is not allowed to see cell values, forgets that `record_finding` is
+its only output, and starts answering in prose — and every one of those looks
+like "the small model is not up to the job" rather than like a misconfigured
+context window. Set it explicitly and it does not happen.
+
+**`OLLAMA_NO_CLOUD=1`** disables Ollama's remote-inference and web-search
+features. For a product whose entire proposition is that data does not leave the
+customer's machine, a model runtime that can transparently forward a request to
+somebody else's GPU is not something to leave to a default. This is belt and
+braces — Veritix's own egress guard bounds what is in the payload either way —
+but the whole design is layered on the assumption that any single layer might be
+wrong.
+
+`OLLAMA_KEEP_ALIVE=60m` keeps the weights resident between runs; the default 5m
+means paying the model load again every time you go and read something.
+
+## Choosing a model
+
+The requirement is tool calling that works through Ollama's OpenAI-compatible
+shim, in as few parameters as possible. Two things matter more than benchmark
+scores:
+
+**Take the non-thinking variant.** Qwen3's hybrid models emit a reasoning block
+before every tool call. On a CPU those are tokens generated at the same speed as
+useful ones, several hundred of them per step, and `openaicompat` drops them on
+the way back anyway because this dialect has nowhere to replay them. `2507`
+instruct tags are the non-thinking refresh:
+
+```sh
+ollama pull qwen3:4b-instruct-2507-q4_K_M      # 2.5 GB
+```
+
+**Check it emits `tool_calls` before running a full audit.** One request against
+`/v1/chat/completions` with a two-tool payload settles in twenty seconds what a
+full audit takes twenty minutes to discover. A server that ignores `tool_choice`
+and answers in prose is a documented limitation of this dialect, not a bug in
+the loop, and the loop will politely record nothing for as long as you let it.
+
+## What it costs, measured
+
+On the development machine here — an i5-7300U, two physical cores, no GPU,
+30 GB RAM — against `testdata/dirty-retail` with `qwen3:4b-instruct-2507-q4_K_M`:
+
+| | |
+|---|---|
+| Deterministic pass (36 findings) | ~3 s |
+| First agent prompt | 3540 tokens |
+| Prefill | 12–17 tokens/s |
+| Generation, short context | 5.6 tokens/s |
+| Generation, ~3.5k context | 1.7 tokens/s |
+| First step (cold prefill) | 4m 50s |
+| Each later step | 30–100 s |
+| 12-step run, end to end | 18m 32s, 72,575 tokens |
+
+Generation slows by three times between a 225-token context and a 3.5k one:
+this is memory bandwidth, and it is the ceiling. Prefill is only paid once per
+prefix, because llama.cpp caches the KV prefix and each step re-prefills only
+the new tool result — which is why the first step costs five minutes and the
+rest cost one.
+
+The honest summary is that this hardware is good for *validating the plumbing*
+and useless for *measuring audit quality*. A run is a coffee break, not an
+iteration loop. Anything about whether the agent finds good problems needs
+either a frontier model or a machine with a GPU.
+
+## Running it
+
+From the CLI:
+
+```sh
+./bin/veritix audit testdata/dirty-retail \
+    --llm openai-compatible \
+    --llm-base-url http://localhost:11434/v1 \
+    --llm-model qwen3:4b-instruct-2507-q4_K_M \
+    --llm-max-steps 12 \
+    --log-level debug
+```
+
+`--log-level debug` is worth it: `msg="tool call"` lines are the only view of
+what the model is doing from the CLI, because `veritix audit` does not surface
+the trace. Over HTTP it is stored per run and served at `/runs/{id}/trace`,
+which is the better way to watch a local model:
+
+```sh
+VERITIX_LLM_PROVIDER=openai-compatible \
+VERITIX_LLM_BASE_URL=http://localhost:11434/v1 \
+VERITIX_LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M \
+VERITIX_LLM_MAX_STEPS=30 \
+./bin/veritix serve
+```
+
+then `POST /runs` with `"agent": true` and read the trace when it finishes. The
+trace records every payload verbatim in both directions, so it is also how you
+check the egress promise against a real model rather than against
+`llmtest`'s scripted one:
+
+```sh
+curl -s localhost:8080/api/v1/runs/$ID/trace | grep -c 'CUS-000001'   # want 0
+```
+
+**This is deliberately not a `make` target.** `make e2e` drives
+`e2e/stub-model.mjs`, which is scripted, deterministic and takes seconds; a real
+local model is twenty minutes and gives a different answer every time. Those are
+different activities, and a test suite that depends on the second would be a
+test suite nobody runs. The scripted model stays the one in CI.
+
+## Budget: small models do not ration themselves
+
+The first 12-step run spent **six consecutive steps on `describe_table`**,
+enumerating every table in the dataset before investigating anything, then ran
+out of budget with nothing recorded. That is not a malfunction — the system
+prompt does say to start with `list_tables` and `describe_table` — but a
+frontier model reads five tables' worth of profile and forms a hypothesis, while
+a 4B model works through the list.
+
+So the step budget has to be sized for the model, not for the dataset. Below
+about 20 steps a small model will still be orienting when the budget stops it,
+and the report will say so:
+
+```
+investigated by qwen3:4b-instruct-2507-q4_K_M (openai-compatible): 12 steps, 12 tool calls, 0 findings
+no cell values were sent to the model; 17 were replaced by their shape
+! the investigation stopped early (step_budget), so it may be incomplete
+```
+
+Which is the right behaviour and worth keeping: a truncated investigation that
+says it was truncated is honest, where a truncated investigation reported as a
+clean bill of health would be the worst thing this product could do.
+
+## What a second, longer run found
+
+A 30-step run over HTTP got 17 steps in 56 minutes and then died on
+`stopped=provider_error`. Three things came out of it, and all three are about
+Veritix rather than about Ollama.
+
+**Per-step cost grows with context, badly.** The KV prefix cache works — each
+step re-prefills only the new tool result, 37 to 750 tokens — but throughput
+collapses as the window fills. At 225 tokens of context the model generates at
+5.6 tokens/s; at 8.2k it generates at **0.78** and prefills at 1.0. Steps that
+cost 30 seconds early cost two and a half minutes by step 15. The practical
+ceiling on this hardware is about 15 steps, and more budget does not buy
+proportionally more investigation.
+
+**A self-imposed timeout is being retried as if it were a network failure.**
+`openaicompat` marks every transport error `Retryable` (`openaicompat.go`,
+`p.http.Do`), and that includes `llm.request_timeout` expiring. `complete()`
+guards on the *parent* context, but the deadline lives on a child, so the parent
+is still healthy and the loop re-sends the identical request — three times, each
+waiting the full ten minutes. Half of that 56-minute run was the same question
+asked three times of a model that was simply slow, and the run then ended in an
+error rather than stopping cleanly.
+
+Two things to fix: the default `llm.request_timeout` of ten minutes is wrong for
+a local model (use `VERITIX_LLM_REQUEST_TIMEOUT=30m`), and a deadline Veritix
+imposed on itself should not be classified as retryable, because re-sending it
+is guaranteed to fail the same way.
+
+**The model mistook shapes for values.** By step 16 it was writing
+
+```sql
+WHERE "column0" LIKE 'XXX-9%' AND "column1" LIKE 'XXXXXX%'
+WHERE "city" LIKE 'X%'
+```
+
+having read `XXX-999999` in the profile and taken it for the contents of the
+column. An earlier step invented `'99.99', '999.99', '-99.99'` the same way. All
+of them correctly returned zero.
+
+This is the one that matters for the design. The system prompt explains shapes in
+as many words, and a 4B model still loses the distinction once its context is
+full of them. The consequence is not a leak — the guard is unaffected, and the
+run was honest about finding nothing — but it is wasted budget and it would be
+wasted budget on a frontier model too, just less often. Worth considering: render
+shapes in a form that cannot be mistaken for content (`⟨XXX-999999⟩`), or have
+`run_sql` notice a literal that looks like a shape and say so in the tool result.
+The second is better, because it corrects the model at the point of the mistake,
+which is the same mechanism `record_finding` already uses for an inflated count.
+
+**Against `testdata/dirty-retail`, this model recorded nothing in either run.**
+That is a fair result rather than a broken one — the deterministic pass hands it
+36 findings and tells it not to re-report them, which is a high bar for 4B — but
+it does mean a local model of this size validates the machinery without saying
+anything about whether the agent adds value. That question needs a bigger model.
+
+## What this is good for, and what it is not
+
+Good for: the loop, the tool surface, the egress guard, evidence re-execution,
+the budget stops, the trace, and the wire format of a provider. All of those were
+exercised here for free, and one real defect (the retry above) fell out of the
+first hour.
+
+Not good for: whether the agent finds *good* problems. Nothing about a 4B model
+on a 2017 laptop CPU generalises to that, and pretending otherwise would be the
+same mistake as trusting a model's own count.
+
+The egress check, though, is the one that transfers completely — it is a property
+of Veritix, not of the model:
+
+```
+redaction: {"shaped": 14, "masked": 0, "passed": 5, "truncated": 0, "sealed": 17}
+raw fixture values found in the entire trace: none
+```
