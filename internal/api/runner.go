@@ -232,6 +232,7 @@ func (rn *runner) execute(
 	// is stored: the DuckDB file has to be closed and flushed before the rows
 	// endpoint can reopen it read-only.
 	doc := report.Build(res, s.version, reportOpts)
+	trace := res.Trace
 	if err := res.Close(); err != nil {
 		s.log.Warn("could not close the run's engine", "run", run.ID, "error", err)
 	}
@@ -259,6 +260,18 @@ func (rn *runner) execute(
 		s.log.Error("could not record the run's findings", "run", run.ID, "error", err)
 		_ = s.store.StopRun(recordCtx, run.ID, store.StatusFailed, "the results could not be stored")
 		return
+	}
+
+	// The trace is stored last and its failure does not fail the run: the
+	// findings are already safe, and losing the record of how they were
+	// investigated is worth a loud log line rather than throwing away a
+	// completed audit.
+	if trace != nil {
+		if body, err := json.Marshal(trace); err != nil {
+			s.log.Error("could not encode the agent trace", "run", run.ID, "error", err)
+		} else if err := s.store.SaveTrace(recordCtx, run.ID, body); err != nil {
+			s.log.Error("could not record the agent trace", "run", run.ID, "error", err)
+		}
 	}
 
 	// No completion event is published here: audit.Run logs its own, and the

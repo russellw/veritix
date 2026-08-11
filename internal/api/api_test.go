@@ -180,6 +180,21 @@ func (ts *testServer) startRun(body map[string]any) *runJSON {
 // carries.
 func (ts *testServer) awaitDone(runID string) *runJSON {
 	ts.t.Helper()
+	run, _ := ts.stream(runID)
+	return run
+}
+
+// streamMessages returns the progress messages a run published, for tests about
+// what a watching browser is told.
+func (ts *testServer) streamMessages(runID string) []string {
+	ts.t.Helper()
+	_, messages := ts.stream(runID)
+	return messages
+}
+
+// stream reads a run's event stream to its end.
+func (ts *testServer) stream(runID string) (*runJSON, []string) {
+	ts.t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -203,6 +218,7 @@ func (ts *testServer) awaitDone(runID string) *runJSON {
 		ts.t.Fatalf("content type = %q, want text/event-stream", got)
 	}
 
+	var messages []string
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for scanner.Scan() {
@@ -218,11 +234,12 @@ func (ts *testServer) awaitDone(runID string) *runJSON {
 			if ev.Run == nil {
 				ts.t.Fatal("the terminal event carried no run")
 			}
-			return ev.Run
+			return ev.Run, messages
 		}
+		messages = append(messages, ev.Message)
 	}
 	ts.t.Fatalf("the event stream ended without a terminal event: %v", scanner.Err())
-	return nil
+	return nil, nil
 }
 
 // A run has to survive the whole way through: accepted, streamed, stored, and

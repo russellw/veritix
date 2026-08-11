@@ -110,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("POST /api/v1/runs/{runId}/cancel", s.handleCancelRun)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/report", s.handleGetReport)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/report.html", s.handleGetReportHTML)
+	authed.HandleFunc("GET /api/v1/runs/{runId}/trace", s.handleGetTrace)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/events", s.handleRunEvents)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/findings/{findingId}/rows", s.handleFindingRows)
 

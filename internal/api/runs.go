@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/russellwallace/veritix/internal/agent"
 	"github.com/russellwallace/veritix/internal/audit"
+	"github.com/russellwallace/veritix/internal/config"
 	"github.com/russellwallace/veritix/internal/profile"
 	"github.com/russellwallace/veritix/internal/report"
 	"github.com/russellwallace/veritix/internal/rules"
@@ -98,6 +100,13 @@ type createRunRequest struct {
 	IncludeValues bool   `json:"include_values"`
 	TopValues     *int   `json:"top_values"`
 	Rules         string `json:"rules"`
+	// Agent runs the model-driven investigation for this run. It is per-run
+	// and defaults off even when a provider is configured: sending a dataset's
+	// metadata to a model is a decision somebody should take deliberately, not
+	// one they inherit from a config file they set up months ago.
+	Agent bool `json:"agent"`
+	// AllowSampleValues lifts the egress policy for this run alone.
+	AllowSampleValues bool `json:"allow_sample_values"`
 }
 
 func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +146,27 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The agent is configured before the run is created, so that a
+	// misconfigured provider fails the request the operator is watching rather
+	// than a background run they have to go and find in the history.
+	var agentOpts *agent.Options
+	if req.Agent {
+		if s.cfg.LLM.Provider == "" || s.cfg.LLM.Provider == config.ProviderNone {
+			writeError(w, http.StatusBadRequest,
+				"no model is configured; set llm.provider to anthropic or openai-compatible")
+			return
+		}
+		cfg := s.cfg.LLM
+		if req.AllowSampleValues {
+			cfg.AllowSampleValues = true
+		}
+		if agentOpts, err = agent.Configure(cfg); err != nil {
+			writeError(w, http.StatusBadRequest, "the model is not configured correctly: %s", err)
+			return
+		}
+		agentOpts.MaxRows = s.cfg.Engine.MaxResultRows
+	}
+
 	run, err := s.store.CreateRun(r.Context(), ds.ID, s.version, "")
 	if err != nil {
 		s.writeStoreError(w, err, "could not create the run")
@@ -162,6 +192,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			Engine:       s.cfg.Engine,
 			DatabasePath: dbPath,
 			Rules:        ruleFile,
+			Agent:        agentOpts,
 			Profile:      profile.Options{TopValues: topValues},
 		},
 		report.Options{IncludeValues: req.IncludeValues},
@@ -211,6 +242,36 @@ func (s *Server) handleGetReport(w http.ResponseWriter, r *http.Request) {
 
 	// The stored document is served verbatim. Re-encoding it here would be a
 	// second chance for the API and the JSON report to disagree.
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(doc) //nolint:gosec // JSON this server encoded, served as JSON
+}
+
+// handleGetTrace serves the record of what a model was sent and what it
+// answered.
+//
+// This is the endpoint that makes the egress promise checkable rather than
+// merely stated: a customer can read every payload that left the process,
+// verbatim, instead of taking Veritix's word for what was in it. It is served
+// like the report — stored bytes, written straight out — because re-encoding
+// it would be a chance for the served trace and the recorded one to differ.
+func (s *Server) handleGetTrace(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("runId")
+
+	doc, err := s.store.Trace(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// Distinguish "no such run" from "that run had no model", because
+			// they mean very different things to whoever is asking.
+			if _, runErr := s.store.Run(r.Context(), id); runErr == nil {
+				writeError(w, http.StatusNotFound,
+					"run %s was audited without a model, so there is no trace", id)
+				return
+			}
+		}
+		s.writeStoreError(w, err, "could not read the trace")
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_, _ = w.Write(doc) //nolint:gosec // JSON this server encoded, served as JSON
 }

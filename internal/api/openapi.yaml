@@ -217,6 +217,21 @@ paths:
                   type: string
                   description: Path on the server to a YAML file of your own
                     expectations, applied after the built-in checks.
+                agent:
+                  type: boolean
+                  default: false
+                  description: Run the model-driven investigation after the
+                    deterministic pass. Off by default even where a provider is
+                    configured, because sending a dataset's metadata to a model
+                    is a decision to take per run rather than inherit from a
+                    config file. Requires llm.provider to be set; a request
+                    asking for it on a server with no model is refused.
+                allow_sample_values:
+                  type: boolean
+                  default: false
+                  description: Permit the model to see cell values, masked, for
+                    this run alone. Off by default; the report and the trace
+                    both record which policy was in force.
       responses:
         "202":
           description: Accepted, and queued.
@@ -300,6 +315,30 @@ paths:
           content:
             text/html:
               schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /runs/{runId}/trace:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: Fetch the record of what the model was sent and what it answered.
+      description: |
+        Every step of the agentic investigation: the model's own words, each
+        tool call's arguments, and each result exactly as the egress guard
+        released it. Nothing is summarised — a summary of what left the process
+        is not evidence about what left the process — so this is how a customer
+        checks the egress promise rather than taking it on trust.
+
+        404 for a run that was audited without a model, with a message saying so.
+      operationId: getRunTrace
+      responses:
+        "200":
+          description: The trace.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentTrace" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -472,6 +511,80 @@ components:
             warnings: { type: integer }
             info: { type: integer }
 
+    AgentTrace:
+      type: object
+      description: |
+        Every step of an agentic run, verbatim on both sides. This is the
+        artifact that makes "your data does not leave the machine" checkable:
+        each call's arguments are the model's own words, and each result is the
+        exact payload the egress guard released.
+      required: [provider, model, steps, usage, redaction, stopped]
+      properties:
+        provider: { type: string }
+        model: { type: string }
+        values_allowed:
+          type: boolean
+          description: Whether cell values were permitted for this run.
+        findings: { type: integer }
+        not_reproduced: { type: integer }
+        max_steps: { type: integer }
+        token_budget: { type: integer }
+        stopped:
+          type: string
+          enum: [finished, step_budget, token_budget, provider_error, refused, cancelled]
+        error:
+          type: string
+          description: Set when the run ended because the provider failed.
+        started_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+        usage:
+          type: object
+          properties:
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+            cache_read_tokens: { type: integer }
+            cache_write_tokens: { type: integer }
+            reasoning_tokens: { type: integer }
+        redaction:
+          type: object
+          description: What the guard did, so the withholding is counted rather
+            than asserted.
+          properties:
+            shaped: { type: integer }
+            masked: { type: integer }
+            passed: { type: integer }
+            truncated: { type: integer }
+            sealed: { type: integer }
+            bytes: { type: integer }
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              step: { type: integer }
+              thinking:
+                type: string
+                description: The model's reasoning, when the provider returns a
+                  summary of it. Usually absent.
+              text: { type: string }
+              stop_reason: { type: string }
+              duration_ms: { type: integer }
+              usage: { type: object }
+              calls:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    tool: { type: string }
+                    arguments:
+                      type: object
+                      description: What the model asked for, as it wrote it.
+                    result:
+                      type: string
+                      description: The exact bytes sent back to the model.
+                    is_error: { type: boolean }
+                    duration_ms: { type: integer }
+
     Report:
       type: object
       description: |
@@ -498,6 +611,41 @@ components:
           properties:
             values_included: { type: boolean }
             note: { type: string }
+        agent:
+          type: object
+          description: |
+            What the model-driven investigation did, when one ran. Absent
+            entirely from a deterministic-only audit, so that a reader can tell
+            at a glance whether a model was involved. The full trace is a
+            separate document at /runs/{runId}/trace.
+          properties:
+            provider: { type: string }
+            model: { type: string }
+            steps: { type: integer }
+            tool_calls: { type: integer }
+            findings:
+              type: integer
+              description: How many findings the agent contributed.
+            not_reproduced:
+              type: integer
+              description: How many it proposed that the engine measured at
+                zero and refused to record.
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+            values_sent_to_model:
+              type: boolean
+              description: Whether this run was permitted to send cell values.
+            values_withheld:
+              type: integer
+              description: How many values were replaced by their shape.
+            stopped:
+              type: string
+              enum: [finished, step_budget, token_budget, provider_error, refused, cancelled]
+            complete:
+              type: boolean
+              description: False when the investigation was cut short, so a
+                report does not imply thoroughness it did not have.
+            duration_ms: { type: integer }
 
     Finding:
       type: object

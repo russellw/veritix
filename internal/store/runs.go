@@ -495,3 +495,34 @@ func (s *Store) Findings(ctx context.Context, runID string) ([]Finding, error) {
 	}
 	return out, rows.Err()
 }
+
+// SaveTrace records what the agentic auditor did during a run.
+//
+// It is written after FinishRun rather than inside it. A trace is worth having
+// even when the report could not be stored — it is the record of what left the
+// machine — but a run whose findings failed to save should not also fail
+// because of its trace.
+func (s *Store) SaveTrace(ctx context.Context, runID string, document json.RawMessage) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO traces (run_id, document, created_at) VALUES (?, ?, ?)
+		 ON CONFLICT(run_id) DO UPDATE SET document = excluded.document`,
+		runID, []byte(document), formatTime(time.Now()))
+	if err != nil {
+		return fmt.Errorf("save trace: %w", err)
+	}
+	return nil
+}
+
+// Trace returns a run's agent trace.
+func (s *Store) Trace(ctx context.Context, runID string) (json.RawMessage, error) {
+	var doc []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT document FROM traces WHERE run_id = ?`, runID).Scan(&doc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("run %s has no agent trace: %w", runID, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read trace: %w", err)
+	}
+	return doc, nil
+}

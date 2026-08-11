@@ -125,6 +125,18 @@ var migrations = []string{
 		PRIMARY KEY (run_id, id)
 	);
 	CREATE INDEX findings_by_rule ON findings(rule);`,
+
+	// The agentic auditor's trace: exactly what was sent to a model and what
+	// came back. It is a table of its own rather than a column on runs because
+	// it is large, it is only read when somebody asks for it, and a run
+	// without a model has none. Like the report document it is an opaque blob,
+	// for the same reason: the shape of a trace changing should not be a
+	// database migration.
+	`CREATE TABLE traces (
+		run_id     TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+		document   BLOB NOT NULL,
+		created_at TEXT NOT NULL
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
