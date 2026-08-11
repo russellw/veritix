@@ -283,6 +283,12 @@ operation discloses no cell values, and that everything sent is in the trace.
   "your data is fine" or "this never ran", and the second is dangerous when
   somebody is relying on it.
 - Diagnostics to stderr, report to stdout.
+- **US spelling everywhere**: prose, comments, identifiers, JSON fields, enum
+  values, CSS classes. `analyze`, `normalize`, `center`, `canceled`, `license`,
+  `catalog`, `behavior`. The repo used to mix conventions and one consistent
+  answer is worth more than either argument; it also matches Go, CSS and SPDX,
+  which are not going to change to suit us. The exception is `LICENSE`, which is
+  the FSF's text verbatim.
 - Comments explain *why*. The code says what.
 
 ## Gotchas already paid for
