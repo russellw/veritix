@@ -65,6 +65,7 @@ why the CSP is treated as a tested guarantee rather than a header.
 - **Delivery:** served by the Go binary behind a strict CSP with no
   `unsafe-inline` anywhere.
 - **Go modules:** not vendored; `go mod verify` and `govulncheck` in CI instead.
+- **Licences:** permissive only, npm and Go alike — see §6.2.
 
 ### 3.1 Why no other runtime dependencies
 
@@ -242,6 +243,23 @@ package. It is the prebuilt DuckDB static libraries shipped inside a Go module,
 verified by nothing beyond a `go.sum` hash of the blob itself. That was accepted
 at M1 as the price of not writing a query engine, and it remains accepted — but
 it should be named rather than obscured by the care taken elsewhere.
+
+### 6.2 Licences are an adoption criterion, on both sides of the build
+
+Veritix is dual licensed — AGPL-3.0-or-later, or commercial terms for customers
+who cannot take the AGPL (`LICENSING.md`). A commercial licence can only
+deliver what the project has the right to deliver, so **a copyleft dependency
+is not adoptable here at any technical merit**, npm or Go. GPL, AGPL and SSPL
+are all out; so is anything with a field-of-use restriction, which is the
+common failure mode of the newer "source-available" licences.
+
+Everything linked or embedded today clears this: MIT, BSD-3-Clause or
+Apache-2.0 across the Go modules, and MIT for `react` and `react-dom`. That is
+partly luck of the ecosystem and partly M1's choices — `modernc.org/sqlite` was
+taken for being pure Go, and is BSD-3-Clause; DuckDB is MIT.
+
+Check the licence first. It is a cheaper test than the module count and it
+disqualifies faster: a dependency that fails it does not get measured.
 
 ## 7. What this does not solve
 

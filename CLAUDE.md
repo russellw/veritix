@@ -150,6 +150,9 @@ internal/
 web/                   React + TS + Vite → dist, //go:embed-ed; embed.go
 testdata/dirty-retail/ fixtures with a known defect manifest
 docs/frontend-stack.md the front end's dependency and supply-chain policy
+LICENSING.md           the dual licence: AGPL, or commercial terms
+CLA.md                 the contributor agreement that makes the second possible
+CONTRIBUTING.md        how to work on it, and the four things a patch must not do
 ```
 
 `audit.Run` is the single pipeline: discover → engine → ingest → profile →
@@ -487,4 +490,15 @@ text — rather than as a missing dependency.
 - A default install talks to nobody. `llm.provider` is `none`, and both entry
   points make turning it on a deliberate act: `--llm` on the CLI, `"agent": true`
   per run over HTTP.
-- Module path is `github.com/russellwallace/veritix`. Licence AGPL-3.0.
+- Module path is `github.com/russellwallace/veritix`.
+- **Dual licensed on purpose**: AGPL-3.0-or-later, or commercial terms for
+  customers who cannot take the AGPL — `LICENSING.md` says which is which, and
+  it is a selling document as much as a legal one. Two consequences for the
+  code. First, **a copyleft dependency is not adoptable at any technical
+  merit**: everything linked or embedded today is MIT, BSD-3-Clause or
+  Apache-2.0, and a GPL/AGPL/SSPL library would be a term the commercial
+  licence could not deliver. Check the licence before measuring the module
+  count. Second, contributions from anyone but the copyright holder need the
+  CLA in `CLA.md`, signed by a `Signed-off-by` trailer — code without one
+  cannot go into a commercially licensed build, and merging it anyway is how a
+  dual licence quietly stops being true.

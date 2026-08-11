@@ -99,4 +99,12 @@ variables, then flags. See `internal/config/config.go` for every field.
 
 ## Licence
 
-AGPL-3.0. See `LICENSE`.
+Veritix is dual licensed: **AGPL-3.0-or-later** (the full text is in
+`LICENSE`), or a **commercial licence** for anyone who needs terms the AGPL
+cannot give — shipping it inside a product of their own, running a modified
+copy as a service without publishing the modifications, or getting a warranty
+and a support commitment on paper.
+
+Same code either way. `LICENSING.md` explains which one you need and how to
+ask about the second. Contributions are accepted under the CLA in `CLA.md`;
+`CONTRIBUTING.md` has the mechanics.

@@ -13,8 +13,10 @@ info:
     Bind address defaults to loopback. Exposing an instance to a network
     requires an auth token; the server refuses to start otherwise.
   license:
-    name: AGPL-3.0-or-later
-    identifier: AGPL-3.0-or-later
+    # Dual licensed: the AGPL to everyone, or commercial terms for anyone who
+    # needs terms it cannot give. See LICENSING.md in the repository.
+    name: AGPL-3.0-or-later, or a commercial licence
+    identifier: AGPL-3.0-or-later OR LicenseRef-Veritix-Commercial
 
 servers:
   - url: /api/v1
