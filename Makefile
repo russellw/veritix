@@ -112,6 +112,29 @@ audit: web-check
 		&& govulncheck ./... \
 		|| echo "govulncheck not installed; install: go install golang.org/x/vuln/cmd/govulncheck@latest"
 
+# ── browser tests ──────────────────────────────────────────────────────────
+
+# e2e/ is its own pnpm workspace with its own lockfile, so that Playwright and
+# its browser download never enter the shipped interface's dependency tree.
+E2E := e2e
+
+.PHONY: e2e-install
+e2e-install:
+	cd $(E2E) && $(PNPM) install --frozen-lockfile
+	@# Playwright's install script is blocked like every other one, so the
+	@# browser download is run here, deliberately and visibly, instead.
+	cd $(E2E) && $(PNPM) install-browser
+
+# Builds, serves on a throwaway data directory, runs the tests, tears it down.
+.PHONY: e2e
+e2e: e2e-install
+	./$(E2E)/run-local.sh
+
+# Against a server that is already running, for a quicker loop.
+.PHONY: e2e-test
+e2e-test:
+	cd $(E2E) && $(PNPM) test
+
 .PHONY: clean
 clean:
 	rm -rf $(BUILD_DIR) coverage.out $(WEB)/dist/assets $(WEB)/dist/index.html

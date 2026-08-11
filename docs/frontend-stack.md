@@ -234,12 +234,56 @@ it should be named rather than obscured by the care taken elsewhere.
   grep can do that. The CSP is the actual enforcement, and it is enforced by the
   browser rather than by us.
 
-## 8. Deferred
+## 8. Browser tests, and why they live in their own workspace
 
-- **Browser-driven end-to-end tests.** The interface has been driven over HTTP
-  end to end, but not yet in a real browser. Playwright means a browser-automation
-  dependency tree and a downloaded browser binary, so it belongs in an isolated
-  workspace the way tadmor puts it in `e2e/` — a decision to take on its own
-  merits rather than fold into M3b.
+`e2e/` is a **separate pnpm workspace with its own lockfile**. Playwright is a
+build-and-test tool that also downloads a browser; letting it into `web/` would
+put all of that in the dependency graph of the thing that ships, where it has no
+business being. Four packages, none of them in the bundle.
+
+The same hardening applies — pinned corepack pnpm, frozen lockfile, cooldown,
+pinned registry — with one difference that matters:
+
+`onlyBuiltDependencies` is empty here for a sharper reason than in `web/`.
+**Playwright's install script downloads browser binaries over the network**,
+which is precisely the class of thing this policy exists to stop. So the
+download is not a lifecycle script; it is an explicit, visible step —
+`pnpm install-browser`, wrapped by `make e2e-install`. Chromium only; Firefox
+and WebKit would triple the download for no extra coverage.
+
+The tests drive the **Go binary serving the embedded build**, not the Vite dev
+server, because that is what a customer runs. `e2e/run-local.sh` builds it,
+serves it on a `mktemp` data directory, runs the suite and always tears both
+down — the tests upload fixtures and audit them, and a suite that accumulated
+datasets in somebody's real data directory would be a nasty surprise.
+
+What they cover is the part no Go test can reach: that the bundle loads and runs
+under the strict CSP, that SSE progress drives a re-render with no reload, that
+a deep link to a finding survives being pasted into a fresh tab, that the rows
+gate stays shut until pressed, and that the page issues no cross-origin request.
+
+**Running them needs system packages for the browser**, which need root:
+
+```sh
+sudo apt-get install -y libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 \
+  libatspi2.0-0t64 libgbm1 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+  fonts-liberation
+```
+
+The nine libraries are what the headless shell links against; `ldd` on the
+binary lists exactly those. **`fonts-liberation` is not optional and is easy to
+miss**: fonts are runtime data found through fontconfig rather than a linked
+library, so a machine without any launches Chromium perfectly happily and then
+renders every page with no glyphs at all. The failure looks like a CSS bug —
+correct layout, correct colours, invisible text — which is a confusing hour if
+you have not seen it before.
+
+Playwright's own `playwright install-deps` covers all of this but pulls several
+hundred packages including Xvfb, OpenCL and soundfonts, none of which a headless
+run touches. CI uses `playwright install --with-deps chromium`, because a
+throwaway runner has root and nothing to protect.
+
+## 9. Still deferred
+
 - **Tightening `img-src` off `data:`.** Vite inlines small assets as data URIs.
   There are none today; if that stays true the directive can be dropped.

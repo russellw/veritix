@@ -1,0 +1,20 @@
+{
+  "name": "veritix-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Playwright browser tests. A separate workspace with its own lockfile so that Playwright never enters the shipped interface's dependency tree.",
+  "type": "module",
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report",
+    "install-browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0"
+  }
+}

@@ -1,0 +1,11 @@
+# Mirrors web/pnpm-workspace.yaml. See docs/frontend-stack.md §3.2.
+
+# Refuse any version published less than 7 days ago.
+minimumReleaseAge: 10080
+
+# Kept empty, and for a sharper reason here than in web/: Playwright's install
+# script downloads browser binaries from the internet. Letting a lifecycle
+# script do that is exactly the thing this policy exists to prevent, so the
+# download is run deliberately and visibly instead —
+# `pnpm install-browser`, which is `playwright install chromium`.
+onlyBuiltDependencies: []

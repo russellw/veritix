@@ -299,14 +299,29 @@ Run `go test -race ./...` before committing — `profile` and `ingest` fan out
 across goroutines, and `api` now runs audits on background goroutines while
 serving.
 
-The web interface's tests are in Go, not JavaScript. `internal/api/spa_test.go`
-covers how it is served — the CSP, the client-side-route fallback, asset
-caching, that the API is not shadowed, and the binary built without an interface
-— against a `fstest.MapFS` stub rather than a real build, so `go test` never
-depends on `make web` having been run. `web/embed_test.go` checks the real
-bundle when one is present and skips when it is not. There is no JavaScript test
-runner, which is a dependency the current UI does not earn; browser-driven tests
-are deferred deliberately (`docs/frontend-stack.md` §8).
+The web interface is tested from two sides. `internal/api/spa_test.go` covers how
+it is *served* — the CSP, the client-side-route fallback, asset caching, that the
+API is not shadowed, and the binary built without an interface — against a
+`fstest.MapFS` stub rather than a real build, so `go test` never depends on
+`make web` having been run. `web/embed_test.go` checks the real bundle when one
+is present and skips when it is not.
+
+`e2e/` covers what happens once a browser executes it: Playwright against the Go
+binary serving the embedded build. `make e2e` builds, serves on a throwaway data
+directory, runs the suite and tears it all down. It is a separate pnpm workspace
+with its own lockfile so Playwright never enters the shipped interface's
+dependency tree, and the browser download is an explicit step rather than an
+install script — see `e2e/README.md` and `docs/frontend-stack.md` §8. There is no
+JavaScript unit-test runner; that is a dependency the current UI does not earn.
+
+Running the browser tests needs system packages once, and they need root:
+`sudo apt-get install -y libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64
+libatspi2.0-0t64 libgbm1 libxcomposite1 libxdamage1 libxfixes3 libxrandr2
+fonts-liberation`. `playwright install-deps` also works but pulls several
+hundred packages a headless run never uses. **Do not drop the font package**:
+with no fonts installed Chromium starts fine and renders every page with no
+glyphs, which presents as a CSS bug — right layout, right colours, invisible
+text — rather than as a missing dependency.
 
 ## Notes on working here
 

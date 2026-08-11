@@ -65,6 +65,7 @@ make release    # web, then build: the binary that ships an interface
 make test       # unit and golden-file tests
 make lint       # go vet plus golangci-lint if present
 make audit      # dependency checks: pnpm audit, go mod verify, govulncheck
+make e2e        # browser tests against the embedded build (see e2e/README.md)
 ```
 
 The front end has three runtime dependencies — `react`, `react-dom` and

@@ -1,0 +1,8 @@
+# pnpm-lock.yaml is committed deliberately, as in web/. Do not add it here.
+node_modules/
+
+# Run artifacts.
+/test-results/
+/playwright-report/
+/blob-report/
+*.log
