@@ -1,0 +1,449 @@
+package agent
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/russellwallace/veritix/internal/agent/llm"
+	"github.com/russellwallace/veritix/internal/agent/llm/llmtest"
+	"github.com/russellwallace/veritix/internal/agent/redact"
+	"github.com/russellwallace/veritix/internal/config"
+	"github.com/russellwallace/veritix/internal/engine"
+	"github.com/russellwallace/veritix/internal/finding"
+	"github.com/russellwallace/veritix/internal/ingest"
+	"github.com/russellwallace/veritix/internal/profile"
+	"github.com/russellwallace/veritix/internal/source"
+)
+
+const fixtureDir = "../../testdata/dirty-retail"
+
+// rawValuesInFixture are verbatim contents of the fixture files. Under the
+// default policy none of them may appear in anything sent to a model. It is
+// deliberately the same list the report tests use: the report and the model are
+// the two boundaries the product's promise is made at, and they should be held
+// to it in the same terms.
+var rawValuesInFixture = []string{
+	"CUS-000001", "CUS-000005", "CUS-999999",
+	"alice@example.com", "carol@example.com",
+	"Alice Smith", "Frank Green",
+	"Zürich", "München", "Montréal",
+	"Doohickey", "Widget",
+	"Quarterly Sales Report",
+}
+
+// fixture loads the dirty-retail dataset and locks the engine down, which is
+// the state the agent always finds it in.
+func fixture(t *testing.T) Input {
+	t.Helper()
+	ctx := t.Context()
+
+	e, err := engine.Open(ctx, "", config.Default().Engine, nil)
+	if err != nil {
+		t.Fatalf("engine.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = e.Close() })
+
+	ds, err := source.Discover([]string{fixtureDir})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	loaded, err := ingest.Load(ctx, e, ds, ingest.Options{}, nil)
+	if err != nil {
+		t.Fatalf("ingest.Load: %v", err)
+	}
+	prof, err := profile.Run(ctx, e, loaded, profile.Options{}, nil)
+	if err != nil {
+		t.Fatalf("profile.Run: %v", err)
+	}
+	if err := e.Lockdown(ctx); err != nil {
+		t.Fatalf("Lockdown: %v", err)
+	}
+
+	return Input{Engine: e, Profile: prof, Root: ds.Root}
+}
+
+// tableNamed returns a profiled table whose SQL name contains the fragment.
+func tableNamed(t *testing.T, in Input, fragment string) string {
+	t.Helper()
+	for _, tbl := range in.Profile.Tables {
+		if strings.Contains(tbl.Name, fragment) {
+			return tbl.Name
+		}
+	}
+	t.Fatalf("no table matching %q in the fixture", fragment)
+	return ""
+}
+
+// This is the guarantee the product is sold on. The model is given a real
+// dirty dataset and told to look at everything; nothing it is sent may contain
+// a value out of the files.
+func TestNothingTheModelSeesContainsACellValue(t *testing.T) {
+	in := fixture(t)
+
+	// A model that calls every read-only tool against every table and column
+	// it is told about — the widest surface the guard has to hold.
+	var script llmtest.Provider
+	script.Reply = func(req *llm.Request) llmtest.Turn {
+		step := len(req.Messages) / 2
+		switch step {
+		case 0:
+			return llmtest.Turn{Calls: []llmtest.Call{{Name: "list_tables"}}}
+		case 1:
+			var calls []llmtest.Call
+			for _, tbl := range in.Profile.Tables {
+				calls = append(calls, llmtest.Call{
+					Name: "describe_table", Input: map[string]any{"table": tbl.Name},
+				})
+			}
+			return llmtest.Turn{Calls: calls}
+		case 2:
+			var calls []llmtest.Call
+			for _, tbl := range in.Profile.Tables {
+				for _, c := range tbl.Columns {
+					calls = append(calls,
+						llmtest.Call{Name: "profile_column",
+							Input: map[string]any{"table": tbl.Name, "column": c.Name}},
+						llmtest.Call{Name: "sample_values",
+							Input: map[string]any{"table": tbl.Name, "column": c.Name, "limit": 50}},
+						llmtest.Call{Name: "check_candidate_key",
+							Input: map[string]any{"table": tbl.Name, "columns": []string{c.Name}}},
+					)
+				}
+			}
+			return llmtest.Turn{Calls: calls}
+		case 3:
+			// The most direct attempt available: ask for the rows themselves.
+			var calls []llmtest.Call
+			for _, tbl := range in.Profile.Tables {
+				calls = append(calls, llmtest.Call{
+					Name:  "run_sql",
+					Input: map[string]any{"query": "SELECT * FROM " + engine.Ident(tbl.Name) + " LIMIT 20"},
+				})
+			}
+			return llmtest.Turn{Calls: calls}
+		default:
+			return llmtest.Turn{Text: "done"}
+		}
+	}
+
+	res, err := Run(t.Context(), in, Options{Provider: &script, MaxSteps: 10}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	sent := llmtest.Outbound(script.Requests())
+	if len(sent) < 5000 {
+		t.Fatalf("only %d bytes were sent to the model; the test is not exercising anything", len(sent))
+	}
+	for _, raw := range rawValuesInFixture {
+		if strings.Contains(sent, raw) {
+			t.Errorf("the value %q was sent to the model", raw)
+		}
+	}
+
+	// The shapes have to actually be there, or the tools returned nothing and
+	// the scan above passed vacuously.
+	if !strings.Contains(sent, "XXX-999999") {
+		t.Error("no shaped identifier reached the model; the tools may have returned nothing")
+	}
+	if res.Trace.Redaction.Passed != 0 {
+		t.Errorf("%d values were passed through unshaped under the default policy",
+			res.Trace.Redaction.Passed)
+	}
+
+	// And the same must hold for what was stored about the run, since the
+	// trace is served back over HTTP.
+	stored, err := json.Marshal(res.Trace)
+	if err != nil {
+		t.Fatalf("encoding the trace: %v", err)
+	}
+	for _, raw := range rawValuesInFixture {
+		if strings.Contains(string(stored), raw) {
+			t.Errorf("the value %q was written into the run's trace", raw)
+		}
+	}
+}
+
+// The mechanism the whole design turns on: a claim is only a finding if the
+// engine reproduces it, and the engine's number wins.
+func TestTheEngineDecidesWhatIsTrue(t *testing.T) {
+	in := fixture(t)
+	orders := tableNamed(t, in, "order")
+
+	script := llmtest.New(
+		llmtest.Turn{Calls: []llmtest.Call{
+			// A real problem — the fixture spells one currency "gbp" — with a
+			// wildly inflated count.
+			{Name: "record_finding", Input: map[string]any{
+				"rule":     "currency_case",
+				"severity": "warning",
+				"table":    orders,
+				"column":   "currency",
+				"title":    "9,999 orders record their currency in the wrong case",
+				"detail":   "grouping by currency will report one currency as two",
+				"count_query": "SELECT count(*) FROM " + engine.Ident(orders) +
+					" WHERE currency IS NOT NULL AND currency <> upper(currency)",
+			}},
+			// A problem that does not exist.
+			{Name: "record_finding", Input: map[string]any{
+				"rule":        "invented_problem",
+				"severity":    "error",
+				"table":       orders,
+				"title":       "every order is duplicated",
+				"detail":      "this was made up",
+				"count_query": "SELECT count(*) FROM " + engine.Ident(orders) + " WHERE 1 = 0",
+			}},
+		}},
+		llmtest.Turn{Text: "finished"},
+	)
+
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 5}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(res.Findings) != 1 {
+		t.Fatalf("recorded %d findings, want 1: %+v", len(res.Findings), res.Findings)
+	}
+	f := res.Findings[0]
+	if f.Rule != "agent.currency_case" {
+		t.Errorf("rule = %q", f.Rule)
+	}
+	if f.Origin != finding.OriginAgent {
+		t.Errorf("origin = %q, want agent", f.Origin)
+	}
+	// The model claimed 9,999; the fixture contains one such row. The recorded
+	// number is the engine's.
+	if f.Count != 1 {
+		t.Errorf("count = %d, want the 1 the engine measured rather than the 9,999 claimed", f.Count)
+	}
+	if f.Location.Column != "currency" {
+		t.Errorf("column = %q, want currency", f.Location.Column)
+	}
+	if res.Trace.Refused != 1 {
+		t.Errorf("refused = %d, want 1 for the invented finding", res.Trace.Refused)
+	}
+
+	// The model has to be told, in terms it can act on, that the invented
+	// finding was not recorded.
+	var refusal string
+	for _, s := range res.Trace.Steps {
+		for _, c := range s.Calls {
+			if c.IsError {
+				refusal = c.Result
+			}
+		}
+	}
+	if !strings.Contains(refusal, "does not reproduce") {
+		t.Errorf("the refusal did not explain itself: %q", refusal)
+	}
+}
+
+// A SELECT is a way out of the process unless something stops it. Nothing here
+// depends on Veritix recognising a dangerous statement — the engine refuses.
+func TestTheAgentCannotReachTheHost(t *testing.T) {
+	in := fixture(t)
+	orders := tableNamed(t, in, "order")
+
+	attempts := []string{
+		"SELECT content FROM read_text('/etc/passwd')",
+		"SELECT * FROM read_csv('/etc/passwd')",
+		"COPY " + engine.Ident(orders) + " TO '/tmp/veritix-exfiltrated.csv'",
+		"DROP TABLE " + engine.Ident(orders),
+		"DELETE FROM " + engine.Ident(orders),
+		"SELECT 1; DROP TABLE " + engine.Ident(orders),
+		"SET enable_external_access = true",
+		"INSTALL httpfs",
+		"ATTACH 'http://example.com/x.duckdb'",
+	}
+
+	var calls []llmtest.Call
+	for _, q := range attempts {
+		calls = append(calls, llmtest.Call{Name: "run_sql", Input: map[string]any{"query": q}})
+	}
+	script := llmtest.New(llmtest.Turn{Calls: calls}, llmtest.Turn{Text: "done"})
+
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 5}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for i, c := range res.Trace.Steps[0].Calls {
+		if !c.IsError {
+			t.Errorf("%q was allowed to run and returned: %s", attempts[i], c.Result)
+		}
+		if strings.Contains(c.Result, "root:") {
+			t.Errorf("%q read a file off the host", attempts[i])
+		}
+	}
+
+	// The dataset must be intact afterwards.
+	n, err := in.Engine.CountRows(t.Context(), orders)
+	if err != nil || n == 0 {
+		t.Errorf("the orders table did not survive: %d rows, err=%v", n, err)
+	}
+}
+
+// A model that gets things wrong is ordinary, not fatal. The run keeps going
+// and the mistakes are visible in the trace.
+func TestMistakesAreToldToTheModelRatherThanEndingTheRun(t *testing.T) {
+	in := fixture(t)
+
+	script := llmtest.New(
+		llmtest.Turn{Calls: []llmtest.Call{
+			{Name: "no_such_tool"},
+			{Name: "describe_table", Input: map[string]any{"table": "not_a_table"}},
+			{Name: "run_sql", Input: map[string]any{"query": "SELECT nonexistent_column FROM nowhere"}},
+			{Name: "record_finding", Input: map[string]any{"rule": "x", "severity": "critical",
+				"table": "not_a_table", "title": "t", "detail": "d", "count_query": "SELECT 1"}},
+		}},
+		llmtest.Turn{Calls: []llmtest.Call{{Name: "list_tables"}}},
+		llmtest.Turn{Text: "recovered"},
+	)
+
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 5}, nil)
+	if err != nil {
+		t.Fatalf("a run must not fail because the model made mistakes: %v", err)
+	}
+	if res.Trace.Stopped != StoppedModelFinished {
+		t.Errorf("stopped = %q, want finished", res.Trace.Stopped)
+	}
+	if len(res.Trace.Steps) != 3 {
+		t.Fatalf("got %d steps, want 3", len(res.Trace.Steps))
+	}
+	for i, c := range res.Trace.Steps[0].Calls {
+		if !c.IsError {
+			t.Errorf("call %d (%s) should have failed", i, c.Tool)
+		}
+		if c.Result == "" {
+			t.Errorf("call %d (%s) told the model nothing", i, c.Tool)
+		}
+	}
+	// The recovery step must have worked, or the loop is not really continuing.
+	if res.Trace.Steps[1].Calls[0].IsError {
+		t.Error("the run did not recover after the failed calls")
+	}
+}
+
+// A model that never stops has to be stopped.
+func TestTheStepBudgetEndsARunawayRun(t *testing.T) {
+	in := fixture(t)
+
+	var script llmtest.Provider
+	script.Reply = func(*llm.Request) llmtest.Turn {
+		return llmtest.Turn{
+			Calls: []llmtest.Call{{Name: "list_tables"}},
+			Usage: llm.Usage{Input: 100, Output: 50},
+		}
+	}
+
+	res, err := Run(t.Context(), in, Options{Provider: &script, MaxSteps: 4}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Trace.Stopped != StoppedStepBudget {
+		t.Errorf("stopped = %q, want step_budget", res.Trace.Stopped)
+	}
+	if len(res.Trace.Steps) != 4 {
+		t.Errorf("ran %d steps, want the cap of 4", len(res.Trace.Steps))
+	}
+	if res.Trace.Stopped.Complete() {
+		t.Error("a run cut short must not report itself as complete")
+	}
+}
+
+func TestTheTokenBudgetEndsAnExpensiveRun(t *testing.T) {
+	in := fixture(t)
+
+	var script llmtest.Provider
+	script.Reply = func(*llm.Request) llmtest.Turn {
+		return llmtest.Turn{
+			Calls: []llmtest.Call{{Name: "list_tables"}},
+			Usage: llm.Usage{Input: 400, Output: 100},
+		}
+	}
+
+	res, err := Run(t.Context(), in,
+		Options{Provider: &script, MaxSteps: 100, TokenBudget: 1200}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Trace.Stopped != StoppedTokenBudget {
+		t.Errorf("stopped = %q, want token_budget", res.Trace.Stopped)
+	}
+	if res.Trace.Usage.Total() < 1200 || res.Trace.Usage.Total() > 2000 {
+		t.Errorf("spent %d tokens against a budget of 1200", res.Trace.Usage.Total())
+	}
+}
+
+// The opt-in has to actually work, or it is a lie in the configuration file.
+func TestSampleValuesFollowThePolicy(t *testing.T) {
+	in := fixture(t)
+	customers := tableNamed(t, in, "customer")
+
+	call := llmtest.Call{Name: "sample_values", Input: map[string]any{
+		"table": customers, "column": "email", "limit": 5,
+	}}
+
+	shaped := llmtest.New(llmtest.Turn{Calls: []llmtest.Call{call}}, llmtest.Turn{Text: "."})
+	res, err := Run(t.Context(), in, Options{Provider: shaped, MaxSteps: 3}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	result := res.Trace.Steps[0].Calls[0].Result
+	if res.Trace.Steps[0].Calls[0].IsError {
+		t.Fatalf("sample_values failed: %s", result)
+	}
+	if strings.Contains(result, "@example.com") {
+		t.Errorf("the default policy returned an address: %s", result)
+	}
+	if !strings.Contains(result, `"values_are_shapes":true`) {
+		t.Errorf("the result did not say the values were shapes: %s", result)
+	}
+
+	allowed := llmtest.New(llmtest.Turn{Calls: []llmtest.Call{call}}, llmtest.Turn{Text: "."})
+	res, err = Run(t.Context(), in, Options{
+		Provider: allowed, MaxSteps: 3,
+		Policy: redact.Policy{AllowValues: true},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	result = res.Trace.Steps[0].Calls[0].Result
+	// Addresses are masked even when values are permitted, so what proves the
+	// opt-in worked is the mask appearing where a shape used to be.
+	if !strings.Contains(result, "[email]") {
+		t.Errorf("--allow-sample-values did not change what was returned: %s", result)
+	}
+	if !res.Trace.ValuesAllowed {
+		t.Error("the trace does not record that values were permitted")
+	}
+}
+
+// Configure is what the CLI and the server both go through, so the default has
+// to be the safe one.
+func TestNoModelIsConfiguredByDefault(t *testing.T) {
+	opts, err := Configure(config.Default().LLM)
+	if err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	if opts != nil {
+		t.Error("a default installation must not be configured to talk to a model")
+	}
+
+	opts, err = Configure(config.LLM{Provider: config.ProviderAnthropic, MaxSteps: 5})
+	if err != nil {
+		t.Fatalf("Configure(anthropic): %v", err)
+	}
+	if opts == nil || opts.Provider == nil {
+		t.Fatal("configuring anthropic produced no provider")
+	}
+	if opts.Policy.AllowValues {
+		t.Error("values must not be permitted unless the operator asks")
+	}
+
+	if _, err := Configure(config.LLM{Provider: "wishful-thinking"}); err == nil {
+		t.Error("an unknown provider should be refused")
+	}
+}

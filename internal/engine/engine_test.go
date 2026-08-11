@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,8 +185,7 @@ func TestReadOnlyRefusesWrites(t *testing.T) {
 		t.Errorf("got %d rows, want 1", n)
 	}
 
-	// This is the guarantee the agent's SQL tool depends on: writes are
-	// refused by DuckDB, not by inspecting the query text.
+	// Writes are refused by DuckDB, not by inspecting the query text.
 	if err := ro.Exec(ctx, "CREATE TABLE evil AS SELECT 1"); err == nil {
 		t.Error("a read-only engine must refuse DDL")
 	}
@@ -253,5 +253,150 @@ func TestCountRows(t *testing.T) {
 	}
 	if n != 7 {
 		t.Errorf("CountRows = %d, want 7", n)
+	}
+}
+
+// Lockdown is the boundary the agent's SQL tool sits behind. A SELECT that
+// reaches outside the database is the way a read-only query becomes an
+// exfiltration channel, so these are checked against DuckDB itself rather than
+// against Veritix's opinion of what the statement said.
+func TestLockdownClosesTheFilesystem(t *testing.T) {
+	ctx := t.Context()
+	e := testEngine(t)
+
+	if err := e.Exec(ctx, "CREATE TABLE t AS SELECT 1 AS a"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Reading files has to work beforehand, or the test proves nothing: the
+	// whole pipeline reads the customer's CSVs through DuckDB.
+	var before string
+	readFile := "SELECT content FROM read_text(" + Literal(writeTempFile(t, "hello")) + ")"
+	if err := e.ScanOne(ctx, readFile, []any{&before}); err != nil {
+		t.Fatalf("reading a file before lockdown: %v", err)
+	}
+
+	if err := e.Lockdown(ctx); err != nil {
+		t.Fatalf("Lockdown: %v", err)
+	}
+	if !e.LockedDown() {
+		t.Error("LockedDown reports false after Lockdown")
+	}
+
+	var after string
+	if err := e.ScanOne(ctx, readFile, []any{&after}); err == nil {
+		t.Error("a locked-down engine read a file off the host")
+	}
+
+	out := filepath.Join(t.TempDir(), "exfiltrated.csv")
+	if err := e.Exec(ctx, "COPY t TO "+Literal(out)); err == nil {
+		t.Error("a locked-down engine wrote a table to the host filesystem")
+	}
+
+	// The lock has to survive the agent asking for it back.
+	if err := e.Exec(ctx, "SET enable_external_access = true"); err == nil {
+		t.Error("filesystem access could be turned back on")
+	}
+
+	// None of which may cost the ability to query the data that is loaded.
+	var n int
+	if err := e.ScanOne(ctx, "SELECT count(*) FROM t", []any{&n}); err != nil || n != 1 {
+		t.Errorf("querying loaded data after lockdown: n=%d err=%v", n, err)
+	}
+
+	// Twice is not an error: the pipeline locks down once per run, and a
+	// caller should not have to track whether it already happened.
+	if err := e.Lockdown(ctx); err != nil {
+		t.Errorf("Lockdown is not idempotent: %v", err)
+	}
+}
+
+func writeTempFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "readable.txt")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing the fixture: %v", err)
+	}
+	return path
+}
+
+// Model-authored SQL is classified by DuckDB's own parser rather than by
+// matching patterns in the text, and the classification decides whether a
+// result is shown as a number or as a shape.
+func TestAnalyseSelectClassifiesOutputColumns(t *testing.T) {
+	ctx := t.Context()
+	e := testEngine(t)
+	if err := e.Exec(ctx, `CREATE TABLE orders AS SELECT 'ACME' AS customer, 89.99 AS amount`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	cases := []struct {
+		query string
+		want  []bool
+	}{
+		{"SELECT count(*) FROM orders", []bool{true}},
+		{"SELECT count(*) FILTER (WHERE amount > 0) FROM orders", []bool{true}},
+		// An expression built only from aggregates and constants is still a
+		// statistic; without this the useful half of an auditor's questions
+		// would come back shaped.
+		{"SELECT round(sum(amount) / count(*), 2) FROM orders", []bool{true}},
+		{"SELECT 'label', count(*) FROM orders", []bool{true, true}},
+		// A grouping key is a cell value, however it is dressed up.
+		{"SELECT customer, count(*) FROM orders GROUP BY customer", []bool{false, true}},
+		{"SELECT amount FROM orders", []bool{false}},
+		{"SELECT * FROM orders", []bool{false}},
+		{"SELECT upper(customer) FROM orders", []bool{false}},
+		// A shape the parse-tree reader does not model must fail safe: no
+		// column is called an aggregate, so every cell is shaped.
+		{"SELECT count(*) FROM orders UNION ALL SELECT count(*) FROM orders", []bool{}},
+	}
+
+	for _, tc := range cases {
+		a, err := e.AnalyseSelect(ctx, tc.query)
+		if err != nil {
+			t.Errorf("AnalyseSelect(%q): %v", tc.query, err)
+			continue
+		}
+		if len(a.Aggregate) != len(tc.want) {
+			t.Errorf("%q: got %d columns, want %d", tc.query, len(a.Aggregate), len(tc.want))
+			continue
+		}
+		for i := range tc.want {
+			if a.Aggregate[i] != tc.want[i] {
+				t.Errorf("%q: column %d aggregate = %v, want %v", tc.query, i, a.Aggregate[i], tc.want[i])
+			}
+		}
+	}
+}
+
+// Everything that is not one read-only statement is refused by the parser, so
+// Veritix never has to hold an opinion about what a write looks like.
+func TestAnalyseSelectRefusesEverythingElse(t *testing.T) {
+	ctx := t.Context()
+	e := testEngine(t)
+	if err := e.Exec(ctx, `CREATE TABLE orders AS SELECT 1 AS a`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	for _, q := range []string{
+		"COPY orders TO '/tmp/exfiltrated.csv'",
+		"DROP TABLE orders",
+		"DELETE FROM orders",
+		"INSERT INTO orders VALUES (2)",
+		"ATTACH 'other.duckdb'",
+		"SELECT 1; DROP TABLE orders",
+		"INSTALL httpfs",
+		"SET enable_external_access = true",
+		"SELEC nonsense",
+	} {
+		if _, err := e.AnalyseSelect(ctx, q); err == nil {
+			t.Errorf("AnalyseSelect accepted %q", q)
+		}
+	}
+
+	// The table has to survive all of that.
+	ok, err := e.TableExists(ctx, "orders")
+	if err != nil || !ok {
+		t.Errorf("orders is gone: ok=%v err=%v", ok, err)
 	}
 }

@@ -29,6 +29,13 @@ type Engine struct {
 	log      *slog.Logger
 	path     string
 	readOnly bool
+	// locked records that Lockdown has run. It is written once, before the
+	// agent starts, and only read afterwards.
+	locked bool
+
+	// aggregateCache memoises DuckDB's aggregate-function catalogue, which
+	// AnalyseSelect consults for every model-authored query.
+	aggregateCache
 }
 
 // Open starts an engine. An empty path gives a transient in-memory database;
@@ -39,8 +46,12 @@ func Open(ctx context.Context, path string, cfg config.Engine, log *slog.Logger)
 }
 
 // OpenReadOnly opens an existing database file with writes refused by DuckDB
-// itself. Agent-authored SQL runs through a handle like this, so "read-only"
-// is enforced by the engine rather than by pattern-matching the query text.
+// itself, which is how a finished run's dataset is reopened to serve a
+// finding's rows.
+//
+// It is not what protects the database from the agent: the agent queries the
+// live engine mid-run, when the file is already open for writing by this
+// process. Lockdown is that boundary.
 func OpenReadOnly(ctx context.Context, path string, cfg config.Engine, log *slog.Logger) (*Engine, error) {
 	if path == "" {
 		return nil, fmt.Errorf("engine: a read-only engine needs a database file, not in-memory")
@@ -100,6 +111,44 @@ func (e *Engine) applyLimits(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Lockdown takes away DuckDB's access to the filesystem and then locks the
+// configuration so it cannot be given back.
+//
+// It is called once the dataset is loaded and before any model-authored SQL is
+// executed. Without it, a single SELECT is a way out of the process:
+// `read_text('/etc/passwd')` reads a file the audit was never pointed at, and
+// `COPY orders TO '/tmp/x.csv'` writes customer data somewhere the egress
+// guard cannot see it. Neither is prevented by opening the database read-only,
+// because both are about the host's filesystem rather than the database's.
+//
+// This is DuckDB refusing, not Veritix pattern-matching the query text, which
+// is the only version of "read-only" worth relying on when the query was
+// written by a language model. The statement guard in agent/tools is the
+// second layer, not the first.
+//
+// It is irreversible by design: lock_configuration means that a later
+// SET enable_external_access = true is rejected, so an agent that talks
+// Veritix into running one gains nothing.
+func (e *Engine) Lockdown(ctx context.Context) error {
+	if e.locked {
+		return nil
+	}
+	for _, stmt := range []string{
+		"SET enable_external_access = false",
+		"SET lock_configuration = true",
+	} {
+		if _, err := e.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("engine: locking down: %w", err)
+		}
+	}
+	e.locked = true
+	e.log.Debug("engine locked down: no filesystem access, configuration frozen")
+	return nil
+}
+
+// LockedDown reports whether Lockdown has been applied.
+func (e *Engine) LockedDown() bool { return e.locked }
 
 // Close releases the database.
 func (e *Engine) Close() error {

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/russellwallace/veritix/internal/agent"
 	"github.com/russellwallace/veritix/internal/checks"
 	"github.com/russellwallace/veritix/internal/config"
 	"github.com/russellwallace/veritix/internal/engine"
@@ -38,6 +39,10 @@ type Options struct {
 	// Rules are the customer's own expectations, applied after the built-in
 	// checks.
 	Rules *rules.File
+	// Agent, when set, runs the model-driven investigation after the
+	// deterministic pass. Nil means no model is configured, which is the
+	// default and a complete audit in its own right.
+	Agent *agent.Options
 }
 
 // Result is everything a run produced.
@@ -50,6 +55,9 @@ type Result struct {
 	Profile *profile.Dataset
 	// Findings are the problems found, most severe first.
 	Findings *finding.Set
+	// Trace records what the agent did, when one ran. Nil when no model was
+	// configured.
+	Trace *agent.Trace
 	// StartedAt and Duration describe the run itself.
 	StartedAt time.Time
 	Duration  time.Duration
@@ -124,11 +132,39 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 	}
 	found.AddAll(ruleFindings)
 
+	// The agent runs last, over everything the deterministic pass established,
+	// and before Verify — so its proposals are checked by exactly the same
+	// mechanism as everything else rather than by a lenient path of their own.
+	//
+	// The engine is locked down first. From here on nothing needs to touch the
+	// filesystem, and the SQL about to be executed was written by a language
+	// model, so this is the moment to take the capability away.
+	if opts.Agent != nil {
+		if err := e.Lockdown(ctx); err != nil {
+			_ = e.Close()
+			return nil, err
+		}
+
+		agentRes, err := agent.Run(ctx, agent.Input{
+			Engine:  e,
+			Profile: prof,
+			Known:   found.All(),
+			Root:    ds.Root,
+		}, *opts.Agent, log)
+		if err != nil {
+			_ = e.Close()
+			return nil, err
+		}
+		found.AddAll(agentRes.Findings)
+		res.Trace = agentRes.Trace
+	}
+
 	// Re-run every finding's evidence before reporting it. For the built-in
-	// checks this is close to a tautology; it exists because the same set will
-	// later carry agent-proposed findings, and the rule that a finding must
-	// reproduce has to apply to all of them equally rather than being switched
-	// on for the ones we already distrust.
+	// checks this is close to a tautology. It is not one for the agent's
+	// findings, and the rule applies to all of them equally rather than being
+	// switched on for the ones we already distrust: a check whose evidence
+	// stopped reproducing is as much a defect as a model that made something
+	// up, and neither should reach a customer's report.
 	dropped, err := found.Verify(ctx, e)
 	if err != nil {
 		_ = e.Close()

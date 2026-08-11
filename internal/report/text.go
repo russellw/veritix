@@ -20,7 +20,9 @@ func WriteText(w io.Writer, res *audit.Result, opts Options) error {
 	p := &printer{w: w}
 
 	p.printf("Dataset: %s\n", doc.Dataset.Root)
-	p.printf("  %s\n\n", res.Summarise())
+	p.printf("  %s\n", res.Summarise())
+	writeAgentText(p, doc.Agent)
+	p.newline()
 
 	writeFindingsText(p, doc)
 
@@ -40,6 +42,31 @@ func WriteText(w io.Writer, res *audit.Result, opts Options) error {
 		p.printf("\n%s\n", doc.Redacted.Note)
 	}
 	return p.err
+}
+
+// writeAgentText says a model was involved, and under what terms. A reader
+// weighing a finding is entitled to know that before they read it, not in an
+// appendix afterwards.
+func writeAgentText(p *printer, a *AgentInfo) {
+	if a == nil {
+		return
+	}
+
+	p.printf("  investigated by %s (%s): %d steps, %d tool calls, %d findings\n",
+		a.Model, a.Provider, a.Steps, a.ToolCalls, a.Findings)
+
+	if a.ValuesSent {
+		p.printf("  ! cell values were sent to the model for this run\n")
+	} else {
+		p.printf("  no cell values were sent to the model; %d were replaced by their shape\n",
+			a.ValuesWithheld)
+	}
+	if a.NotReproduced > 0 {
+		p.printf("  %d proposed finding(s) did not reproduce and were discarded\n", a.NotReproduced)
+	}
+	if !a.Complete {
+		p.printf("  ! the investigation stopped early (%s), so it may be incomplete\n", a.Stopped)
+	}
 }
 
 func writeTable(p *printer, t TableInfo) {

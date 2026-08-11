@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/russellwallace/veritix/internal/agent"
 	"github.com/russellwallace/veritix/internal/audit"
 	"github.com/russellwallace/veritix/internal/ingest"
 	"github.com/russellwallace/veritix/internal/profile"
@@ -46,6 +47,47 @@ type Document struct {
 	Skipped  []SkipInfo   `json:"skipped_files,omitempty"`
 	Warnings []NoteInfo   `json:"warnings,omitempty"`
 	Redacted RedactedInfo `json:"redaction"`
+
+	// Agent describes the model-driven investigation, when one ran. It is
+	// absent from a deterministic-only audit rather than present and empty, so
+	// that a reader can tell at a glance whether a model was involved at all.
+	Agent *AgentInfo `json:"agent,omitempty"`
+}
+
+// AgentInfo is what the agentic pass did.
+//
+// It is in the report rather than only in the trace because a reader needs to
+// know that a model was involved, which one, whether it was permitted to see
+// cell values, and whether it finished — before they weigh anything it found.
+// The full trace is a separate document served by the API; this is the part
+// that belongs beside the findings.
+type AgentInfo struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+
+	Steps     int `json:"steps"`
+	ToolCalls int `json:"tool_calls"`
+	// Findings is how many the agent contributed, and NotReproduced how many
+	// it proposed that the engine measured at zero and refused to record.
+	Findings      int `json:"findings"`
+	NotReproduced int `json:"not_reproduced"`
+
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+
+	// ValuesSent records whether this run was permitted to send cell values to
+	// the model. It is the single most important fact about an agentic run.
+	ValuesSent bool `json:"values_sent_to_model"`
+	// ValuesWithheld is how many were replaced by their shape.
+	ValuesWithheld int `json:"values_withheld"`
+
+	// Stopped says why the investigation ended, and Complete whether that was
+	// because it finished rather than because it ran out of budget. A report
+	// should not imply a thorough investigation when the agent was cut off.
+	Stopped  string `json:"stopped"`
+	Complete bool   `json:"complete"`
+
+	DurationMS int64 `json:"duration_ms"`
 }
 
 // RunInfo describes the audit itself.
@@ -222,6 +264,32 @@ func WriteJSON(w io.Writer, res *audit.Result, version string, opts Options) err
 	return enc.Encode(doc)
 }
 
+// buildAgent summarises the agent's trace for the report.
+func buildAgent(t *agent.Trace) *AgentInfo {
+	if t == nil {
+		return nil
+	}
+	var calls int
+	for _, s := range t.Steps {
+		calls += len(s.Calls)
+	}
+	return &AgentInfo{
+		Provider:       t.Provider,
+		Model:          t.Model,
+		Steps:          len(t.Steps),
+		ToolCalls:      calls,
+		Findings:       t.Findings,
+		NotReproduced:  t.Refused,
+		InputTokens:    t.Usage.Input + t.Usage.CacheRead + t.Usage.CacheWrite,
+		OutputTokens:   t.Usage.Output,
+		ValuesSent:     t.ValuesAllowed,
+		ValuesWithheld: t.Redaction.Shaped,
+		Stopped:        string(t.Stopped),
+		Complete:       t.Stopped.Complete(),
+		DurationMS:     t.Duration.Milliseconds(),
+	}
+}
+
 // Build converts a run into the report document.
 func Build(res *audit.Result, version string, opts Options) *Document {
 	s := res.Summarise()
@@ -244,6 +312,7 @@ func Build(res *audit.Result, version string, opts Options) *Document {
 		Redacted: RedactedInfo{ValuesIncluded: opts.IncludeValues},
 	}
 
+	doc.Agent = buildAgent(res.Trace)
 	doc.Findings, doc.FindingSummary = buildFindings(res)
 	if !opts.IncludeValues {
 		doc.Redacted.Note = "Verbatim cell values are omitted. Counts, distributions, " +

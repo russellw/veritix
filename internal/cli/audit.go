@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/russellwallace/veritix/internal/agent"
 	"github.com/russellwallace/veritix/internal/audit"
 	"github.com/russellwallace/veritix/internal/buildinfo"
 	"github.com/russellwallace/veritix/internal/finding"
@@ -26,6 +27,15 @@ type auditOptions struct {
 	database      string
 	rulesPath     string
 	topValues     int
+
+	// The LLM flags override configuration for this run. They are here rather
+	// than on the root command because the agent is a property of an audit,
+	// not of the process.
+	llmProvider       string
+	llmModel          string
+	llmBaseURL        string
+	llmMaxSteps       int
+	allowSampleValues bool
 }
 
 func newAuditCmd(e *env) *cobra.Command {
@@ -59,6 +69,15 @@ func newAuditCmd(e *env) *cobra.Command {
 	f.IntVar(&opts.topValues, "top-values", 10, "how many frequent values to record per column")
 	f.StringVar(&opts.rulesPath, "rules", "", "a YAML file of your own expectations to enforce")
 
+	f.StringVar(&opts.llmProvider, "llm", "",
+		"run the agentic auditor with this provider: none, anthropic, or openai-compatible")
+	f.StringVar(&opts.llmModel, "llm-model", "", "the model to use")
+	f.StringVar(&opts.llmBaseURL, "llm-base-url", "",
+		"the model endpoint, for a local Ollama, vLLM, or LM Studio")
+	f.IntVar(&opts.llmMaxSteps, "llm-max-steps", 0, "cap the agent's tool-calling loop")
+	f.BoolVar(&opts.allowSampleValues, "allow-sample-values", false,
+		"permit the model to see cell values, masked; off by default, and the report says which was used")
+
 	return cmd
 }
 
@@ -70,9 +89,33 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 		return fmt.Errorf("unknown format %q: want text, json, sarif, or html", opts.format)
 	}
 
+	cfg := e.cfg.LLM
+	if cmd.Flags().Changed("llm") {
+		cfg.Provider = opts.llmProvider
+	}
+	if cmd.Flags().Changed("llm-model") {
+		cfg.Model = opts.llmModel
+	}
+	if cmd.Flags().Changed("llm-base-url") {
+		cfg.BaseURL = opts.llmBaseURL
+	}
+	if cmd.Flags().Changed("llm-max-steps") {
+		cfg.MaxSteps = opts.llmMaxSteps
+	}
+	if cmd.Flags().Changed("allow-sample-values") {
+		cfg.AllowSampleValues = opts.allowSampleValues
+	}
+
+	agentOpts, err := agent.Configure(cfg)
+	if err != nil {
+		return err
+	}
+	if agentOpts != nil {
+		agentOpts.MaxRows = e.cfg.Engine.MaxResultRows
+	}
+
 	var ruleFile *rules.File
 	if opts.rulesPath != "" {
-		var err error
 		if ruleFile, err = rules.Load(opts.rulesPath); err != nil {
 			return err
 		}
@@ -83,6 +126,7 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 		Engine:       e.cfg.Engine,
 		DatabasePath: opts.database,
 		Rules:        ruleFile,
+		Agent:        agentOpts,
 		Profile: profile.Options{
 			TopValues: opts.topValues,
 		},
