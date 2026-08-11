@@ -215,10 +215,17 @@ waiting the full ten minutes. Half of that 56-minute run was the same question
 asked three times of a model that was simply slow, and the run then ended in an
 error rather than stopping cleanly.
 
-Two things to fix: the default `llm.request_timeout` of ten minutes is wrong for
-a local model (use `VERITIX_LLM_REQUEST_TIMEOUT=30m`), and a deadline Veritix
-imposed on itself should not be classified as retryable, because re-sending it
-is guaranteed to fail the same way.
+The retry half is fixed: `complete()` now distinguishes its own expired deadline
+from a transport failure and returns instead of re-sending, with an error naming
+the setting to change. `TestAnExpiredDeadlineIsNotRetried` pins it, and
+`TestATransientFailureIsRetried` pins the other half, because the cheap fix
+— stop retrying — would have ended an audit on one dropped connection.
+
+The setting itself is still yours to raise: ten minutes is a sane default for a
+cloud endpoint and too short for a local model once its context is full, so use
+`VERITIX_LLM_REQUEST_TIMEOUT=30m` here. The default is left alone deliberately,
+since making every cloud user wait thirty minutes on a hung request would be a
+worse trade than the one line of configuration.
 
 **The model mistook shapes for values.** By step 16 it was writing
 

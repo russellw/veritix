@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/russellwallace/veritix/internal/agent/llm"
 	"github.com/russellwallace/veritix/internal/agent/llm/llmtest"
@@ -448,6 +451,83 @@ func TestSampleValuesFollowThePolicy(t *testing.T) {
 	}
 	if !res.Trace.ValuesAllowed {
 		t.Error("the trace does not record that values were permitted")
+	}
+}
+
+// slowProvider blocks until the call's context ends, then reports what a real
+// provider reports for a dead connection — which is what an expired deadline
+// looks like from inside an HTTP client.
+type slowProvider struct {
+	calls atomic.Int32
+}
+
+func (p *slowProvider) Name() string  { return "slow" }
+func (p *slowProvider) Model() string { return "slow-model" }
+
+func (p *slowProvider) Complete(ctx context.Context, _ *llm.Request) (*llm.Response, error) {
+	p.calls.Add(1)
+	<-ctx.Done()
+	return nil, &llm.Error{
+		Provider: p.Name(), Message: ctx.Err().Error(), Retryable: true, Err: ctx.Err(),
+	}
+}
+
+// A slow model is not a broken one, and the difference matters because the two
+// need opposite responses. Retrying an expired deadline asks the identical
+// question of the same endpoint with the same deadline: it cannot succeed, and
+// it costs the timeout again for every attempt.
+//
+// Found against a local model on a CPU, where a step legitimately took longer
+// than llm.request_timeout: half of a 56-minute run was the same request sent
+// three times, and the run then failed rather than stopping cleanly.
+func TestAnExpiredDeadlineIsNotRetried(t *testing.T) {
+	in := fixture(t)
+
+	var slow slowProvider
+	res, err := Run(t.Context(), in,
+		Options{Provider: &slow, MaxSteps: 4, RequestTimeout: 20 * time.Millisecond}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if n := slow.calls.Load(); n != 1 {
+		t.Errorf("the model was called %d times; an expired deadline must not be retried", n)
+	}
+	if res.Trace.Stopped != StoppedProviderError {
+		t.Errorf("stopped = %q, want provider_error", res.Trace.Stopped)
+	}
+	// The operator has to be able to tell "too slow" from "unreachable", because
+	// only one of them is fixed by changing a setting.
+	if !strings.Contains(res.Trace.Error, "llm.request_timeout") {
+		t.Errorf("the error does not name the setting to change: %s", res.Trace.Error)
+	}
+}
+
+// The other half of the same rule: a failure that really is about the moment
+// still gets another go, or one dropped connection ends an audit.
+func TestATransientFailureIsRetried(t *testing.T) {
+	in := fixture(t)
+
+	var attempts atomic.Int32
+	var script llmtest.Provider
+	script.Reply = func(*llm.Request) llmtest.Turn {
+		if attempts.Add(1) == 1 {
+			return llmtest.Turn{Err: &llm.Error{
+				Provider: "scripted", Message: "connection reset", Retryable: true,
+			}}
+		}
+		return llmtest.Turn{Text: "Nothing further."}
+	}
+
+	res, err := Run(t.Context(), in, Options{Provider: &script, MaxSteps: 4}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if attempts.Load() != 2 {
+		t.Errorf("the model was called %d times; a retryable failure should be retried", attempts.Load())
+	}
+	if res.Trace.Stopped == StoppedProviderError {
+		t.Errorf("the run failed on an error it had already recovered from: %s", res.Trace.Error)
 	}
 }
 

@@ -241,7 +241,8 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 }
 
 // complete makes one model call, retrying the failures the provider says are
-// about the moment rather than the request.
+// about the moment rather than the request — but never its own expired
+// deadline, which is about neither.
 func complete(ctx context.Context, opts Options, req *llm.Request, log *slog.Logger) (*llm.Response, error) {
 	var lastErr error
 
@@ -253,6 +254,9 @@ func complete(ctx context.Context, opts Options, req *llm.Request, log *slog.Log
 		}
 
 		res, err := opts.Provider.Complete(callCtx, req)
+		// Read this before cancel(), which would set Err on a context whose
+		// deadline had not actually fired.
+		expired := errors.Is(callCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 		if cancel != nil {
 			cancel()
 		}
@@ -260,6 +264,18 @@ func complete(ctx context.Context, opts Options, req *llm.Request, log *slog.Log
 			return res, nil
 		}
 		lastErr = err
+
+		// A deadline Veritix imposed on itself is not a transient condition. It
+		// reaches the provider as a dead connection and comes back marked
+		// retryable, because from down there it is indistinguishable from one —
+		// but retrying asks the identical question of the same endpoint with the
+		// same deadline, so a model that was too slow once is too slow three
+		// times, for three times as long. A local model on a CPU hits this as a
+		// matter of course: what it needs is a longer timeout, not another go.
+		if expired {
+			return nil, fmt.Errorf("no reply within llm.request_timeout (%s); "+
+				"raise it if the model is slow rather than stuck: %w", opts.RequestTimeout, err)
+		}
 
 		var provErr *llm.Error
 		if !errors.As(err, &provErr) || !provErr.Retryable || ctx.Err() != nil {
