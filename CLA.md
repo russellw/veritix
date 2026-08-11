@@ -133,9 +133,8 @@ aware of that would make any representation in this agreement inaccurate.
 
 ### 9. Governing law
 
-This agreement is governed by the laws of **[jurisdiction — to be completed by
-the Maintainer before this agreement is relied upon]**, without regard to its
-conflict-of-law provisions, and the courts of that jurisdiction have exclusive
+This agreement is governed by the laws of **Ireland**, without regard to its
+conflict-of-law provisions, and the courts of Ireland have exclusive
 jurisdiction over disputes arising from it.
 
 If any provision of this agreement is held unenforceable, the rest remains in
