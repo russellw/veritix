@@ -11,6 +11,20 @@ var (
 	Date    = ""
 )
 
+// Licence and SourceURL are what the binary says about its own terms, in the
+// version output and in the web interface's footer.
+//
+// SourceURL is a var rather than a const because a fork has to be able to
+// change it. AGPL section 13 puts the obligation on whoever modifies Veritix
+// and serves it over a network: their users must be offered *their* source,
+// not this repository. A fork that relinks is one -ldflags away from
+// complying; an operator who does not rebuild sets server.source_url instead,
+// which is why config carries the same field and this is only its default.
+var (
+	Licence   = "AGPL-3.0-or-later, or a commercial licence"
+	SourceURL = "https://github.com/russellwallace/veritix"
+)
+
 func init() {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {

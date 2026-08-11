@@ -139,6 +139,26 @@ h3 {
   font-family: var(--mono);
 }
 
+/* The source-code offer, quiet but present on every screen; see app.tsx. */
+.colophon {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Pinned to the foot of the sidebar. The dataset list above it grows only with
+   its content, so without the auto margin the offer would float mid-panel. */
+.sidebar .colophon {
+  justify-content: flex-start;
+  margin-top: auto;
+}
+
 /* ── dataset list ─────────────────────────────────────────────────────── */
 
 .section-label {

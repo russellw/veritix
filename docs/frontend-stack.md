@@ -147,6 +147,16 @@ rows anywhere. `base-uri 'self'` matters more than it looks — an injected
 `<base>` would re-point every relative URL, routing the whole API elsewhere
 without touching a single fetch.
 
+The one link in the interface that leaves the origin is the footer's **Source**
+offer (AGPL §13, see `LICENSING.md`), and it is not an exception to any of this.
+A user-initiated navigation is not a fetch: no request this page makes goes
+anywhere but its own server, which is what `connect-src 'self'` constrains and
+what `TestBundleLoadsNothingFromAnotherOrigin` and the browser suite's
+"talks to its own server and nowhere else" both assert. The URL is operator
+configuration rather than page content, and `config.Validate` refuses a scheme
+other than `http`/`https` so that a misconfiguration cannot become script in
+the one page that can display customer rows.
+
 **There is no `unsafe-inline`, for scripts or for styles.** tadmor allows it for
 styles because UI libraries set inline `style` attributes, and lists tightening
 it as pre-launch work. Veritix has no such dependency, so every would-be inline

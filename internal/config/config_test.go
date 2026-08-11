@@ -102,6 +102,8 @@ func TestValidateRejectsBadInput(t *testing.T) {
 		"provider":     func(c *Config) { c.LLM.Provider = "gpt" },
 		"result rows":  func(c *Config) { c.Engine.MaxResultRows = 0 },
 		"agent budget": func(c *Config) { c.LLM.MaxSteps = 0 },
+		// The interface renders this one as an href.
+		"source scheme": func(c *Config) { c.Server.SourceURL = "javascript:alert(1)" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := Default()
@@ -110,6 +112,16 @@ func TestValidateRejectsBadInput(t *testing.T) {
 				t.Error("want an error, got nil")
 			}
 		})
+	}
+}
+
+// An empty source URL is a decision, not a mistake: it is how a build shipped
+// under the commercial licence turns the offer off.
+func TestValidateAcceptsNoSourceURL(t *testing.T) {
+	cfg := Default()
+	cfg.Server.SourceURL = ""
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("empty server.source_url: %v", err)
 	}
 }
 

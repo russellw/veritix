@@ -491,6 +491,29 @@ func TestCancellingAFinishedRunConflicts(t *testing.T) {
 		http.StatusConflict, nil)
 }
 
+// TestHealthOffersTheSource pins the AGPL section 13 offer: the interface
+// renders it in every screen's footer, including the token gate, so it has to
+// come back from the one endpoint that needs no credential — and it has to
+// follow the operator's configuration, because a modified build owes its users
+// *its* source rather than upstream's.
+func TestHealthOffersTheSource(t *testing.T) {
+	ts := newTestServer(t, "")
+
+	var got struct {
+		Version   string `json:"version"`
+		SourceURL string `json:"source_url"`
+	}
+	ts.decode(ts.get("/api/v1/health"), http.StatusOK, &got)
+
+	if got.SourceURL != config.Default().Server.SourceURL {
+		t.Errorf("health source_url = %q, want the configured default %q",
+			got.SourceURL, config.Default().Server.SourceURL)
+	}
+	if got.Version != "test" {
+		t.Errorf("health version = %q, want the version the server was built with", got.Version)
+	}
+}
+
 func TestAuthTokenIsRequiredWhenConfigured(t *testing.T) {
 	ts := newTestServer(t, "s3cret")
 

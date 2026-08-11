@@ -64,6 +64,31 @@ licence and it does not modify it — [`LICENSE`](LICENSE) governs.
 If you are unsure which side of a line you are on, ask. Getting a commercial
 licence is usually quicker than getting an opinion on whether you need one.
 
+## If you run a modified Veritix for other people
+
+Section 13 is easier to comply with than to notice, so the program helps. Every
+screen of the web interface carries a footer with the version and a **Source**
+link, and `veritix version` prints the same offer on the command line.
+
+By default that link points at this repository, which is the correct answer for
+an unmodified build and the wrong one for yours: your users are owed *your*
+source. Point it at where you publish it —
+
+```yaml
+# veritix.yaml
+server:
+  source_url: https://git.example.com/ops/veritix
+```
+
+or `VERITIX_SOURCE_URL=https://git.example.com/ops/veritix`, no rebuild
+required. A fork that relinks anyway can set the default at build time with
+`-ldflags "-X github.com/russellwallace/veritix/internal/buildinfo.SourceURL=…"`.
+
+Setting `server.source_url` to the empty string removes the link. That is
+there for builds shipped under the commercial licence, where there is no such
+offer to make; under the AGPL, removing the offer does not remove the
+obligation.
+
 ## Third-party components
 
 A commercial licence covers Veritix's own code. It cannot re-license code

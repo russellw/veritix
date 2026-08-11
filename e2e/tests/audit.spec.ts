@@ -159,6 +159,21 @@ test('the page talks to its own server and nowhere else', async ({ page }) => {
   expect(foreign, `the page requested ${foreign.join(', ')}`).toHaveLength(0)
 })
 
+test('the interface offers the source of what it is running', async ({ page }) => {
+  await page.goto('/')
+
+  // AGPL section 13: a modified Veritix served over a network owes its users
+  // the source. The footer is where that offer lives, and the URL comes from
+  // the server so that an operator running a fork can point it at their own
+  // repository without rebuilding this bundle.
+  const colophon = page.locator('.colophon')
+  await expect(colophon).toContainText('Veritix')
+  await expect(colophon.getByRole('link', { name: 'Source' })).toHaveAttribute(
+    'href',
+    /^https?:\/\//,
+  )
+})
+
 test('a server-side folder can be registered without uploading it', async ({ page }) => {
   await page.goto('/')
 

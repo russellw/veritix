@@ -36,7 +36,9 @@ paths:
       tags: [runs]
       summary: Liveness check.
       description: The only unauthenticated endpoint, so that a load balancer or
-        a container probe does not need a credential.
+        a container probe does not need a credential. It also carries the
+        source-code offer the web interface shows in its footer, which has to
+        be readable before a token has been accepted.
       security: []
       operationId: getHealth
       responses:
@@ -46,10 +48,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status, version]
+                required: [status, version, source_url]
                 properties:
                   status: { type: string, const: ok }
                   version: { type: string, examples: ["v0.2.0"] }
+                  source_url:
+                    type: string
+                    description: Where this build's source can be obtained.
+                      Defaults to the upstream repository; an operator serving a
+                      modified Veritix sets server.source_url to their own, which
+                      is what AGPL section 13 asks of them.
+                    examples: ["https://github.com/russellwallace/veritix"]
 
   /openapi.yaml:
     get:

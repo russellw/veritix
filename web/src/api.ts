@@ -326,10 +326,17 @@ async function send<T>(method: string, path: string, body?: unknown): Promise<T>
   return (await res.json()) as T
 }
 
-export async function health(): Promise<{ status: string; version: string }> {
+export interface Health {
+  status: string
+  version: string
+  /* Where this build's source can be had. The footer offers it; see app.tsx. */
+  source_url: string
+}
+
+export async function health(): Promise<Health> {
   const res = await fetch(`${BASE}/health`)
   if (!res.ok) return fail(res)
-  return (await res.json()) as { status: string; version: string }
+  return (await res.json()) as Health
 }
 
 export async function listDatasets(signal?: AbortSignal): Promise<Dataset[]> {

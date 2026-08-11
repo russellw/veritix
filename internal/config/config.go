@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/russellwallace/veritix/internal/buildinfo"
 )
 
 // EnvPrefix is prepended to every environment variable Veritix reads.
@@ -50,6 +52,13 @@ type Server struct {
 	// user supplies data, so this has to be generous enough for a real export
 	// and small enough that one request cannot fill the disk.
 	MaxUploadBytes int64 `yaml:"max_upload_bytes"`
+	// SourceURL is where this build's source can be obtained, offered by
+	// /health and shown in the web interface's footer. It defaults to the
+	// upstream repository, which is the right answer for an unmodified build
+	// and the wrong one for a modified build served to other people: AGPL
+	// section 13 obliges whoever modified it to offer *their* source. Point
+	// this at their repository and the interface makes that offer for them.
+	SourceURL string `yaml:"source_url"`
 
 	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`
 	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"`
@@ -115,6 +124,7 @@ func Default() Config {
 			Addr:              "127.0.0.1:8080",
 			DataDir:           defaultDataDir(),
 			MaxUploadBytes:    2 << 30, // 2 GiB
+			SourceURL:         buildinfo.SourceURL,
 			ReadHeaderTimeout: 10 * time.Second,
 			ShutdownTimeout:   15 * time.Second,
 		},
@@ -195,6 +205,7 @@ func applyEnv(cfg *Config) {
 	str(&cfg.Server.AuthToken, "AUTH_TOKEN")
 	str(&cfg.Server.DataDir, "DATA_DIR")
 	num64(&cfg.Server.MaxUploadBytes, "MAX_UPLOAD_BYTES")
+	str(&cfg.Server.SourceURL, "SOURCE_URL")
 
 	str(&cfg.Engine.MemoryLimit, "ENGINE_MEMORY_LIMIT")
 	num(&cfg.Engine.Threads, "ENGINE_THREADS")
@@ -280,6 +291,15 @@ func (c Config) Validate() error {
 	}
 	if c.Server.MaxUploadBytes < 1 {
 		return fmt.Errorf("server.max_upload_bytes: want a positive size, got %d", c.Server.MaxUploadBytes)
+	}
+	// The interface renders this as a link's href, so a scheme the browser
+	// would execute rather than navigate to is refused here. It is operator
+	// configuration rather than untrusted input, but a misconfiguration that
+	// turns into script in the one page that can display customer rows is not
+	// a category to leave to good intentions.
+	if u := c.Server.SourceURL; u != "" &&
+		!strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+		return fmt.Errorf("server.source_url: want an http or https URL, got %q", u)
 	}
 	if c.Engine.MaxResultRows < 1 {
 		return fmt.Errorf("engine.max_result_rows: want a positive count, got %d", c.Engine.MaxResultRows)

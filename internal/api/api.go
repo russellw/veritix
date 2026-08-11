@@ -148,9 +148,14 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	// source_url rides along on the one unauthenticated endpoint because the
+	// interface shows it before a token has been accepted. AGPL section 13
+	// asks a modified network-served build to offer its source to the people
+	// using it, and someone staring at the token gate is one of them.
 	writeJSON(w, http.StatusOK, map[string]string{
-		"status":  "ok",
-		"version": s.version,
+		"status":     "ok",
+		"version":    s.version,
+		"source_url": s.cfg.Server.SourceURL,
 	})
 }
 

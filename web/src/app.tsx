@@ -66,6 +66,8 @@ export function App() {
             </ul>
           )}
         </div>
+
+        <Colophon />
       </aside>
 
       <main>
@@ -73,6 +75,43 @@ export function App() {
         <Route path={path} onDatasetsChanged={loadDatasets} />
       </main>
     </div>
+  )
+}
+
+/*
+The source-code offer, on every screen including the token gate.
+
+AGPL section 13 asks a modified Veritix served over a network to offer its
+users the source of the version they are using. The URL comes from the server
+(`server.source_url`, reported by /health) rather than being baked into this
+bundle, so an operator running a modified build points it at their own
+repository without needing Node to rebuild the interface. An operator who sets
+it empty gets no link, which is the right behaviour for a build shipped under
+the commercial licence instead.
+
+The link leaves the origin. That is not a hole in `connect-src 'self'`: it is a
+navigation the user asks for, carrying no data, not a fetch this page makes.
+*/
+function Colophon() {
+  const [info, setInfo] = useState<api.Health | null>(null)
+
+  useEffect(() => {
+    // A failure here is not worth a message. The footer is an offer, not a
+    // control, and the screen behind it works without it.
+    void api.health().then(setInfo, () => {})
+  }, [])
+
+  if (!info) return null
+
+  return (
+    <footer className="colophon">
+      <span>Veritix {info.version}</span>
+      {info.source_url && (
+        <a href={info.source_url} target="_blank" rel="noopener noreferrer">
+          Source
+        </a>
+      )}
+    </footer>
   )
 }
 
@@ -160,6 +199,7 @@ function TokenGate({ onAccepted }: { onAccepted: () => void }) {
           Continue
         </button>
       </p>
+      <Colophon />
     </form>
   )
 }

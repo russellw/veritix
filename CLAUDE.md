@@ -197,6 +197,16 @@ how a tool ends up reporting different results depending on how it was invoked.
   `fs.FS`; `internal/cli/serve.go` passes `web.FS()`. That keeps the API's tests
   free of a front-end build, so they can serve a stub and also test the binary
   built without an interface at all — which is what plain `go build` produces.
+- **The source offer comes from the server, not the bundle.** `/health` returns
+  `source_url` alongside the version, and the interface's footer renders it on
+  every screen including the token gate — which is why it rides on the one
+  unauthenticated endpoint. AGPL §13 puts the obligation on whoever modified
+  Veritix and served it, so `server.source_url` is theirs to set
+  (`VERITIX_SOURCE_URL`, or `-ldflags` on `buildinfo.SourceURL` for a fork that
+  relinks); baking it into the JavaScript would have made compliance require
+  Node. Empty removes the link, for a build shipped commercially. `Validate`
+  refuses anything that is not `http`/`https`, because it becomes an `href` in
+  the one page that can display customer rows.
 
 ## How the agent is put together
 
