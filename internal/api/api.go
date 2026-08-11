@@ -13,6 +13,7 @@ package api
 import (
 	"context"
 	_ "embed"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -35,6 +36,11 @@ type Options struct {
 	// Log receives diagnostics. Request logs go here, run progress goes to
 	// the run's event stream as well.
 	Log *slog.Logger
+	// Web is the built web interface, normally web.FS(). It is injected rather
+	// than imported so that this package's tests can drive the API without a
+	// front-end build, and can serve a stub one when they are testing how it is
+	// served. A nil Web serves the JSON 404 that predates the interface.
+	Web fs.FS
 }
 
 // Server holds the API's state: the store, the settings a run needs, and the
@@ -44,6 +50,7 @@ type Server struct {
 	cfg     config.Config
 	version string
 	log     *slog.Logger
+	web     fs.FS
 	runs    *runner
 	// stopping is closed by Close. Event streams watch it: they stay open by
 	// design, so without a signal they would hold a graceful shutdown open
@@ -64,6 +71,7 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		cfg:      opts.Config,
 		version:  opts.Version,
 		log:      log,
+		web:      opts.Web,
 		stopping: make(chan struct{}),
 	}
 	s.runs = newRunner(s)
@@ -105,12 +113,23 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/runs/{runId}/events", s.handleRunEvents)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/findings/{findingId}/rows", s.handleFindingRows)
 
+	// An unmatched path under /api/v1 stops here rather than falling through to
+	// the web interface, and gets the same JSON error shape as everything else.
+	// Without this it reached ServeMux's own plain-text 404, so a client that
+	// mistyped an endpoint got back something it could not parse.
+	authed.HandleFunc("/api/v1/", s.handleNotFound)
+
 	mux.Handle("/api/v1/", s.requireAuth(authed))
 
-	// The web UI is embedded at M3's second half. Until then an unmatched path
-	// gets a JSON 404 rather than Go's plain-text one, so a client only ever
-	// has to parse one error shape.
-	mux.HandleFunc("/", s.handleNotFound)
+	// Everything that is not the API is the web interface, including paths that
+	// exist only as client-side routes. A server built without one falls back
+	// to a JSON 404, so a script driving the API still has one error shape to
+	// parse whatever this binary was built with.
+	if s.web != nil {
+		mux.Handle("/", s.spaHandler(s.web))
+	} else {
+		mux.HandleFunc("/", s.handleNotFound)
+	}
 
 	return s.recoverPanics(s.logRequests(mux))
 }

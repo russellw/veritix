@@ -19,8 +19,7 @@ development, scripting, and CI.
 
 ## Current state
 
-Everything is on `main`. M0 through M2 are done, and M3's server half is done;
-the web interface is what remains of M3.
+Everything is on `main`. M0 through M3 are done.
 
 | | | |
 |---|---|---|
@@ -28,22 +27,22 @@ the web interface is what remains of M3.
 | M1 | Ingest and profile CSV/Excel into DuckDB | done |
 | M2 | Checks, relationships, rules, reports | done |
 | M3a | HTTP API, SSE, SQLite run store, `veritix serve` | done |
-| M3b | React web interface | **next** |
-| M4 | Agentic LLM auditor with the egress guard | |
+| M3b | React web interface, embedded and served behind a CSP | done |
+| M4 | Agentic LLM auditor with the egress guard | **next** |
 | M5 | MCP server and client | |
 | M6 | Hardening, evals, deployment | |
 
-**M3b needs a Node toolchain that is not installed on this machine** — no
-`node`, `npm`, `pnpm`, `yarn` or `bun`, no `web` target in the `Makefile`, and
-no Node step in `.github/workflows/ci.yml`. The product stays a single binary
-with no Node at *runtime*, but Vite has to run at build time. Install it before
-starting the SPA, and add both the Makefile target and the CI step in the same
-change.
+The web interface still owes browser-driven end-to-end tests; it has been driven
+over HTTP end to end but not in a real browser. See `docs/frontend-stack.md` §8.
 
 Working today:
 
 ```sh
 make build test lint
+make web            # Vite → web/dist, embedded by web/embed.go
+make release        # web then build: the binary that ships an interface
+make audit          # typecheck, pnpm audit, go mod verify, govulncheck
+
 ./bin/veritix audit testdata/dirty-retail
 ./bin/veritix audit testdata/dirty-retail --rules testdata/dirty-retail/veritix-rules.yaml
 ./bin/veritix audit testdata/dirty-retail --format html -o /tmp/report.html
@@ -103,6 +102,14 @@ do. It has to be asked for one finding at a time, it never appears in a list
 response, and its results are not logged. **Do not add a second way to get at
 raw values.**
 
+The browser is the third place this has to hold, not an afterthought to the
+first two. The web interface can call that endpoint, so a compromised npm
+package in the bundle would be sitting next to the data the product exists to
+keep in. That is why the interface has three runtime dependencies and why the
+CSP sets `connect-src 'self'`: the page may talk to the server it came from and
+to nothing else. `TestWebInterfaceIsServedUnderAStrictCSP` pins it.
+`docs/frontend-stack.md` is the whole argument.
+
 ## Package map
 
 ```
@@ -122,7 +129,9 @@ internal/
   audit/               the orchestrator every entry point drives
   store/               SQLite: datasets, runs, findings — the audit trail
   api/                 REST + SSE over audit.Run; openapi.yaml is the contract
+web/                   React + TS + Vite → dist, //go:embed-ed; embed.go
 testdata/dirty-retail/ fixtures with a known defect manifest
+docs/frontend-stack.md the front end's dependency and supply-chain policy
 ```
 
 `audit.Run` is the single pipeline: discover → engine → ingest → profile →
@@ -155,7 +164,18 @@ how a tool ends up reporting different results depending on how it was invoked.
 - **`finding.Finding.ID()`** is a digest of the same key that de-duplicates
   findings, so it names a problem rather than a position: the id in a URL still
   points at the same finding after a re-run that turns up one more error.
-  `TestFindingIDsAreStableAcrossRuns` pins this.
+  `TestFindingIDsAreStableAcrossRuns` pins this. The web interface puts that id
+  in the address bar for the expanded finding, which is the whole reason it was
+  built that way.
+- **The interface is served on `/`, the API is matched first.** A path that is
+  not a built asset gets `index.html`, so a client-side route survives a reload.
+  An unmatched path *under* `/api/v1` stops there and gets the same JSON error
+  shape as everything else rather than falling through to the app — it used to
+  reach `ServeMux`'s plain-text 404, which broke the one-error-shape promise.
+- **`api.Options.Web` is injected, not imported.** `internal/api` takes an
+  `fs.FS`; `internal/cli/serve.go` passes `web.FS()`. That keeps the API's tests
+  free of a front-end build, so they can serve a stub and also test the binary
+  built without an interface at all — which is what plain `go build` produces.
 
 ## Conventions
 
@@ -244,6 +264,21 @@ positives, both commented in place:
   success after its output had gone nowhere, and `os.Exit` skipping `main`'s
   deferred signal cleanup).
 
+**Web build**
+- Vite's `emptyOutDir` wipes `web/dist/.gitkeep`, and without that placeholder
+  `//go:embed all:dist` stops compiling on a clean checkout. `make web`
+  re-`touch`es it; do not remove that line.
+- `//go:embed all:dist` needs the `all:` prefix. A plain `dist` pattern skips
+  files starting with `.`, which is exactly the placeholder.
+- `web/.npmrc` sets `frozen-lockfile=true`, so the very first install with no
+  lockfile has to be bootstrapped once with
+  `corepack pnpm install --no-frozen-lockfile`. After that the committed
+  lockfile is the source of truth.
+- The 7-day `minimumReleaseAge` cooldown means a just-published version is
+  refused. That is the control working. Dependencies are pinned to exact
+  versions older than the window — at the time of writing that meant Vite 8.2.0
+  rather than 8.2.1, which was a day old.
+
 ## Testing
 
 `testdata/dirty-retail/` carries deliberately broken files. The defect
@@ -264,16 +299,38 @@ Run `go test -race ./...` before committing — `profile` and `ingest` fan out
 across goroutines, and `api` now runs audits on background goroutines while
 serving.
 
+The web interface's tests are in Go, not JavaScript. `internal/api/spa_test.go`
+covers how it is served — the CSP, the client-side-route fallback, asset
+caching, that the API is not shadowed, and the binary built without an interface
+— against a `fstest.MapFS` stub rather than a real build, so `go test` never
+depends on `make web` having been run. `web/embed_test.go` checks the real
+bundle when one is present and skips when it is not. There is no JavaScript test
+runner, which is a dependency the current UI does not earn; browser-driven tests
+are deferred deliberately (`docs/frontend-stack.md` §8).
+
 ## Notes on working here
 
 - Work goes straight onto `main` — this is a one-person project, and a branch
   here buys review that nobody is going to do. Do not create feature branches.
   Use your judgement about when a piece of work is worth committing.
 - The DuckDB driver needs CGO; prebuilt static libraries ship with the module,
-  so plain `go build` works and the binary is ~61 MB with nothing to install.
+  so plain `go build` works and the binary is ~71 MB with nothing to install.
   The SQLite driver is `modernc.org/sqlite`, pure Go on purpose: a second C
   library in the build is a second way to break the one CGO dependency that
   actually matters.
+- **Node is a build-time requirement only.** Node 24 (pinned in `web/.nvmrc`)
+  and pnpm 11 (pinned in `web/package.json`'s `packageManager`, fetched by
+  corepack). Installed here under `~/.local/lib/node` from the official tarball
+  with its SHA-256 checked, symlinked into `~/.local/bin`. The shipped binary
+  contains no Node and needs none.
+- **Go modules are deliberately not vendored.** `vendor/` measures 728 MB, 572
+  of it five prebuilt DuckDB static libraries whose diffs nobody can review, so
+  it would buy no auditability and add that much to git history on every bump.
+  `go mod verify` plus `govulncheck` stand in for it, both in CI and in
+  `make audit`. The reasoning is in `docs/frontend-stack.md` §6.
+- `go.mod` carries an explicit `toolchain` line. It is there because
+  `govulncheck` reported reachable standard-library vulnerabilities fixed only
+  in a later patch release; bump it rather than silence the check.
 - `golangci-lint` is not in the `Makefile`'s dependency set. Install it with
   `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`;
   `make lint` falls back to `go vet` alone without it, which will not catch

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,14 @@ type testServer struct {
 
 func newTestServer(t *testing.T, token string) *testServer {
 	t.Helper()
+	return newTestServerWith(t, token, nil)
+}
+
+// newTestServerWith builds a server serving webFS as the web interface. Most
+// tests pass nil: they exercise the API, and a server with no interface built
+// into it is a real configuration rather than a contrivance.
+func newTestServerWith(t *testing.T, token string, webFS fs.FS) *testServer {
+	t.Helper()
 
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "veritix.db"))
@@ -46,7 +55,7 @@ func newTestServer(t *testing.T, token string) *testServer {
 	cfg.Server.DataDir = dir
 	cfg.Server.AuthToken = token
 
-	srv, err := New(context.Background(), Options{Store: st, Config: cfg, Version: "test"})
+	srv, err := New(context.Background(), Options{Store: st, Config: cfg, Version: "test", Web: webFS})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}

@@ -1,0 +1,18 @@
+# The installed tree is a build artifact, not source: hundreds of megabytes,
+# platform-specific native binaries, and wrong on any machine but the one that
+# produced it. The lockfile is what pins and integrity-checks it — that is the
+# go.sum analogue, and it is committed deliberately.
+node_modules/
+.pnpm-store/
+
+# IMPORTANT: pnpm-lock.yaml is committed on purpose. Do not add it here.
+
+# Build output. dist/ is ignored apart from the committed placeholder, which
+# keeps web/embed.go's //go:embed compiling before any build has run.
+dist/*
+!dist/.gitkeep
+
+# Tooling caches.
+.vite/
+*.tsbuildinfo
+*.local

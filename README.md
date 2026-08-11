@@ -17,7 +17,7 @@ Early development. See `.claude/plans/` for the build plan; the milestones are:
 | M0 | Skeleton, CLI, config, CI — **done** |
 | M1 | Ingest and profile CSV/Excel into DuckDB — **done** |
 | M2 | Deterministic checks, relationships, rules, reports — **done** |
-| M3 | HTTP server and React web interface |
+| M3 | HTTP server and React web interface — **done** |
 | M4 | Agentic LLM auditor with a strict data-egress guard |
 | M5 | MCP server and client |
 | M6 | Hardening, evals, deployment |
@@ -53,14 +53,26 @@ first-class option for customers who want no network egress at all.
 
 ## Building
 
-Requires Go 1.25+ and a C toolchain (DuckDB is a C++ library; its prebuilt
+Requires Go 1.26+ and a C toolchain (DuckDB is a C++ library; its prebuilt
 static libraries ship with the Go module, so there is nothing else to install).
+Building the web interface also needs Node 24 and pnpm — at build time only.
+The binary Veritix ships contains no Node and needs none to run it.
 
 ```sh
-make build      # → bin/veritix
+make build      # → bin/veritix, embedding whatever is in web/dist
+make web        # build the web interface into web/dist
+make release    # web, then build: the binary that ships an interface
 make test       # unit and golden-file tests
 make lint       # go vet plus golangci-lint if present
+make audit      # dependency checks: pnpm audit, go mod verify, govulncheck
 ```
+
+The front end has three runtime dependencies — `react`, `react-dom` and
+`scheduler` — and is served behind a strict Content-Security-Policy that lets
+the page talk to the Veritix server and nowhere else. That is not incidental:
+the interface can display a finding's offending rows, so it sits next to exactly
+the data this product exists to keep in. `docs/frontend-stack.md` is the whole
+argument, including what the policy does not solve.
 
 ## Usage
 

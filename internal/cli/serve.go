@@ -17,6 +17,7 @@ import (
 	"github.com/russellwallace/veritix/internal/buildinfo"
 	"github.com/russellwallace/veritix/internal/config"
 	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellwallace/veritix/web"
 )
 
 func newServeCmd(e *env) *cobra.Command {
@@ -82,9 +83,15 @@ func runServe(ctx context.Context, e *env) error {
 		Config:  e.cfg,
 		Version: buildinfo.Short(),
 		Log:     e.log,
+		Web:     web.FS(),
 	})
 	if err != nil {
 		return err
+	}
+	if !web.Built() {
+		// Worth saying out loud: the API works, so this looks like a working
+		// server right up until somebody opens it in a browser.
+		e.log.Warn("this binary has no web interface built into it; run `make web` and rebuild")
 	}
 
 	httpSrv := &http.Server{

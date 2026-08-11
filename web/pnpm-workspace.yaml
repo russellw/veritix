@@ -1,0 +1,19 @@
+# pnpm hardening knobs. See docs/frontend-stack.md.
+
+# Refuse any version published less than 7 days ago, in minutes. This is the
+# single most effective defence against the commonest real attack: a legitimate
+# package that ships one malicious release, caught and yanked within days.
+#
+# A fresh install refusing a version published this week is the feature working,
+# not a failure. Pin to something older than the window.
+minimumReleaseAge: 10080
+
+# Lifecycle scripts are blocked by default; a package runs them only if it is
+# named here. The list is empty because nothing in this build needs one: Vite 8
+# bundles with Rolldown and TypeScript 7 is a native binary, and both ship
+# per-platform packages rather than compiling anything at install time.
+#
+# Keep it empty. pnpm reports exactly what it blocked, so if a future dependency
+# genuinely breaks without its script, that is the moment to weigh whether the
+# dependency is worth it — not to add the entry reflexively.
+onlyBuiltDependencies: []

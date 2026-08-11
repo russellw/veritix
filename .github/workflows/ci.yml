@@ -26,6 +26,29 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Node is needed to build the web interface, never to run it. The version
+      # comes from web/.nvmrc so CI and a developer's machine cannot disagree,
+      # and pnpm is pinned through package.json's packageManager field.
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Enable the pinned pnpm
+        run: corepack enable
+
+      # --frozen-lockfile: an install that would rewrite pnpm-lock.yaml fails
+      # instead. The lockfile carries the exact version and an integrity hash
+      # for every package, which is what makes the committed file the analogue
+      # of go.sum. See docs/frontend-stack.md.
+      - name: Install web dependencies (frozen)
+        run: make web-install
+
+      - name: Check the web interface
+        run: make web-check
+
+      - name: Build the web interface
+        run: make web
+
       - name: Verify modules are tidy
         run: |
           go mod tidy
@@ -42,6 +65,45 @@ jobs:
 
       - name: Build
         run: make build
+
+  supply-chain:
+    name: Supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Enable the pinned pnpm
+        run: corepack enable
+
+      # The Go modules are deliberately not vendored — the tree is 728 MB, most
+      # of it opaque prebuilt DuckDB libraries whose diffs nobody could review.
+      # These checks are what stands in for a vendor/ directory: go.sum plus the
+      # checksum transparency log for integrity, govulncheck for known holes.
+      - name: Verify module checksums
+        run: go mod verify
+
+      - name: Check Go dependencies for known vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Install web dependencies (frozen)
+        run: make web-install
+
+      # The npm-side equivalent. The 7-day publish cooldown in
+      # web/pnpm-workspace.yaml is what buys a compromised release time to be
+      # reported; this is what notices once it has been.
+      - name: Check web dependencies for known vulnerabilities
+        run: cd web && corepack pnpm audit --audit-level=high
 
   lint:
     name: Lint

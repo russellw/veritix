@@ -1,0 +1,660 @@
+/*
+The palette is lifted verbatim from internal/report/templates/report.html.tmpl.
+The web interface and the report a customer downloads from it are the same
+product, and two palettes would drift apart within a milestone.
+
+Everything here is hand-written for the same reason the app has no runtime
+dependencies beyond React: a CSS framework is a supply-chain surface, and this
+UI is a few screens of findings and tables.
+*/
+
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #5c5c5c;
+  --line: #e2e2e2;
+  --panel: #f7f7f5;
+  --error: #b3261e;
+  --warning: #9a6700;
+  --info: #3d5a80;
+  --accent: #3d5a80;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --fg: #e6e6e6;
+    --muted: #9aa0a6;
+    --line: #2c3038;
+    --panel: #1d2026;
+    --error: #f2705f;
+    --warning: #e0b341;
+    --info: #7fb0e0;
+    --accent: #7fb0e0;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.55 var(--sans);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+
+.sub {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── shell ────────────────────────────────────────────────────────────── */
+
+.shell {
+  display: grid;
+  grid-template-columns: 17rem 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  padding: 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.wordmark {
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  color: var(--fg);
+}
+
+.wordmark .v {
+  color: var(--accent);
+}
+
+main {
+  padding: 2rem 2.25rem 4rem;
+  max-width: 68rem;
+  overflow-x: hidden;
+}
+
+@media (max-width: 46rem) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  main {
+    padding: 1.25rem 1rem 3rem;
+  }
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 0.25rem;
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin: 2.25rem 0 0.75rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--line);
+}
+
+h3 {
+  font-size: 0.95rem;
+  margin: 1.75rem 0 0.5rem;
+  font-family: var(--mono);
+}
+
+/* ── dataset list ─────────────────────────────────────────────────────── */
+
+.section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.dataset-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+}
+
+.dataset-list a {
+  display: block;
+  padding: 0.4rem 0.55rem;
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dataset-list a:hover {
+  background: var(--bg);
+  text-decoration: none;
+}
+
+.dataset-list a.current {
+  background: var(--bg);
+  box-shadow: inset 2px 0 0 var(--accent);
+  font-weight: 600;
+}
+
+/* ── drop zone ────────────────────────────────────────────────────────── */
+
+.dropzone {
+  border: 1.5px dashed var(--line);
+  border-radius: 6px;
+  padding: 1rem 0.75rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  background: transparent;
+  width: 100%;
+  font-family: inherit;
+}
+
+.dropzone:hover,
+.dropzone.over {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.dropzone.busy {
+  cursor: progress;
+}
+
+/* ── controls ─────────────────────────────────────────────────────────── */
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn.danger:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.btn.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+}
+
+.btn.link:hover {
+  text-decoration: underline;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+label.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+input[type="text"],
+input[type="password"] {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  min-width: 18rem;
+}
+
+/* ── tiles ────────────────────────────────────────────────────────────── */
+
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1.25rem 0 0;
+}
+
+.tile {
+  flex: 1 1 7rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.tile .n {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile .k {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tile.error .n {
+  color: var(--error);
+}
+
+.tile.warning .n {
+  color: var(--warning);
+}
+
+.tile.info .n {
+  color: var(--info);
+}
+
+/* ── findings ─────────────────────────────────────────────────────────── */
+
+.finding {
+  border-left: 3px solid var(--line);
+  padding: 0.5rem 0 0.5rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.finding.error {
+  border-left-color: var(--error);
+}
+
+.finding.warning {
+  border-left-color: var(--warning);
+}
+
+.finding.info {
+  border-left-color: var(--info);
+}
+
+.finding.target {
+  background: var(--panel);
+  border-radius: 0 6px 6px 0;
+}
+
+.finding-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.finding-head h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.finding .where {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.finding .detail {
+  margin: 0.5rem 0;
+}
+
+.finding .remedy {
+  margin: 0.5rem 0 0;
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.45rem;
+  border-radius: 3px;
+  flex: none;
+}
+
+.badge.error {
+  background: var(--error);
+  color: #fff;
+}
+
+.badge.warning {
+  background: var(--warning);
+  color: #fff;
+}
+
+.badge.info {
+  background: var(--info);
+  color: #fff;
+}
+
+.badge.plain {
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+pre {
+  overflow-x: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.6rem 0.8rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  margin: 0.5rem 0 0;
+}
+
+.evidence-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.75rem;
+}
+
+/* ── tables ───────────────────────────────────────────────────────────── */
+
+.scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+td.n,
+th.n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+tbody tr:hover {
+  background: var(--panel);
+}
+
+.flag {
+  color: var(--warning);
+}
+
+.null {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ── tabs ─────────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--line);
+  margin: 1.5rem 0 1rem;
+}
+
+.tabs button {
+  border: none;
+  background: none;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: 0.9rem;
+}
+
+.tabs button.current {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── progress ─────────────────────────────────────────────────────────── */
+
+.progress {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 0.75rem 0.9rem;
+  margin: 1rem 0;
+}
+
+.progress ol {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.progress li {
+  padding: 0.1rem 0;
+  color: var(--muted);
+}
+
+.progress li:last-child {
+  color: var(--fg);
+}
+
+.spinner {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 3s;
+  }
+}
+
+.status {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.status.running,
+.status.pending {
+  color: var(--info);
+}
+
+.status.succeeded {
+  color: var(--muted);
+}
+
+.status.failed,
+.status.cancelled {
+  color: var(--error);
+}
+
+/* ── notices ──────────────────────────────────────────────────────────── */
+
+.notice {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warning);
+  border-radius: 0 5px 5px 0;
+  background: var(--panel);
+  padding: 0.6rem 0.85rem;
+  margin: 1rem 0;
+  font-size: 0.88rem;
+}
+
+.notice.error {
+  border-left-color: var(--error);
+}
+
+.empty {
+  color: var(--muted);
+  padding: 2rem 0;
+}
+
+/* ── spacing helpers ──────────────────────────────────────────────────── */
+
+/*
+These exist so that no component needs a style attribute. The CSP served with
+this bundle has no 'unsafe-inline' for styles, so an inline style is not a
+shortcut here — it is a rule that would have to be loosened. See
+internal/api/spa.go.
+*/
+
+.gap-s {
+  margin-top: 0.5rem;
+}
+
+.gap-m {
+  margin-top: 0.75rem;
+}
+
+.gap-l {
+  margin-top: 1.25rem;
+}
+
+.hint {
+  margin-left: 0.6rem;
+}
+
+.fill {
+  width: 100%;
+  min-width: 0;
+}
+
+.grow {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.centred {
+  justify-content: center;
+}
+
+.small {
+  font-size: 0.8rem;
+}
+
+.centre {
+  max-width: 30rem;
+  margin: 15vh auto;
+  text-align: center;
+}

@@ -1,6 +1,8 @@
 module github.com/russellwallace/veritix
 
-go 1.25.0
+go 1.26.0
+
+toolchain go1.26.5
 
 require (
 	github.com/duckdb/duckdb-go/v2 v2.10505.0

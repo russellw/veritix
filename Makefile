@@ -14,13 +14,27 @@ LDFLAGS := -s -w \
 # ship with the Go module, so no system DuckDB install is needed.
 export CGO_ENABLED := 1
 
+# The web interface lives in web/ and is built by Vite into web/dist, which
+# web/embed.go embeds. Node is a build-time requirement only: the shipped binary
+# has no Node in it and needs none to run. pnpm is pinned through corepack, so
+# every machine and every CI run uses the same integrity-checked package
+# manager. See docs/frontend-stack.md.
+WEB  := web
+PNPM := corepack pnpm
+
 .PHONY: all
 all: lint test build
 
+# build embeds whatever is currently in web/dist — the committed placeholder on
+# a clean checkout, which produces a working API and a binary that says the
+# interface is missing. `make release` is the one that ships an interface.
 .PHONY: build
 build:
 	@mkdir -p $(BUILD_DIR)
 	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BUILD_DIR)/$(BINARY) ./cmd/veritix
+
+.PHONY: release
+release: web build
 
 .PHONY: install
 install:
@@ -61,6 +75,43 @@ tidy:
 docker:
 	docker build -t veritix:$(VERSION) -f deploy/Dockerfile .
 
+# ── web interface ──────────────────────────────────────────────────────────
+
+# The lockfile is the source of truth, the way go.sum is. An install that would
+# have to change it fails instead.
+.PHONY: web-install
+web-install:
+	cd $(WEB) && $(PNPM) install --frozen-lockfile
+
+.PHONY: web
+web: web-install
+	cd $(WEB) && $(PNPM) build
+	@# Vite's emptyOutDir wipes the placeholder that keeps //go:embed compiling
+	@# on a checkout with no build in it.
+	@touch $(WEB)/dist/.gitkeep
+
+.PHONY: web-dev
+web-dev: web-install
+	cd $(WEB) && $(PNPM) dev
+
+.PHONY: web-check
+web-check: web-install
+	cd $(WEB) && $(PNPM) typecheck
+	cd $(WEB) && $(PNPM) audit --audit-level=high
+
+# ── supply chain ───────────────────────────────────────────────────────────
+
+# The Go modules are deliberately not vendored: the tree is 728 MB, 572 MB of it
+# opaque prebuilt DuckDB libraries whose diffs nobody can review. These two are
+# what stands in for it — go.sum and the checksum transparency log for
+# integrity, govulncheck for known holes. See docs/frontend-stack.md §6.
+.PHONY: audit
+audit: web-check
+	go mod verify
+	@command -v govulncheck >/dev/null 2>&1 \
+		&& govulncheck ./... \
+		|| echo "govulncheck not installed; install: go install golang.org/x/vuln/cmd/govulncheck@latest"
+
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) coverage.out
+	rm -rf $(BUILD_DIR) coverage.out $(WEB)/dist/assets $(WEB)/dist/index.html
