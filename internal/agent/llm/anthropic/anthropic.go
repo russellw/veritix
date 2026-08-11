@@ -15,7 +15,7 @@ import (
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/agent/llm"
 )
 
 // DefaultModel is what a run uses unless the operator names another.

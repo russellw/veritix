@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/store"
 )
 
 // fixtureDataset is the deliberately broken dataset the rest of the suite

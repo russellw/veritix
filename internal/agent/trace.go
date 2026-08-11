@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
-	"github.com/russellwallace/veritix/internal/agent/redact"
+	"github.com/russellw/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/agent/redact"
 )
 
 // Trace is the record of what the agent did.

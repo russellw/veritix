@@ -1,4 +1,4 @@
-module github.com/russellwallace/veritix
+module github.com/russellw/veritix
 
 go 1.26.0
 

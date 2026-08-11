@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/audit"
 )
 
 //go:embed templates/report.html.tmpl

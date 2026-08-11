@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/russellwallace/veritix/internal/cli"
+	"github.com/russellw/veritix/internal/cli"
 )
 
 func main() {

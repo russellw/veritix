@@ -6,7 +6,7 @@ import (
 	"io"
 	"sort"
 
-	"github.com/russellwallace/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/audit"
 )
 
 // SARIF is the format code-scanning tools speak, and it is what lets a data
@@ -150,7 +150,7 @@ func WriteSARIF(w io.Writer, res *audit.Result, version string, opts Options) er
 			Tool: sarifTool{Driver: sarifDriver{
 				Name:           "Veritix",
 				Version:        version,
-				InformationURI: "https://github.com/russellwallace/veritix",
+				InformationURI: "https://github.com/russellw/veritix",
 				Rules:          rules,
 			}},
 			Results: results,

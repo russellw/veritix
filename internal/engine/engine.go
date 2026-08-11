@@ -19,7 +19,7 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2" // database/sql driver "duckdb"
 
-	"github.com/russellwallace/veritix/internal/config"
+	"github.com/russellw/veritix/internal/config"
 )
 
 // Engine is a handle on one DuckDB database.

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
-	"github.com/russellwallace/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/finding"
 )
 
 // recordFinding is the agent's only output.

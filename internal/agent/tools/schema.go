@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
-	"github.com/russellwallace/veritix/internal/agent/redact"
-	"github.com/russellwallace/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/agent/redact"
+	"github.com/russellw/veritix/internal/profile"
 )
 
 // The tools in this file answer from the profile the deterministic pass already

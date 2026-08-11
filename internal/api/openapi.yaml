@@ -58,7 +58,7 @@ paths:
                       Defaults to the upstream repository; an operator serving a
                       modified Veritix sets server.source_url to their own, which
                       is what AGPL section 13 asks of them.
-                    examples: ["https://github.com/russellwallace/veritix"]
+                    examples: ["https://github.com/russellw/veritix"]
 
   /openapi.yaml:
     get:

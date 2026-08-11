@@ -22,7 +22,7 @@ var (
 // which is why config carries the same field and this is only its default.
 var (
 	License   = "AGPL-3.0-or-later, or a commercial license"
-	SourceURL = "https://github.com/russellwallace/veritix"
+	SourceURL = "https://github.com/russellw/veritix"
 )
 
 func init() {

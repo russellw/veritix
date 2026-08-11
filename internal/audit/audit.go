@@ -13,15 +13,15 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/agent"
-	"github.com/russellwallace/veritix/internal/checks"
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/finding"
-	"github.com/russellwallace/veritix/internal/ingest"
-	"github.com/russellwallace/veritix/internal/profile"
-	"github.com/russellwallace/veritix/internal/rules"
-	"github.com/russellwallace/veritix/internal/source"
+	"github.com/russellw/veritix/internal/agent"
+	"github.com/russellw/veritix/internal/checks"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/ingest"
+	"github.com/russellw/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/rules"
+	"github.com/russellw/veritix/internal/source"
 )
 
 // Options controls a run.

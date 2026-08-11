@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/russellwallace/veritix/internal/agent"
-	"github.com/russellwallace/veritix/internal/agent/llm/llmtest"
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/agent"
+	"github.com/russellw/veritix/internal/agent/llm/llmtest"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/finding"
 )
 
 const fixtureDir = "../../testdata/dirty-retail"

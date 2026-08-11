@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/russellwallace/veritix/internal/audit"
-	"github.com/russellwallace/veritix/internal/config"
+	"github.com/russellw/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/config"
 )
 
 const fixtureDir = "../../testdata/dirty-retail"

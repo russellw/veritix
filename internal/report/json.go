@@ -6,10 +6,10 @@ import (
 	"io"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/agent"
-	"github.com/russellwallace/veritix/internal/audit"
-	"github.com/russellwallace/veritix/internal/ingest"
-	"github.com/russellwallace/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/agent"
+	"github.com/russellw/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/ingest"
+	"github.com/russellw/veritix/internal/profile"
 )
 
 // SchemaVersion identifies the JSON contract. It is declared in the output so

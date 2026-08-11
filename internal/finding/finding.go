@@ -17,7 +17,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/engine"
 )
 
 // Severity is how much a finding matters.

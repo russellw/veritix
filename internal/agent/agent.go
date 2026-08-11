@@ -22,12 +22,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
-	"github.com/russellwallace/veritix/internal/agent/redact"
-	"github.com/russellwallace/veritix/internal/agent/tools"
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/finding"
-	"github.com/russellwallace/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/agent/redact"
+	"github.com/russellw/veritix/internal/agent/tools"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/profile"
 )
 
 // Options configure a run of the agent.

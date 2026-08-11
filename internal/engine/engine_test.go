@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/config"
+	"github.com/russellw/veritix/internal/config"
 )
 
 func testEngine(t *testing.T) *Engine {

@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/finding"
-	"github.com/russellwallace/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/profile"
 )
 
 // Relationships between files are where the interesting defects live.

@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/audit"
-	"github.com/russellwallace/veritix/internal/finding"
-	"github.com/russellwallace/veritix/internal/report"
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/report"
+	"github.com/russellw/veritix/internal/store"
 )
 
 // Event is one item on a run's stream.

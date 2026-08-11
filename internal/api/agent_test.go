@@ -11,9 +11,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/russellwallace/veritix/internal/agent"
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/agent"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/store"
 )
 
 // stubModel is an OpenAI-compatible endpoint that replies with a scripted

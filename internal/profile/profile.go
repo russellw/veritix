@@ -18,8 +18,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/ingest"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/ingest"
 )
 
 // Kind is the type a column's values actually are, as distinct from the type

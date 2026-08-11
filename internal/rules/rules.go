@@ -22,7 +22,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/russellwallace/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/finding"
 )
 
 // File is a rules document.

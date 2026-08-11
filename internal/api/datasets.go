@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/store"
 )
 
 // datasetJSON is the wire shape. The store's types are not serialized

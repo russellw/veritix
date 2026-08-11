@@ -18,8 +18,8 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/store"
 )
 
 //go:embed openapi.yaml

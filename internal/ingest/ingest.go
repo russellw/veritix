@@ -20,8 +20,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/source"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/source"
 )
 
 // Reject table names shared by every scan in a run. DuckDB tags each scan with

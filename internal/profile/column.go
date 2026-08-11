@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/ingest"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/ingest"
 )
 
 // sentinelValues are strings that stand in for "no value" without being null.

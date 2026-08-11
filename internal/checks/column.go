@@ -13,9 +13,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/finding"
-	"github.com/russellwallace/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/profile"
 )
 
 // columnCheck examines one column.

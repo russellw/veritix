@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/store"
 )
 
 // handleRunEvents streams a run's progress as server-sent events.

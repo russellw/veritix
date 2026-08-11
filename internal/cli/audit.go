@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/russellwallace/veritix/internal/agent"
-	"github.com/russellwallace/veritix/internal/audit"
-	"github.com/russellwallace/veritix/internal/buildinfo"
-	"github.com/russellwallace/veritix/internal/finding"
-	"github.com/russellwallace/veritix/internal/profile"
-	"github.com/russellwallace/veritix/internal/report"
-	"github.com/russellwallace/veritix/internal/rules"
+	"github.com/russellw/veritix/internal/agent"
+	"github.com/russellw/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/buildinfo"
+	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/report"
+	"github.com/russellw/veritix/internal/rules"
 )
 
 // auditOptions holds the flags for `veritix audit`. The command is aimed at

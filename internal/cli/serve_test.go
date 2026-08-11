@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/russellwallace/veritix/internal/config"
+	"github.com/russellw/veritix/internal/config"
 )
 
 // Binding to anything but loopback without a token would put a customer's data

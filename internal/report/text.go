@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/russellwallace/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/audit"
 )
 
 // WriteText renders a run for a terminal.

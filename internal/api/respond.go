@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/store"
 )
 
 // errorBody is the one error shape the API returns, so a client has a single

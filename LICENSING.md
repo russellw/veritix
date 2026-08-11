@@ -82,7 +82,7 @@ server:
 
 or `VERITIX_SOURCE_URL=https://git.example.com/ops/veritix`, no rebuild
 required. A fork that relinks anyway can set the default at build time with
-`-ldflags "-X github.com/russellwallace/veritix/internal/buildinfo.SourceURL=…"`.
+`-ldflags "-X github.com/russellw/veritix/internal/buildinfo.SourceURL=…"`.
 
 Setting `server.source_url` to the empty string removes the link. That is
 there for builds shipped under the commercial license, where there is no such

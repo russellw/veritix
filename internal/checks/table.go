@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/finding"
 )
 
 // checkEmptyTable reports a file that produced no rows.

@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/agent/llm"
 )
 
 // Turn is one scripted reply.

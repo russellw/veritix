@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/russellwallace/veritix/internal/agent"
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/telemetry"
+	"github.com/russellw/veritix/internal/agent"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/telemetry"
 )
 
 const fixtureDir = "../../testdata/dirty-retail"

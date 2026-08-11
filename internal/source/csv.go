@@ -15,7 +15,7 @@ import (
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 
-	"github.com/russellwallace/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/engine"
 )
 
 // Encoding is a character encoding Veritix can read.

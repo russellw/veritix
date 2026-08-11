@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/finding"
-	"github.com/russellwallace/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/profile"
 )
 
 // systemPrompt is what the model is told about the job.

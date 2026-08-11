@@ -3,11 +3,11 @@ package agent
 import (
 	"fmt"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
-	"github.com/russellwallace/veritix/internal/agent/llm/anthropic"
-	"github.com/russellwallace/veritix/internal/agent/llm/openaicompat"
-	"github.com/russellwallace/veritix/internal/agent/redact"
-	"github.com/russellwallace/veritix/internal/config"
+	"github.com/russellw/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/agent/llm/anthropic"
+	"github.com/russellw/veritix/internal/agent/llm/openaicompat"
+	"github.com/russellw/veritix/internal/agent/redact"
+	"github.com/russellw/veritix/internal/config"
 )
 
 // Configure builds the agent's options from the operator's configuration,

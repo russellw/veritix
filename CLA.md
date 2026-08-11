@@ -37,7 +37,7 @@ that control, are controlled by, or are under common control with it are
 treated as a single Contributor.
 
 **"Project"** means Veritix, the software published at
-`https://github.com/russellwallace/veritix`.
+`https://github.com/russellw/veritix`.
 
 **"Maintainer"** means Russell Wallace, the copyright holder of the Project,
 and any successor to whom the Project's copyright is transferred.

@@ -13,11 +13,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/russellwallace/veritix/internal/api"
-	"github.com/russellwallace/veritix/internal/buildinfo"
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/store"
-	"github.com/russellwallace/veritix/web"
+	"github.com/russellw/veritix/internal/api"
+	"github.com/russellw/veritix/internal/buildinfo"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/store"
+	"github.com/russellw/veritix/web"
 )
 
 func newServeCmd(e *env) *cobra.Command {

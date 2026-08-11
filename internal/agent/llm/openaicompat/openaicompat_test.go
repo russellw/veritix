@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/agent/llm"
 )
 
 // serve stands in for Ollama or vLLM: it captures the request body and returns

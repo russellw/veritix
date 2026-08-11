@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/engine"
 )
 
 // Kind identifies how a file is read.

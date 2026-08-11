@@ -3,10 +3,10 @@ package profile
 import (
 	"testing"
 
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/ingest"
-	"github.com/russellwallace/veritix/internal/source"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/ingest"
+	"github.com/russellw/veritix/internal/source"
 )
 
 const fixtureDir = "../../testdata/dirty-retail"

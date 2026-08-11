@@ -7,13 +7,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/agent"
-	"github.com/russellwallace/veritix/internal/audit"
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/profile"
-	"github.com/russellwallace/veritix/internal/report"
-	"github.com/russellwallace/veritix/internal/rules"
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/agent"
+	"github.com/russellw/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/report"
+	"github.com/russellw/veritix/internal/rules"
+	"github.com/russellw/veritix/internal/store"
 )
 
 // allRuns is the ceiling used where every run of a dataset is wanted rather

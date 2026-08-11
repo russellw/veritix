@@ -506,7 +506,7 @@ text — rather than as a missing dependency.
 - A default install talks to nobody. `llm.provider` is `none`, and both entry
   points make turning it on a deliberate act: `--llm` on the CLI, `"agent": true`
   per run over HTTP.
-- Module path is `github.com/russellwallace/veritix`.
+- Module path is `github.com/russellw/veritix`.
 - **Dual licensed on purpose**: AGPL-3.0-or-later, or commercial terms for
   customers who cannot take the AGPL — `LICENSING.md` says which is which, and
   it is a selling document as much as a legal one. Two consequences for the

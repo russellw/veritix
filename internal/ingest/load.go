@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/source"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/source"
 )
 
 // excelDialect is how a materialized worksheet is read back. The CSV written

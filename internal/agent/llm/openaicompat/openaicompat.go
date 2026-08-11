@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/russellwallace/veritix/internal/agent/llm"
+	"github.com/russellw/veritix/internal/agent/llm"
 )
 
 // DefaultBaseURL points at a local Ollama, which is the most common way a

@@ -3,8 +3,8 @@ package report
 import (
 	"strings"
 
-	"github.com/russellwallace/veritix/internal/audit"
-	"github.com/russellwallace/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/finding"
 )
 
 // FindingInfo is one finding in the JSON report.

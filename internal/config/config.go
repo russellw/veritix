@@ -16,7 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/russellwallace/veritix/internal/buildinfo"
+	"github.com/russellw/veritix/internal/buildinfo"
 )
 
 // EnvPrefix is prepended to every environment variable Veritix reads.

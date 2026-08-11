@@ -18,9 +18,9 @@ ARG DATE=unknown
 ENV CGO_ENABLED=1
 RUN go build -trimpath \
       -ldflags "-s -w \
-        -X github.com/russellwallace/veritix/internal/buildinfo.Version=${VERSION} \
-        -X github.com/russellwallace/veritix/internal/buildinfo.Commit=${COMMIT} \
-        -X github.com/russellwallace/veritix/internal/buildinfo.Date=${DATE}" \
+        -X github.com/russellw/veritix/internal/buildinfo.Version=${VERSION} \
+        -X github.com/russellw/veritix/internal/buildinfo.Commit=${COMMIT} \
+        -X github.com/russellw/veritix/internal/buildinfo.Date=${DATE}" \
       -o /out/veritix ./cmd/veritix
 
 

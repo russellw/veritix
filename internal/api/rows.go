@@ -6,8 +6,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/russellwallace/veritix/internal/engine"
-	"github.com/russellwallace/veritix/internal/store"
+	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/store"
 )
 
 // handleFindingRows serves the rows a finding is about.

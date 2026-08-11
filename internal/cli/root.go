@@ -12,9 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/russellwallace/veritix/internal/buildinfo"
-	"github.com/russellwallace/veritix/internal/config"
-	"github.com/russellwallace/veritix/internal/telemetry"
+	"github.com/russellw/veritix/internal/buildinfo"
+	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/telemetry"
 )
 
 // env carries everything the subcommands need, assembled once in
