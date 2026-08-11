@@ -22,9 +22,15 @@ import (
 type Encoding string
 
 const (
-	EncodingUTF8    Encoding = "utf-8"
-	EncodingUTF16   Encoding = "utf-16"
-	EncodingLatin1  Encoding = "latin-1"
+	// EncodingUTF8 covers plain ASCII too, with or without a byte-order mark.
+	EncodingUTF8 Encoding = "utf-8"
+	// EncodingUTF16 is what a Windows export saved as "Unicode" produces.
+	EncodingUTF16 Encoding = "utf-16"
+	// EncodingLatin1 stands in for the single-byte encodings a spreadsheet
+	// exports on a European desktop.
+	EncodingLatin1 Encoding = "latin-1"
+	// EncodingUnknown means detection did not commit to an answer; the reader
+	// falls back to UTF-8 and reports what it did.
 	EncodingUnknown Encoding = ""
 )
 

@@ -1,8 +1,6 @@
 package report
 
 import (
-	"fmt"
-	"io"
 	"strings"
 
 	"github.com/russellwallace/veritix/internal/audit"
@@ -97,36 +95,36 @@ func buildFindings(res *audit.Result) ([]FindingInfo, FindingSummary) {
 // Findings come first and the profile second. A profile of a clean dataset is
 // a wall of unremarkable numbers, and burying three real problems inside it is
 // how a tool gets ignored.
-func writeFindingsText(w io.Writer, doc *Document) {
+func writeFindingsText(p *printer, doc *Document) {
 	if len(doc.Findings) == 0 {
-		fmt.Fprintf(w, "No problems found.\n\n")
+		p.printf("No problems found.\n\n")
 		return
 	}
 
 	s := doc.FindingSummary
-	fmt.Fprintf(w, "%d problem(s) found: %d error, %d warning, %d informational\n\n",
+	p.printf("%d problem(s) found: %d error, %d warning, %d informational\n\n",
 		s.Total, s.Errors, s.Warnings, s.Info)
 
 	var current string
 	for _, f := range doc.Findings {
 		if f.Severity != current {
 			current = f.Severity
-			fmt.Fprintf(w, "%s\n%s\n", strings.ToUpper(f.Severity), strings.Repeat("─", len(f.Severity)))
+			p.printf("%s\n%s\n", strings.ToUpper(f.Severity), strings.Repeat("─", len(f.Severity)))
 		}
 
 		where := f.Source
 		if f.Column != "" {
 			where += "." + f.Column
 		}
-		fmt.Fprintf(w, "\n  %s\n", f.Title)
-		fmt.Fprintf(w, "    at %s   [%s]\n", where, f.Rule)
+		p.printf("\n  %s\n", f.Title)
+		p.printf("    at %s   [%s]\n", where, f.Rule)
 
 		if f.Detail != "" {
-			fmt.Fprintf(w, "    %s\n", wrap(f.Detail, 4))
+			p.printf("    %s\n", wrap(f.Detail, 4))
 		}
 		if f.Remedy != "" {
-			fmt.Fprintf(w, "    → %s\n", wrap(f.Remedy, 6))
+			p.printf("    → %s\n", wrap(f.Remedy, 6))
 		}
 	}
-	fmt.Fprintln(w)
+	p.newline()
 }

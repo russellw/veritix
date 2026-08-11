@@ -93,10 +93,13 @@ func (e *Engine) Collect(ctx context.Context, query string, maxRows int, args ..
 		maxRows = e.cfg.MaxResultRows
 	}
 
-	rows, err := e.Query(ctx, query, args...)
+	rows, cancel, err := e.runQuery(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
+	// The timeout stays armed until the result is fully read: releasing it
+	// before the scan loop would cancel the query out from under it.
+	defer cancel()
 	defer rows.Close() //nolint:errcheck // read path; the read error below is the one that matters
 
 	cols, err := rows.Columns()

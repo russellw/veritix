@@ -17,44 +17,45 @@ import (
 // tool gets ignored.
 func WriteText(w io.Writer, res *audit.Result, opts Options) error {
 	doc := Build(res, "", opts)
+	p := &printer{w: w}
 
-	fmt.Fprintf(w, "Dataset: %s\n", doc.Dataset.Root)
-	fmt.Fprintf(w, "  %s\n\n", res.Summarise())
+	p.printf("Dataset: %s\n", doc.Dataset.Root)
+	p.printf("  %s\n\n", res.Summarise())
 
-	writeFindingsText(w, doc)
+	writeFindingsText(p, doc)
 
 	if len(doc.Skipped) > 0 {
-		fmt.Fprintf(w, "Files not read (%d)\n", len(doc.Skipped))
+		p.printf("Files not read (%d)\n", len(doc.Skipped))
 		for _, s := range doc.Skipped {
-			fmt.Fprintf(w, "  %-28s %s\n", s.File, s.Reason)
+			p.printf("  %-28s %s\n", s.File, s.Reason)
 		}
-		fmt.Fprintln(w)
+		p.newline()
 	}
 
 	for _, t := range doc.Tables {
-		writeTable(w, t)
+		writeTable(p, t)
 	}
 
 	if !opts.IncludeValues {
-		fmt.Fprintf(w, "\n%s\n", doc.Redacted.Note)
+		p.printf("\n%s\n", doc.Redacted.Note)
 	}
-	return nil
+	return p.err
 }
 
-func writeTable(w io.Writer, t TableInfo) {
-	fmt.Fprintf(w, "── %s ", t.Source)
-	fmt.Fprintf(w, "%s\n", strings.Repeat("─", maxInt(0, 60-len(t.Source))))
-	fmt.Fprintf(w, "   %d rows, %d columns", t.RowCount, len(t.Columns))
+func writeTable(p *printer, t TableInfo) {
+	p.printf("── %s ", t.Source)
+	p.printf("%s\n", strings.Repeat("─", maxInt(0, 60-len(t.Source))))
+	p.printf("   %d rows, %d columns", t.RowCount, len(t.Columns))
 	if t.Reading != nil {
-		fmt.Fprintf(w, "   [%s]", describeReading(*t.Reading))
+		p.printf("   [%s]", describeReading(*t.Reading))
 	}
-	fmt.Fprintln(w)
+	p.newline()
 
 	if t.Rejected != nil {
-		fmt.Fprintf(w, "   ! %d rows could not be read and are missing from every total\n",
+		p.printf("   ! %d rows could not be read and are missing from every total\n",
 			t.Rejected.Count)
 		for _, s := range t.Rejected.Samples[:minInt(3, len(t.Rejected.Samples))] {
-			fmt.Fprintf(w, "       line %d: %s\n", s.Line, strings.ToLower(s.Reason))
+			p.printf("       line %d: %s\n", s.Line, strings.ToLower(s.Reason))
 		}
 	}
 	for _, n := range t.Notes {
@@ -62,23 +63,28 @@ func writeTable(w io.Writer, t TableInfo) {
 		if n.Code == "ingest.rejected_rows" {
 			continue
 		}
-		fmt.Fprintf(w, "   ! %s\n", wrap(n.Message, 7))
+		p.printf("   ! %s\n", wrap(n.Message, 7))
 	}
-	fmt.Fprintln(w)
+	p.newline()
 
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "   COLUMN\tTYPE\tMISSING\tDISTINCT\tNOTES")
+	// The tabwriter writes through the printer, so a failure inside the
+	// column table is latched with the rest rather than lost at Flush.
+	tw := tabwriter.NewWriter(p, 0, 0, 2, ' ', 0)
+	tp := &printer{w: tw}
+	tp.printf("   COLUMN\tTYPE\tMISSING\tDISTINCT\tNOTES\n")
 
 	for _, c := range t.Columns {
-		fmt.Fprintf(tw, "   %s\t%s\t%s\t%s\t%s\n",
+		tp.printf("   %s\t%s\t%s\t%s\t%s\n",
 			c.Name,
 			describeType(c),
 			describeMissing(c),
 			describeDistinct(c),
 			strings.Join(columnFlags(c), "; "))
 	}
-	tw.Flush() //nolint:errcheck // best-effort terminal output
-	fmt.Fprintln(w)
+	if err := tw.Flush(); err != nil && p.err == nil {
+		p.err = err
+	}
+	p.newline()
 }
 
 func describeReading(r ReadingInfo) string {

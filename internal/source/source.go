@@ -23,7 +23,10 @@ import (
 type Kind string
 
 const (
-	KindCSV   Kind = "csv"
+	// KindCSV is any delimited text file, whatever its delimiter: the
+	// extension is a hint and the sniffer has the final say.
+	KindCSV Kind = "csv"
+	// KindExcel is a workbook, which may hold several tables.
 	KindExcel Kind = "excel"
 )
 

@@ -12,6 +12,15 @@ import (
 )
 
 func main() {
+	// os.Exit skips deferred calls, so the exit code is worked out in run and
+	// spent here, where there is nothing left to unwind. Otherwise the signal
+	// handler installed below would never be released on the failure paths —
+	// harmless at process exit, and exactly the kind of thing that stops being
+	// harmless once main grows a second thing to clean up.
+	os.Exit(run())
+}
+
+func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -19,8 +28,9 @@ func main() {
 		// Cobra has already reported the error; a cancelled context is a
 		// deliberate Ctrl-C rather than a failure worth shouting about.
 		if errors.Is(err, context.Canceled) {
-			os.Exit(130)
+			return 130
 		}
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

@@ -195,7 +195,7 @@ func proposeReferences(ds *profile.Dataset, parents []keyRef) []candidate {
 				if !compatible(c, p.column) {
 					continue
 				}
-				named := namesSuggestReference(t.Name, c.Name, p.table.Name, p.column.Name)
+				named := namesSuggestReference(c.Name, p.table.Name, p.column.Name)
 				if !named && !shapesMatch(c, p.column) {
 					continue
 				}
@@ -257,7 +257,11 @@ func shapesMatch(child, parent *profile.Column) bool {
 }
 
 // namesSuggestReference applies the usual naming conventions for a foreign key.
-func namesSuggestReference(childTable, childCol, parentTable, parentCol string) bool {
+//
+// The child's table name is not a parameter because it has no say left by the
+// time this runs: namesOwnTable has already dropped columns that identify
+// their own table, and the caller has already skipped same-table pairs.
+func namesSuggestReference(childCol, parentTable, parentCol string) bool {
 	cc := strings.ToLower(childCol)
 	pc := strings.ToLower(parentCol)
 	pt := strings.ToLower(parentTable)
@@ -410,7 +414,7 @@ func sharedDomainFindings(ctx context.Context, e *engine.Engine, ds *profile.Dat
 			if looksLikeIdentifier(c.Name) {
 				continue
 			}
-			if int64(c.DistinctNormalised) >= c.Populated() {
+			if c.DistinctNormalised >= c.Populated() {
 				continue // every value differs; not a category
 			}
 			byName[strings.ToLower(c.Name)] = append(byName[strings.ToLower(c.Name)],
@@ -473,7 +477,7 @@ func sharedDomainFindings(ctx context.Context, e *engine.Engine, ds *profile.Dat
 					Column:  other.column.Name,
 				},
 				Count: extra,
-				Total: int64(other.column.DistinctNormalised),
+				Total: other.column.DistinctNormalised,
 				Evidence: finding.Evidence{
 					CountQuery: q,
 					Expected:   fmt.Sprintf("the same value set as %s", base.table.Display),

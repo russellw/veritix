@@ -145,33 +145,28 @@ func (e *Engine) Exec(ctx context.Context, query string, args ...any) error {
 	return nil
 }
 
-// Rows is a result set whose timeout stays armed until it is closed. The
-// timeout has to outlive the call that started the query, so it is released by
-// Close rather than by a defer at the call site.
-type Rows struct {
-	*sql.Rows
-	cancel context.CancelFunc
-}
-
-// Close releases both the rows and the query's timeout.
-func (r *Rows) Close() error {
-	err := r.Rows.Close()
-	r.cancel()
-	return err
-}
-
-// Query runs a statement and returns its rows. The caller must close them.
-func (e *Engine) Query(ctx context.Context, query string, args ...any) (*Rows, error) {
+// runQuery starts a statement and hands back its rows together with the
+// function that releases the query's timeout.
+//
+// The timeout has to outlive the call that started the query, so it cannot be
+// released by a defer here; the caller owns it until the rows are drained.
+// Nothing outside this package sees rows: Collect is the exported way to run a
+// statement, and it does the iterating, the row cap, and the Err check that a
+// caller holding raw rows would have to remember for itself. That is the same
+// reason there is no exported QueryRow.
+func (e *Engine) runQuery(
+	ctx context.Context, statement string, args ...any,
+) (*sql.Rows, context.CancelFunc, error) {
 	ctx, cancel := e.withTimeout(ctx)
 
 	start := time.Now()
-	rows, err := e.db.QueryContext(ctx, query, args...)
-	e.trace(ctx, query, start, err)
+	rows, err := e.db.QueryContext(ctx, statement, args...) //nolint:rowserrcheck // drained and checked by Collect
+	e.trace(ctx, statement, start, err)
 	if err != nil {
 		cancel()
-		return nil, &QueryError{Query: query, Err: err}
+		return nil, nil, &QueryError{Query: statement, Err: err}
 	}
-	return &Rows{Rows: rows, cancel: cancel}, nil
+	return rows, cancel, nil
 }
 
 // scanRow runs a statement expected to return one row and scans it while the

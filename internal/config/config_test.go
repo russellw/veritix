@@ -8,12 +8,11 @@ import (
 )
 
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
-	if err == nil {
+	if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
 		t.Fatal("naming a config file that does not exist should be an error")
 	}
 
-	cfg = Default()
+	cfg := Default()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("the default config must be valid: %v", err)
 	}

@@ -236,10 +236,13 @@ positives, both commented in place:
   a `//nolint:gosec` naming the guard that makes it safe — sanitised name plus
   generated id, base-name-only, or a `DataDir` prefix check. Do not add a bare
   nolint; if there is no guard to name, there is a bug.
-- Repo-wide lint has **16 pre-existing findings on `HEAD`** (errcheck in
-  `report`, revive on some exported consts, and so on) from linter versions
-  drifting since M2. CI pins `version: latest`, so it will report them too.
-  They are not new; check a baseline before assuming a change introduced one.
+- Repo-wide lint is **clean, and should stay that way**. CI pins
+  `golangci-lint` at `version: latest`, so a new release can introduce findings
+  in code nobody touched. When that happens, fix the code rather than widening
+  `.golangci.yml`; the sixteen findings cleared in "Answer the linter properly"
+  were all worth fixing, and two of them were real (`WriteText` reporting
+  success after its output had gone nowhere, and `os.Exit` skipping `main`'s
+  deferred signal cleanup).
 
 ## Testing
 

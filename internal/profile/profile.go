@@ -26,14 +26,27 @@ import (
 // its source declares or an importer would guess.
 type Kind string
 
+// The kinds, ordered from most specific to least. KindText is the fallback
+// when nothing else accounts for enough of the column, so a column reported as
+// text is one Veritix could not describe more precisely rather than one it did
+// not look at.
 const (
-	KindEmpty     Kind = "empty"
-	KindInteger   Kind = "integer"
-	KindDecimal   Kind = "decimal"
-	KindBoolean   Kind = "boolean"
-	KindDate      Kind = "date"
+	// KindEmpty is a column with no values at all to judge.
+	KindEmpty Kind = "empty"
+	// KindInteger is a whole number as written, matched on its written form
+	// rather than by casting: TRY_CAST('89.99' AS BIGINT) succeeds.
+	KindInteger Kind = "integer"
+	// KindDecimal is a number with a fractional part.
+	KindDecimal Kind = "decimal"
+	// KindBoolean is a two-valued column, however it spells its two values.
+	KindBoolean Kind = "boolean"
+	// KindDate is a calendar date with no time of day.
+	KindDate Kind = "date"
+	// KindTimestamp is a date with a time of day.
 	KindTimestamp Kind = "timestamp"
-	KindText      Kind = "text"
+	// KindText is anything else, including a column whose values nearly but
+	// not quite fit a narrower kind.
+	KindText Kind = "text"
 )
 
 // conformanceThreshold is the share of values that must match a type for the
