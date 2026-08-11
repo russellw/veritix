@@ -130,6 +130,22 @@ either a frontier model or a machine with a GPU.
 
 ## Running it
 
+`scripts/local-model.sh` is everything below, in order, so that a run is one
+command rather than six remembered flags:
+
+```sh
+scripts/local-model.sh            # probe, audit, summarize the trace, check egress
+scripts/local-model.sh --probe    # just the probe: is this server usable at all
+scripts/local-model.sh --serve    # the web interface, wired to the local model
+scripts/local-model.sh -- --rules my.yaml --format json   # extra veritix flags
+```
+
+`MODEL`, `BASE_URL`, `DATASET`, `MAX_STEPS`, `OUT_DIR` and `ADDR` override the
+defaults, which are the ones this document arrived at. Traces, logs and reports
+land in `local-runs/`, timestamped and named after the model, because the
+interesting comparison is against the previous run rather than against nothing.
+The rest of this section is what the script does and why each part is there.
+
 From the CLI:
 
 ```sh
@@ -171,11 +187,14 @@ VERITIX_LLM_MAX_STEPS=30 \
 then `POST /runs` with `"agent": true` and read
 `/api/v1/runs/$ID/trace` when it finishes.
 
-**This is deliberately not a `make` target.** `make e2e` drives
+**This is deliberately a script and not a `make` target.** `make e2e` drives
 `e2e/stub-model.mjs`, which is scripted, deterministic and takes seconds; a real
 local model is twenty minutes and gives a different answer every time. Those are
 different activities, and a test suite that depends on the second would be a
-test suite nobody runs. The scripted model stays the one in CI.
+test suite nobody runs. The scripted model stays the one in CI. Convenience is
+worth having anyway, which is what `scripts/local-model.sh` is for — the point
+of keeping it out of `make` is that nothing runs it by accident, not that it
+should be tedious.
 
 ## Budget: small models do not ration themselves
 

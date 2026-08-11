@@ -370,7 +370,11 @@ positives, both commented in place:
 - Shapes are fixed points of the shape function (`shape("XXX-999") == "XXX-999"`),
   which is why `Guard.Derived` can wrap a profiler shape without re-shaping it.
 
-**Local models** — see `docs/local-model.md` for the whole setup.
+**Local models** — `scripts/local-model.sh` runs one by hand (probe, audit,
+trace summary, egress check; `--probe`, `--serve`, `-- <veritix flags>`), and
+`docs/local-model.md` is the whole setup. It is a script rather than a `make`
+target on purpose: nothing should run a twenty-minute nondeterministic model by
+accident, which is not a reason to make it tedious.
 - Ollama sizes its context window from VRAM and picks **4096 tokens** when there
   is no GPU. Veritix's first agent prompt is ~3540, so it fits, runs for a step
   or two, and then llama.cpp discards from the front — taking the system prompt
@@ -459,7 +463,11 @@ JavaScript unit-test runner; that is a dependency the current UI does not earn.
 
 `make e2e` also starts `e2e/stub-model.mjs`, a scripted chat-completions
 endpoint, and points the server at it with `VERITIX_LLM_*`, so the agentic
-screens can be driven without a network model.
+screens can be driven without a network model. `scripts/local-model.sh` is the
+other half of that: the same run against a real one, by hand, when the question
+is whether a model that was not scripted can actually do the job. Pointing the
+script at the stub (`MODEL=stub-model BASE_URL=http://127.0.0.1:11435/v1`) is
+also how to check the script itself without waiting twenty minutes.
 
 Running the browser tests needs system packages once, and they need root:
 `sudo apt-get install -y libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64

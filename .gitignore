@@ -33,3 +33,7 @@ go.work.sum
 
 # Build output
 bin/
+
+# Traces, logs and reports from scripts/local-model.sh. A real local-model run
+# is an experiment, not an artifact: kept to compare against the next one.
+local-runs/
