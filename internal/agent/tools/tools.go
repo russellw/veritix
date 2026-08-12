@@ -41,6 +41,10 @@ type World struct {
 	// Profile is what the deterministic pass already measured. Most of what the
 	// agent needs is here, which is why most tool calls cost no query at all.
 	Profile *profile.Dataset
+	// Known is what that pass already reported. The brief lists it so the agent
+	// does not go rediscovering it; the tools consult it so that a check landing
+	// on new ground can say so at the moment it lands. See [World.knownAt].
+	Known []finding.Finding
 	// Guard decides what may leave the process.
 	Guard *redact.Guard
 	// MaxRows caps a query result. Zero uses the engine's own cap.
@@ -94,6 +98,49 @@ func (w *World) column(t *profile.Table, name string) (*profile.Column, error) {
 		}
 	}
 	return nil, fmt.Errorf("table %q has no column called %q; call describe_table to see its columns", t.Name, name)
+}
+
+// knownAt reports which deterministic rule, if any, already covers a defect of
+// one of these kinds at this location. It matches on the profile's own names,
+// which is what a finding's Location carries.
+func (w *World) knownAt(table, column string, rules ...string) string {
+	for _, f := range w.Known {
+		if f.Location.Table != table || f.Location.Column != column {
+			continue
+		}
+		for _, r := range rules {
+			if f.Rule == r {
+				return r
+			}
+		}
+	}
+	return ""
+}
+
+// verdict is the sentence a check tool adds to its own result when it has
+// measured a defect: whether this is new ground or ground the deterministic
+// pass already covered.
+//
+// It exists because a measurement the model has to interpret unaided is a
+// measurement it can walk away from, and one did. Against dirty-retail a 4B
+// model was handed two unresolved references that no deterministic finding
+// reports, said nothing, and spent its remaining eleven steps elsewhere. The
+// system prompt covers all of this and had been true for twelve steps by then;
+// a tool result is read at the moment the evidence is in front of the model,
+// which is the same reason record_finding corrects an inflated count where the
+// count is made rather than in the prompt.
+//
+// It is a nudge and not an instruction. What to record is still the model's
+// judgment, the engine still decides the number, and Set.Verify still has the
+// last word on whether it reaches the report.
+func (w *World) verdict(what, table, column string, rules ...string) string {
+	if rule := w.knownAt(table, column, rules...); rule != "" {
+		return fmt.Sprintf("the deterministic pass already reports this as %s, so do not "+
+			"re-report it; what it implies elsewhere may still be worth following", rule)
+	}
+	return fmt.Sprintf("%s, and no deterministic finding covers this. If it is a real "+
+		"problem, record it now with record_finding, passing evidence_query as the "+
+		"count_query — nothing you leave unrecorded reaches the report.", what)
 }
 
 // Tool is one capability.

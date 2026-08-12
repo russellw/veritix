@@ -288,11 +288,52 @@ shapes in a form that cannot be mistaken for content (`⟨XXX-999999⟩`), or ha
 The second is better, because it corrects the model at the point of the mistake,
 which is the same mechanism `record_finding` already uses for an inflated count.
 
-**Against `testdata/dirty-retail`, this model recorded nothing in either run.**
+**Against `testdata/dirty-retail`, this model recorded nothing in either 12-step
+run.**
 That is a fair result rather than a broken one — the deterministic pass hands it
 36 findings and tells it not to re-report them, which is a high bar for 4B — but
 it does mean a local model of this size validates the machinery without saying
 anything about whether the agent adds value. That question needs a bigger model.
+
+## What the 24-step run found, and the change it produced
+
+The raised budget was spent as intended: six steps on `describe_table`, three on
+`check_candidate_key`, three on `check_referential_integrity`, then six `run_sql`
+counts and five `sample_values` calls — ground the 12-step runs never reached.
+39m47s, one tool call per step, no prose, no tool errors, and again nothing
+recorded.
+
+**The step budget was not the constraint, and the trace says why.** At step 13
+`check_referential_integrity(sales.xlsx#Q1.region → regions.csv.region_code)`
+returned `orphans: 2` of six references, with the evidence query attached. That
+relationship is not in the deterministic report: `relate.go` pairs columns by
+naming convention and overlap, and `region` against `region_code` is exactly the
+pair it does not propose. So the agent had, with eleven steps in hand, the one
+thing it exists to produce — a real defect the deterministic pass misses — and it
+spent those eleven steps on counts that returned nothing interesting.
+
+The brief lists the known findings and the system prompt says to record what it
+can prove. Both had been true for twelve steps by then. What was missing was
+anything at the point where the evidence arrived, so that is where it went:
+`check_referential_integrity` and `check_candidate_key` now add a `note` to their
+own result saying either which deterministic rule already covers this defect, or
+that none does and to record it now with `evidence_query` as the `count_query`.
+`TestACheckSaysWhetherTheDefectIsAlreadyKnown` pins both halves against these two
+relationships. It is the same shape as the count correction in `record_finding`:
+tell the model where it is looking, not in a prompt it read twenty minutes ago.
+
+The other half of that note matters as much. Steps 11 and 12 re-measured the two
+orphan relationships the deterministic pass *does* report, which the brief had
+already listed; a tool that says "already reported, do not re-report" spends one
+step to save several.
+
+**`sample_values` on a shaped column is close to information-free**, and four of
+the last five steps went on it. Step 20 returned three distinct entries whose
+shapes all render `XXXX`, so the model learned three counts and nothing else.
+This is the same shape/value confusion as above seen from the other side, and it
+is unfixed: a column of fixed-width codes cannot be told apart by shape, so
+either the tool should say that the shapes collapsed or it should decline to
+answer for such a column.
 
 ## What this is good for, and what it is not
 

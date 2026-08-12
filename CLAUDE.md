@@ -224,6 +224,16 @@ what is true.**
   count of 1 looks like Veritix vouching for the 400. A query returning zero
   records nothing either. What is recorded then goes through `Set.Verify` with
   everything else, so it is measured twice.
+- **A check tool says whether what it measured is new**, in a `note` on its own
+  result: `check_referential_integrity` and `check_candidate_key` look their
+  defect up in `World.Known` and either name the deterministic rule that already
+  covers it, or say that none does and to record it now. The brief already lists
+  the known findings, and that was not enough — a local model was handed two
+  unresolved references `relate.go` never proposes, said nothing, and spent its
+  remaining budget elsewhere. A tool result is read where the evidence is, which
+  is the same reason the count correction lives in `record_finding` rather than
+  in the prompt. It is a nudge: the model still decides, the engine still
+  decides the number, `Set.Verify` still has the last word.
 - **The egress guard is enforced by two types, not by diligence.**
   `redact.Text` is the only string type that may hold customer content and only
   a `Guard` method makes one; `redact.Sealed` is the only thing the loop sends

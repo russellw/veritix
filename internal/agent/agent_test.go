@@ -454,6 +454,96 @@ func TestSampleValuesFollowThePolicy(t *testing.T) {
 	}
 }
 
+// The agent's value over the deterministic pass is the relationship that pass
+// never proposed, and against dirty-retail a small model measured exactly that,
+// said nothing, and moved on. A check that lands on new ground has to say so
+// where the model is looking, and a check that lands on known ground has to say
+// that too, or the budget goes on re-verifying the brief.
+func TestACheckSaysWhetherTheDefectIsAlreadyKnown(t *testing.T) {
+	in := fixture(t)
+	orders := tableNamed(t, in, "order")
+	customers := tableNamed(t, in, "customer")
+	q1 := tableNamed(t, in, "q1")
+	regions := tableNamed(t, in, "region")
+
+	// The one relationship the deterministic pass reports here. The agent is
+	// told about it in the brief; the point of this test is that the tool says
+	// it again, at the moment the model is looking at the number.
+	in.Known = []finding.Finding{{
+		Rule:     "reference.orphan_values",
+		Severity: finding.Error,
+		Origin:   finding.OriginCheck,
+		Title:    "1 value in orders.csv.customer_id has no matching row in customers.csv",
+		Location: finding.Location{
+			Table: orders, Display: "orders.csv", Column: "customer_id",
+		},
+	}}
+
+	// The second pair is the one relate.go never proposes, because "region" and
+	// "region_code" do not match by name.
+	script := llmtest.New(
+		llmtest.Turn{Calls: []llmtest.Call{
+			{Name: "check_referential_integrity", Input: map[string]any{
+				"child_table": orders, "child_column": "customer_id",
+				"parent_table": customers, "parent_column": "customer_id",
+			}},
+			{Name: "check_referential_integrity", Input: map[string]any{
+				"child_table": q1, "child_column": "region",
+				"parent_table": regions, "parent_column": "region_code",
+			}},
+		}},
+		llmtest.Turn{Text: "."},
+	)
+
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 3}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	calls := res.Trace.Steps[0].Calls
+	if len(calls) != 2 {
+		t.Fatalf("got %d tool calls, want 2", len(calls))
+	}
+
+	type reference struct {
+		Child   string `json:"child"`
+		Orphans int64  `json:"orphans"`
+		Note    string `json:"note"`
+	}
+	results := make([]reference, len(calls))
+	for i, c := range calls {
+		if c.IsError {
+			t.Fatalf("call %d failed: %s", i, c.Result)
+		}
+		if err := json.Unmarshal([]byte(c.Result), &results[i]); err != nil {
+			t.Fatalf("call %d result: %v", i, err)
+		}
+	}
+
+	known, discovered := results[0], results[1]
+
+	// If the fixture ever stops planting these, the notes below would pass
+	// vacuously by being absent.
+	if known.Orphans == 0 || discovered.Orphans == 0 {
+		t.Fatalf("the fixture no longer has orphans in both relationships: %+v", results)
+	}
+
+	if !strings.Contains(known.Note, "already reports this as reference.orphan_values") {
+		t.Errorf("a defect the deterministic pass reports was not named as known: %q", known.Note)
+	}
+	if strings.Contains(known.Note, "record_finding") {
+		t.Errorf("the model was invited to re-report a known defect: %q", known.Note)
+	}
+
+	if !strings.Contains(discovered.Note, "record_finding") {
+		t.Errorf("a defect no check reports did not tell the model to record it: %q",
+			discovered.Note)
+	}
+	if !strings.Contains(discovered.Note, "no deterministic finding covers this") {
+		t.Errorf("the note did not say the ground was new: %q", discovered.Note)
+	}
+}
+
 // slowProvider blocks until the call's context ends, then reports what a real
 // provider reports for a dead connection — which is what an expired deadline
 // looks like from inside an HTTP client.

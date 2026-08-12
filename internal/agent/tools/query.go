@@ -120,7 +120,8 @@ func checkCandidateKey() *Tool {
 				"row count, the number of distinct combinations, how many rows are involved in " +
 				"a duplicate, and how many have a missing part of the key. Use it before " +
 				"trusting a column as an identifier, and before checking a relationship that " +
-				"depends on one.",
+				"depends on one. When it finds duplicates it also says whether the " +
+				"deterministic pass already reported them.",
 			Properties: map[string]any{
 				"table":   str("the table name"),
 				"columns": stringList("the columns that together should be unique"),
@@ -189,6 +190,20 @@ func checkCandidateKey() *Tool {
 				return nil, err
 			}
 
+			// A composite key's duplicates are nobody's single-column finding,
+			// so only the one-column case can be matched against what the
+			// deterministic pass already reports.
+			var note string
+			if duplicateRows > 0 {
+				column := ""
+				if len(cols) == 1 {
+					column = cols[0].Name
+				}
+				note = w.verdict(
+					fmt.Sprintf("%d row(s) share a key that should be unique", duplicateRows),
+					t.Name, column, "key.duplicate_values", "table.duplicate_rows")
+			}
+
 			return struct {
 				Table         string   `json:"table"`
 				Columns       []string `json:"columns"`
@@ -197,6 +212,7 @@ func checkCandidateKey() *Tool {
 				DuplicateRows int64    `json:"rows_in_a_duplicate"`
 				Incomplete    int64    `json:"rows_missing_part_of_the_key"`
 				Unique        bool     `json:"is_a_key"`
+				Note          string   `json:"note,omitempty"`
 				EvidenceQuery string   `json:"evidence_query"`
 				RowQuery      string   `json:"row_query"`
 			}{
@@ -204,6 +220,7 @@ func checkCandidateKey() *Tool {
 				Rows: rows, Distinct: distinct,
 				DuplicateRows: duplicateRows, Incomplete: incomplete,
 				Unique:        duplicateRows == 0 && incomplete == 0,
+				Note:          note,
 				EvidenceQuery: duplicated,
 				RowQuery: fmt.Sprintf(
 					`SELECT * FROM %[1]s WHERE (%[2]s) IN (SELECT %[2]s FROM %[1]s GROUP BY %[2]s HAVING count(*) > 1)`,
@@ -220,7 +237,9 @@ func checkReferentialIntegrity() *Tool {
 			Description: "Count the rows in one table whose reference does not exist in another: " +
 				"orders pointing at a customer that is not in the customer file, and the like. " +
 				"Most real defects in a folder of exports live in the relationships between the " +
-				"files rather than inside any one of them, so this is worth reaching for early.",
+				"files rather than inside any one of them, so this is worth reaching for early. " +
+				"When it finds unresolved references it also says whether the deterministic " +
+				"pass already reported them, so a relationship it missed is visible as such.",
 			Properties: map[string]any{
 				"child_table":   str("the table holding the reference"),
 				"child_column":  str("the referring column"),
@@ -290,12 +309,24 @@ func checkReferentialIntegrity() *Tool {
 				share = float64(orphanCount) / float64(referencing)
 			}
 
+			// The deterministic pass infers relationships from naming
+			// conventions and overlap, so the ones it never proposed are
+			// exactly where the agent earns its budget: a relationship it can
+			// see and relate.go cannot is worth saying out loud.
+			var note string
+			if orphanCount > 0 {
+				note = w.verdict(
+					fmt.Sprintf("%d reference(s) resolve to nothing", orphanCount),
+					child.Name, childCol.Name, "reference.orphan_values")
+			}
+
 			return struct {
 				Child         string  `json:"child"`
 				Parent        string  `json:"parent"`
 				Referencing   int64   `json:"rows_with_a_reference"`
 				Orphans       int64   `json:"orphans"`
 				OrphanShare   float64 `json:"orphan_share"`
+				Note          string  `json:"note,omitempty"`
 				EvidenceQuery string  `json:"evidence_query"`
 				RowQuery      string  `json:"row_query"`
 			}{
@@ -304,6 +335,7 @@ func checkReferentialIntegrity() *Tool {
 				Referencing:   referencing,
 				Orphans:       orphanCount,
 				OrphanShare:   round2(share),
+				Note:          note,
 				EvidenceQuery: orphans,
 				RowQuery: fmt.Sprintf(`
 					SELECT * FROM %[1]s

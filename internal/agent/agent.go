@@ -101,6 +101,7 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 	world := &tools.World{
 		Engine:  in.Engine,
 		Profile: in.Profile,
+		Known:   in.Known,
 		Guard:   guard,
 		MaxRows: opts.MaxRows,
 		Log:     log,
