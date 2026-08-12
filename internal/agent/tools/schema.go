@@ -172,7 +172,9 @@ func summarizeColumn(g *redact.Guard, c *profile.Column, full bool) columnInfo {
 	}
 	for _, s := range c.Sentinels {
 		info.Sentinels = append(info.Sentinels, countedText{
-			Value: g.Derived(s.Value), Count: s.Count, Share: round2(s.Share),
+			// A placeholder from the recognized vocabulary, and a literal one:
+			// unlike a shape it is really in the column, so it is not marked.
+			Value: g.Sentinel(s.Value), Count: s.Count, Share: round2(s.Share),
 		})
 	}
 

@@ -17,10 +17,11 @@ func runSQL() *Tool {
 			Description: "Run one read-only SELECT against the dataset and get its result. " +
 				"Aggregates — count, sum, avg, min over numbers, and expressions built from " +
 				"them — come back as numbers. Anything else is a cell value and comes back as " +
-				"its shape, with digits as 9 and letters as X, so ask for counts rather than " +
-				"rows: 'SELECT count(*) FROM orders WHERE status IS NULL' tells you what you " +
-				"need; 'SELECT * FROM orders LIMIT 10' will not. Only one SELECT statement is " +
-				"accepted.",
+				"its shape in angle brackets, digits as 9 and letters as X: ⟨XXXX⟩ describes " +
+				"a value and is not one, so nothing equals it and a query comparing against " +
+				"it matches nothing. Ask for counts rather than rows: 'SELECT count(*) FROM " +
+				"orders WHERE status IS NULL' tells you what you need; 'SELECT * FROM orders " +
+				"LIMIT 10' will not. Only one SELECT statement is accepted.",
 			Properties: map[string]any{
 				"query":  str("a single SELECT statement"),
 				"reason": str("one line on what you are trying to establish; it is recorded in the audit trail"),
@@ -352,10 +353,12 @@ func sampleValues() *Tool {
 		Definition: llm.Tool{
 			Name: "sample_values",
 			Description: "The most frequent distinct entries in a column, with their counts. " +
-				"By default the entries come back as shapes rather than values, which is enough " +
-				"to see that a column mixes two formats but not what any customer is called. " +
-				"If the operator has permitted values for this run, they arrive as written, " +
-				"with obvious identifiers masked; the result says which you are looking at.",
+				"By default the entries come back as shapes in angle brackets rather than as " +
+				"values, which is enough to see that a column mixes two formats but not what " +
+				"any customer is called — and two entries can share a shape, so ⟨XXXX⟩ twice " +
+				"is two different values, not a repeat. If the operator has permitted values " +
+				"for this run, they arrive as written and unbracketed, with obvious " +
+				"identifiers masked; the result says which you are looking at.",
 			Properties: map[string]any{
 				"table":  str("the table name"),
 				"column": str("the column name"),

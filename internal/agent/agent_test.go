@@ -147,8 +147,8 @@ func TestNothingTheModelSeesContainsACellValue(t *testing.T) {
 
 	// The shapes have to actually be there, or the tools returned nothing and
 	// the scan above passed vacuously.
-	if !strings.Contains(sent, "XXX-999999") {
-		t.Error("no shaped identifier reached the model; the tools may have returned nothing")
+	if !strings.Contains(sent, "⟨XXX-999999⟩") {
+		t.Error("no delimited shape reached the model; the tools may have returned nothing")
 	}
 	if res.Trace.Redaction.Passed != 0 {
 		t.Errorf("%d values were passed through unshaped under the default policy",

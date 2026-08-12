@@ -10,20 +10,55 @@ func TestShapeDisclosesNothing(t *testing.T) {
 	g := New(Policy{})
 
 	cases := map[string]string{
-		"CUS-004417":           "XXX-999999",
-		"alice@example.com":    "XXXXX@XXXXXXX.XXX",
-		"£1,234.50":            "£9,999.99",
-		"2024-03-04":           "9999-99-99",
-		"Acme Ltd":             "XXXX XXX",
-		"Ünïcode":              "XXXXXXX",
-		"O'Brien\tCorporation": "X'XXXXX XXXXXXXXXXX",
-		"":                     "",
-		"03/04/2024 09:15:00":  "99/99/9999 99:99:99",
+		"CUS-004417":           "⟨XXX-999999⟩",
+		"alice@example.com":    "⟨XXXXX@XXXXXXX.XXX⟩",
+		"£1,234.50":            "⟨£9,999.99⟩",
+		"2024-03-04":           "⟨9999-99-99⟩",
+		"Acme Ltd":             "⟨XXXX XXX⟩",
+		"Ünïcode":              "⟨XXXXXXX⟩",
+		"O'Brien\tCorporation": "⟨X'XXXXX XXXXXXXXXXX⟩",
+		"":                     "⟨⟩",
+		"03/04/2024 09:15:00":  "⟨99/99/9999 99:99:99⟩",
 	}
 	for in, want := range cases {
 		if got := g.Shape(in).String(); got != want {
 			t.Errorf("Shape(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The delimiters are the whole defense against a shape being read as data, so
+// nothing may reach the model wearing a shape's clothes without them, and a
+// sentinel — which is a real value from a fixed vocabulary — must not wear
+// them at all.
+func TestAShapeIsAlwaysDelimitedAndASentinelNever(t *testing.T) {
+	g := New(Policy{})
+
+	marked := []string{
+		g.Shape("CUS-004417").String(),
+		g.Value("CUS-004417").String(),
+		g.Derived("XXX-999999").String(),
+		g.Cell("Acme", true).(Text).String(),
+		g.Cell(1234.50, false).(Text).String(),
+		g.Shape(strings.Repeat("a", 500)).String(), // truncated, and still closed
+	}
+	for _, got := range marked {
+		if !strings.HasPrefix(got, "⟨") || !strings.HasSuffix(got, "⟩") {
+			t.Errorf("a shape reached the model undelimited: %q", got)
+		}
+		if Unmark(got) == got {
+			t.Errorf("Unmark did not recover the bare shape of %q", got)
+		}
+	}
+
+	if got := g.Sentinel("n/a").String(); got != "n/a" {
+		t.Errorf(`Sentinel("n/a") = %q: a placeholder is a value, not a shape`, got)
+	}
+
+	// A value permitted by policy is data, and data is never bracketed.
+	allowed := New(Policy{AllowValues: true}).Value("Acme Ltd").String()
+	if strings.ContainsAny(allowed, "⟨⟩") {
+		t.Errorf("an allowed value was dressed as a shape: %q", allowed)
 	}
 }
 
@@ -37,7 +72,7 @@ func TestDefaultPolicyShapesEveryValue(t *testing.T) {
 		if strings.Contains(got, raw) {
 			t.Errorf("Value(%q) returned the value itself: %q", raw, got)
 		}
-		if len(got) != len([]rune(raw)) && raw != "" {
+		if bare := Unmark(got); len([]rune(bare)) != len([]rune(raw)) && raw != "" {
 			t.Errorf("Value(%q) = %q: a shape should be the same length as its value", raw, got)
 		}
 	}
@@ -80,10 +115,10 @@ func TestCellShapesEverythingButAggregates(t *testing.T) {
 	if !ok {
 		t.Fatalf("a non-aggregate number came back as %T, want Text", got)
 	}
-	if txt.String() != "9999.9" {
+	if txt.String() != "⟨9999.9⟩" {
 		t.Errorf("Cell(1234.50) = %q, want its shape", txt.String())
 	}
-	if s := g.Cell("Acme", true); s.(Text).String() != "XXXX" {
+	if s := g.Cell("Acme", true); s.(Text).String() != "⟨XXXX⟩" {
 		t.Errorf("an aggregate over text must still be treated as a value, got %v", s)
 	}
 	if v := g.Cell(nil, false); v != nil {

@@ -9,8 +9,8 @@
 // the same thing.
 //
 // The default policy sends schema, counts, ratios, and derived *shapes*:
-// "CUS-004417" leaves as "XXX-999999", which is precise enough to reason about
-// and useless to anyone who intercepts it. Raw values leave only when the
+// "CUS-004417" leaves as "⟨XXX-999999⟩", which is precise enough to reason
+// about and useless to anyone who intercepts it. Raw values leave only when the
 // operator passes --allow-sample-values, and even then they are masked and
 // truncated first.
 //
@@ -155,6 +155,8 @@ func (g *Guard) Value(s string) Text {
 // transformation the profiler applies in SQL: the two have to agree, or a
 // shape in a tool result would not match the shape in the profile the model
 // was given alongside it.
+//
+// The result is delimited — see [Mark].
 func (g *Guard) Shape(s string) Text {
 	out := shape(s)
 	truncated := false
@@ -169,19 +171,65 @@ func (g *Guard) Shape(s string) Text {
 	if truncated {
 		g.stats.Truncated++
 	}
-	return Text{out}
+	return Text{Mark(out)}
 }
 
-// Derived wraps content the profiler already reduced to a shape or to a
-// recognized placeholder token, and which therefore contains nothing to
-// withhold.
+// The delimiters a shape is wrapped in before it is sent.
+//
+// U+27E8/U+27E9 rather than "<>": Go's JSON encoder escapes the ASCII pair to
+// < and >, which would put a shape in the trace in a form no reader
+// recognizes, and the angle brackets do occur in real exports.
+const (
+	shapeOpen  = "⟨"
+	shapeClose = "⟩"
+)
+
+// Mark delimits a shape so that it cannot be read as a cell value.
+//
+// A shape sits in a tool result exactly where a value would sit, and looks
+// like one: "XXXX" is a plausible region code and "99.99" a plausible price.
+// Two models eight times apart in size both read them as contents and queried
+// for them — the larger spent its last seven steps on WHERE region = 'XXXX',
+// which correctly matched nothing every time. Telling the model in the system
+// prompt what a shape is does not survive twenty steps of a filling context;
+// making a shape not look like a value survives everything, because it travels
+// with the shape.
+//
+// So this is a property of the representation rather than a rule about a
+// mistake: ⟨XXX-999999⟩ pasted into SQL is still wrong, but it is visibly
+// wrong, in the model's own output, at the moment it writes it.
+func Mark(shape string) string { return shapeOpen + shape + shapeClose }
+
+// Unmark removes the delimiters, for a caller that needs the bare pattern
+// back — the profiler's shapes are stored and reported undelimited.
+func Unmark(s string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(s, shapeOpen), shapeClose)
+}
+
+// Derived wraps a shape the profiler already derived, and which therefore
+// contains nothing to withhold.
 //
 // It exists so the counters keep meaning something. Shapes are fixed points of
 // the shape function, so passing them through [Guard.Shape] would be harmless
 // but would report every summary in a profile as a value that had to be
 // redacted, and a customer reading "4,812 values withheld" deserves that number
 // to be the count of values that were actually withheld.
-func (g *Guard) Derived(s string) Text { return Text{s} }
+//
+// It is delimited like any other shape: a shape reaching the model from the
+// profile and one reaching it from a query have to be the same kind of thing,
+// or the distinction is one more piece of lore for the model to lose.
+func (g *Guard) Derived(s string) Text { return Text{Mark(s)} }
+
+// Sentinel wraps a recognized placeholder token — "n/a", "-", "unknown" —
+// which the profiler matched against a fixed vocabulary.
+//
+// Unlike a shape this is a literal cell value, and it is deliberately *not*
+// delimited: it is genuinely in the data, WHERE status = 'n/a' is a query
+// worth writing, and disguising it as a shape would cost the model the one
+// class of value it is allowed to know verbatim. Nothing customer-specific
+// can arrive here, because a token that is not in the vocabulary is not a
+// sentinel.
+func (g *Guard) Sentinel(s string) Text { return Text{s} }
 
 // Values clears a list of values.
 func (g *Guard) Values(ss []string) []Text {

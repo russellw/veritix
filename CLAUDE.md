@@ -243,6 +243,17 @@ what is true.**
   it fails to seal, at the point where it would have been sent. Use
   `Guard.Derived` for shapes the profiler already derived, so the "withheld"
   counters mean what they say.
+- **A shape sent to the model is delimited: `⟨XXX-999999⟩`.** A bare shape sits
+  in a tool result exactly where a value would sit and looks like one, and two
+  models eight times apart in size both read them as contents and queried for
+  them — the larger spent its last seven steps on `WHERE region = 'XXXX'`,
+  matching nothing every time. The system prompt says what a shape is and does
+  not survive twenty steps of a filling context; the brackets travel with the
+  shape. `redact.Mark` is the only thing that applies them and `Guard.Sentinel`
+  is the exception, because `n/a` and `-` are real contents from a fixed
+  vocabulary and `WHERE status = 'n/a'` is a query worth writing. Reports are
+  unaffected — `internal/report` does not import `redact`, and a shape shown to
+  a customer alongside their own data needs no such warning.
 - **DuckDB errors are scrubbed of single-quoted content.** "Could not convert
   string 'N/A' to INT" is a cell value escaping through a diagnostic.
 - **`Engine.Lockdown` runs before the agent starts**, from `audit.Run` rather
@@ -379,6 +390,8 @@ positives, both commented in place:
   that away.
 - Shapes are fixed points of the shape function (`shape("XXX-999") == "XXX-999"`),
   which is why `Guard.Derived` can wrap a profiler shape without re-shaping it.
+  The delimiters go on afterwards, at the boundary, so the property still holds
+  of the bare pattern.
 
 **Local models** — `scripts/local-model.sh` runs one by hand (probe, audit,
 trace summary, egress check; `--probe`, `--serve`, `-- <veritix flags>`), and

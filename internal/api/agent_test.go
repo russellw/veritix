@@ -219,8 +219,8 @@ func TestNoCellValueLeavesTheServerForTheModel(t *testing.T) {
 			t.Errorf("the value %q was sent over the wire to the model", raw)
 		}
 	}
-	if !strings.Contains(sent, "XXX-999999") {
-		t.Error("no shaped value reached the model; the test may be checking nothing")
+	if !strings.Contains(sent, "⟨XXX-999999⟩") {
+		t.Error("no delimited shape reached the model; the test may be checking nothing")
 	}
 }
 

@@ -92,8 +92,14 @@ the way back anyway because this dialect has nowhere to replay them. `2507`
 instruct tags are the non-thinking refresh:
 
 ```sh
-ollama pull qwen3:4b-instruct-2507-q4_K_M      # 2.5 GB
+ollama pull qwen3:4b-instruct-2507-q4_K_M          # 2.5 GB, the small one
+ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M     # 18 GB, 3B active
 ```
+
+**Prefer a mixture-of-experts model if the RAM is there.** On a CPU the cost per
+token follows the *active* parameters, so the 30B-A3B above runs at about the
+4B's speed with eight times the total capacity, while a dense 14B would be
+several times slower than either. See the measurements below.
 
 **Check it emits `tool_calls` before running a full audit.** One request against
 `/v1/chat/completions` with a two-tool payload settles in twenty seconds what a
@@ -334,6 +340,57 @@ This is the same shape/value confusion as above seen from the other side, and it
 is unfixed: a column of fixed-width codes cannot be told apart by shape, so
 either the tool should say that the shapes collapsed or it should decline to
 answer for such a column.
+
+## A bigger local model, and what it settled
+
+The lever on a CPU is *active* parameters, not total ones: generation is
+memory-bandwidth-bound, so a dense 14B costs about 3.5× what a 4B costs per
+token, while a mixture-of-experts model reads only the experts it activates.
+`qwen3:30b-a3b-instruct-2507-q4_K_M` is 30B total and 3B active — eight times
+the capacity of the 4B at roughly its per-token cost. Same family, same 2507
+instruct line, so capacity is the only variable that changes.
+
+It fits this machine and not much more: 18GB of weights, 22GB resident with the
+32k context, ~7GB spare, no swap. `qwen3.5:35b-a3b-q4_K_M` is the same class a
+generation newer and worth trying next; `qwen3.5:122b-a10b` would not fit.
+
+| | 4B | 30B-A3B |
+|---|---|---|
+| wall clock | 65m / 23 steps | 48m / 24 steps |
+| median step | 101s | 115s |
+| tokens | 177k in, 2.0k out | 178k in, 1.0k out |
+| outcome | `finished`, 3 findings | `step_budget`, 0 findings |
+
+The cost prediction held exactly. The audit result was worse — and the trace
+says why, in a way that was worth more than the finding would have been.
+
+**Both models read shapes as values, and the bigger one did it more.** Five of
+the 30B's seven `run_sql` calls were variations on `WHERE "region" = 'XXXX'`,
+with `'99.99'` and `'9,999.99'` alongside; every one correctly matched nothing.
+The 4B had done the same thing more quietly, in an inert `NOT IN` clause, and
+its two junk findings came from the same confusion. Two models eight times apart
+in capacity making the identical mistake is not a small model being silly: a
+bare shape sits in a tool result exactly where a value would sit and looks like
+one, and no amount of system prompt survives twenty steps of a filling context.
+
+So shapes are now delimited — `⟨XXX-999999⟩` — everywhere they reach a model.
+That is a change to the representation rather than a rule against one mistake,
+which matters: a detector for shape-shaped literals would have caught these two
+runs and nothing else, and the next model would find a new way to be confused by
+an ambiguous encoding. The brackets travel with the shape. They also make
+padding visible for free (`⟨  XXX XXXXX  ⟩`), which a bare shape hid.
+
+**It was one step from the finding.** Steps 14 and 17 were `sample_values` calls
+on `regions_csv.region` and `sales_xlsx_q1.region_code` — the right relationship
+with the table and column crossed, refused both times — and step 24, its last,
+finally wrote the join by hand and returned 1. It never ran
+`check_referential_integrity` on that pair, so it never got the note that would
+have told it this was new ground.
+
+**The orientation tax is the same for both.** Eight of 24 steps went on
+`list_tables` and `describe_table` for seven tables, before either model did any
+work. That is a third of the budget spent acquiring data the deterministic pass
+already holds and could hand over in the brief for nothing.
 
 ## What this is good for, and what it is not
 
