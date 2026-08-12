@@ -27,7 +27,7 @@ You are working from measurements, not from the data. Counts, ratios, distributi
 Anything in ⟨⟩ is a description of a value and never a value. No cell equals ⟨XXXX⟩, so a query written against one matches nothing and tells you nothing: ask for counts of a property instead — how many rows fail to parse as a date, how many do not appear in the other file. Placeholder tokens are the exception and arrive unbracketed, because "n/a" and "-" really are what is in the column.
 
 How to work
-Start with list_tables and describe_table. Most of what you need is already measured and costs you no query. Reach for run_sql when you have a specific question the profile does not answer, and ask it for counts rather than rows — a row of values comes back shaped and tells you little, while a count tells you exactly how big a problem is.
+The profile of every column is below: declared type against actual type, how much is missing, how many distinct values, the shapes they take, and the distribution where there is one. That is the same thing describe_table returns, so read it rather than asking for it again — orientation has already been paid for, and the budget is better spent on the questions it raises. Reach for run_sql when you have a specific question the profile does not answer, and ask it for counts rather than rows — a row of values comes back shaped and tells you little, while a count tells you exactly how big a problem is.
 
 The defects worth your attention are usually the ones that need context to see: a column whose values are individually valid but collectively impossible, two files that disagree about the same fact, a total that does not match its parts, an identifier that means something different in one file than in another, a category that has quietly acquired a second spelling. Relationships between files are where the real damage hides, because nothing checks them until something breaks.
 
@@ -39,23 +39,26 @@ Write findings for the person who has to fix the data. "signup_date has two date
 When to stop
 Stop when you have investigated what looks wrong and recorded what you could prove. Do not pad the report: a dataset with three real problems should yield three findings, and finding nothing new beyond the deterministic pass is a legitimate result worth saying plainly. Do not re-report what that pass already found; it is listed for you below. When you are done, say briefly what you looked at and what you concluded.`
 
-// brief is the first user turn: what this dataset is, and what is already known
-// about it.
+// brief is the first user turn: what this dataset is, what has been measured
+// about it, and what is already known.
 //
 // Telling the model what the deterministic pass found is what stops it spending
 // its budget rediscovering it. Those titles are safe to send: no report Veritix
 // writes carries a cell value, which is asserted across every format by
 // TestDefaultReportContainsNoRawValues.
-func brief(ds *profile.Dataset, known []finding.Finding, root string) string {
+//
+// The profile arrives as the JSON tools.Registry.Overview sealed, rather than
+// as prose, for two reasons. It is the same document describe_table returns, so
+// a model reading the brief and a model calling the tool see one dataset and
+// not two. And it went through the egress guard on its way here, which is what
+// keeps "everything customer-derived that reaches a model was cleared by the
+// guard" true of the brief as well as of tool results.
+func brief(ds *profile.Dataset, overview string, known []finding.Finding, root string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "Dataset: %s\n\n", root)
 
-	b.WriteString("Tables:\n")
-	for _, t := range ds.Tables {
-		fmt.Fprintf(&b, "- %s (%s): %d rows, %d columns\n",
-			t.Name, t.Display, t.RowCount, len(t.Columns))
-	}
+	fmt.Fprintf(&b, "%d tables, profiled:\n%s\n", len(ds.Tables), overview)
 
 	if len(known) == 0 {
 		b.WriteString("\nThe deterministic pass found nothing. That is unusual in real business data, " +

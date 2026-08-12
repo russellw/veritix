@@ -54,6 +54,11 @@ type Options struct {
 
 const (
 	defaultMaxSteps = 40
+	// overviewBudget caps the profile carried in the brief, in bytes of JSON.
+	// Around 6k tokens: comfortably affordable against any modern context
+	// window, and roughly what eight describe_table calls would have cost
+	// anyway — the difference is that it is paid once and costs no steps.
+	overviewBudget = 24000
 	// maxRetries is how many times a call is retried when the provider says the
 	// failure was about the moment rather than the request.
 	maxRetries = 3
@@ -117,14 +122,26 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 		ValuesAllowed: opts.Policy.AllowValues,
 	}
 
+	// The profile goes into the brief rather than being fetched a table at a
+	// time. If it cannot be sealed the run continues without it: the tools are
+	// still there, and an audit that costs eight steps of orientation is a
+	// great deal better than no audit.
+	overview, err := registry.Overview(overviewBudget)
+	if err != nil {
+		log.Error("the dataset profile could not be sealed for the brief", "error", err)
+	}
+
 	req := &llm.Request{
 		System:    systemPrompt,
 		Tools:     registry.Definitions(),
 		MaxTokens: opts.MaxTokens,
 		Effort:    opts.Effort,
 		Messages: []llm.Message{{
-			Role:  llm.RoleUser,
-			Parts: []llm.Part{{Kind: llm.PartText, Text: brief(in.Profile, in.Known, in.Root)}},
+			Role: llm.RoleUser,
+			Parts: []llm.Part{{
+				Kind: llm.PartText,
+				Text: brief(in.Profile, overview.String(), in.Known, in.Root),
+			}},
 		}},
 	}
 

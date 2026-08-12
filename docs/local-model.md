@@ -57,10 +57,11 @@ ollama serve
 **`OLLAMA_CONTEXT_LENGTH` is the one that will cost you a day.** Ollama sizes
 the context window from available VRAM and settles on **4096 tokens** when there
 is no GPU. Veritix's first agent prompt against `testdata/dirty-retail` measures
-**3540 tokens** — the system prompt, the tool schemas, and a brief listing what
-the deterministic pass already found. That *fits*. It fits for a step or two,
-and then tool results push the conversation past the window and llama.cpp
-discards from the front, which is where the system prompt lives.
+**~4080 tokens** — the system prompt, the tool schemas, the profile of every
+column, and what the deterministic pass already found. That no longer fits at
+all, and when it did fit it fit for a step or two: tool results push the
+conversation past the window and llama.cpp discards from the front, which is
+where the system prompt lives.
 
 So the failure mode is not an error. It is a model that starts well, then
 forgets it is not allowed to see cell values, forgets that `record_finding` is
@@ -115,7 +116,7 @@ On the development machine here — an i5-7300U, two physical cores, no GPU,
 | | |
 |---|---|
 | Deterministic pass (36 findings) | ~3 s |
-| First agent prompt | 3540 tokens |
+| First agent prompt | ~4080 tokens (3540 before the profile moved into it) |
 | Prefill | 12–17 tokens/s |
 | Generation, short context | 5.6 tokens/s |
 | Generation, ~3.5k context | 1.7 tokens/s |
@@ -389,8 +390,14 @@ have told it this was new ground.
 
 **The orientation tax is the same for both.** Eight of 24 steps went on
 `list_tables` and `describe_table` for seven tables, before either model did any
-work. That is a third of the budget spent acquiring data the deterministic pass
-already holds and could hand over in the brief for nothing.
+work — a third of the budget spent acquiring data the deterministic pass already
+holds. So the brief carries the profile now: every column's declared type
+against its actual type, missing counts, distinct counts, shapes and
+distributions, rendered by the same code `describe_table` uses so the two cannot
+disagree. It measures **+540 tokens on the first prompt** against eight steps
+saved, each of which cost a full model call and 30–150 seconds here. A dataset
+too wide to fit is described as far as the budget goes and names the rest in
+`described_on_request`.
 
 ## What this is good for, and what it is not
 

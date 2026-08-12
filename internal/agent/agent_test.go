@@ -11,6 +11,7 @@ import (
 	"github.com/russellw/veritix/internal/agent/llm"
 	"github.com/russellw/veritix/internal/agent/llm/llmtest"
 	"github.com/russellw/veritix/internal/agent/redact"
+	"github.com/russellw/veritix/internal/agent/tools"
 	"github.com/russellw/veritix/internal/config"
 	"github.com/russellw/veritix/internal/engine"
 	"github.com/russellw/veritix/internal/finding"
@@ -451,6 +452,95 @@ func TestSampleValuesFollowThePolicy(t *testing.T) {
 	}
 	if !res.Trace.ValuesAllowed {
 		t.Error("the trace does not record that values were permitted")
+	}
+}
+
+// Orientation used to cost a third of the budget: both local models measured
+// spent eight of twenty-four steps calling list_tables and describe_table
+// before doing any work. The profile is in the brief now, so the first thing
+// the model sees is what those calls would have returned.
+func TestTheBriefCarriesTheProfileSoOrientationCostsNoSteps(t *testing.T) {
+	in := fixture(t)
+	in.Known = []finding.Finding{{
+		Rule:     "column.type_violation",
+		Severity: finding.Error,
+		Title:    "amount holds 1 value(s) that are not numbers",
+		Location: finding.Location{Table: tableNamed(t, in, "q1"), Display: "sales.xlsx#Q1"},
+	}}
+
+	script := llmtest.New(llmtest.Turn{Text: "nothing to add"})
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 2}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Trace.Steps) != 1 {
+		t.Fatalf("the scripted model took %d steps, want 1", len(res.Trace.Steps))
+	}
+
+	reqs := script.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("the model was never called")
+	}
+	sent := reqs[0].Messages[0].Text()
+
+	// Everything describe_table would have answered, before a single step.
+	for _, want := range []string{
+		"customers_csv", "sales_xlsx_q1", // every table, not just the first
+		`"declared_type"`, `"inferred_kind"`, `"conformance"`,
+		`"distinct"`, `"shapes"`,
+		"⟨XXX-999999⟩", // a shape, delimited like any other
+		"amount holds 1 value(s) that are not numbers", // and what is already known
+	} {
+		if !strings.Contains(sent, want) {
+			t.Errorf("the brief does not carry %q", want)
+		}
+	}
+
+	// It is customer-derived content on the one path that is not a tool result,
+	// so it has to have been through the guard like everything else.
+	for _, raw := range rawValuesInFixture {
+		if strings.Contains(sent, raw) {
+			t.Errorf("the brief carries the cell value %q", raw)
+		}
+	}
+	if res.Trace.Redaction.Sealed == 0 {
+		t.Error("the brief did not go through the guard: nothing was sealed")
+	}
+}
+
+// A dataset can be wider than any context window, so the profile in the brief
+// is bounded and says what it left out rather than silently describing half a
+// dataset as if it were all of it.
+func TestABriefTooLargeToFitNamesWhatItOmitted(t *testing.T) {
+	in := fixture(t)
+	guard := redact.New(redact.Policy{})
+	registry := tools.New(&tools.World{
+		Engine: in.Engine, Profile: in.Profile, Guard: guard,
+	})
+
+	sealed, err := registry.Overview(1) // room for the first table and no more
+	if err != nil {
+		t.Fatalf("Overview: %v", err)
+	}
+	var out struct {
+		Tables  []struct{ Table string } `json:"tables"`
+		Omitted []string                 `json:"described_on_request"`
+		Note    string                   `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(sealed.String()), &out); err != nil {
+		t.Fatalf("decoding the overview: %v", err)
+	}
+
+	if len(out.Tables) != 1 {
+		t.Errorf("described %d tables on a 1-byte budget, want 1 — a brief that "+
+			"describes nothing is worse than one over budget", len(out.Tables))
+	}
+	if len(out.Omitted)+len(out.Tables) != len(in.Profile.Tables) {
+		t.Errorf("%d described + %d omitted, want %d tables accounted for",
+			len(out.Tables), len(out.Omitted), len(in.Profile.Tables))
+	}
+	if !strings.Contains(out.Note, "describe_table") {
+		t.Errorf("the note does not tell the model how to get the rest: %q", out.Note)
 	}
 }
 

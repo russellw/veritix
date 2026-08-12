@@ -127,7 +127,7 @@ If nothing is listening, start Ollama with the settings that are not optional:
     OLLAMA_FLASH_ATTENTION=1 ollama serve
 
 OLLAMA_CONTEXT_LENGTH is the one that will cost you a day: with no GPU Ollama
-picks 4096, the first agent prompt is ~3540, and the system prompt is then
+picks 4096, the first agent prompt is ~4080, and the system prompt is then
 discarded from the front mid-run. That reads as a stupid model rather than a
 truncated one.
 
@@ -153,7 +153,7 @@ ctx=$(curl -fsS --max-time 5 "$native/api/ps" 2>/dev/null |
 	jq -r '.models[0].context_length // empty' 2>/dev/null || true)
 if [ -n "$ctx" ]; then
 	if [ "$ctx" -lt 8192 ]; then
-		warn "the loaded context window is $ctx tokens; the first agent prompt is ~3540"
+		warn "the loaded context window is $ctx tokens; the first agent prompt is ~4080"
 		echo "  restart the server with OLLAMA_CONTEXT_LENGTH=32768 or the system prompt" >&2
 		echo "  will be discarded mid-run" >&2
 	else

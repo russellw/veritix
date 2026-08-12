@@ -18,7 +18,8 @@ func listTables() *Tool {
 		Definition: llm.Tool{
 			Name: "list_tables",
 			Description: "List every table in the dataset with its row and column counts. " +
-				"Start here: it is the map of what there is to audit.",
+				"The brief already names them all, so this confirms the map rather " +
+				"than acquiring it.",
 		},
 		invoke: func(_ context.Context, w *World, _ json.RawMessage) (any, error) {
 			type tableInfo struct {
@@ -212,9 +213,10 @@ func describeTable() *Tool {
 			Name: "describe_table",
 			Description: "Describe every column of a table: the type it declares, the type its " +
 				"values actually are, how many are missing, how many distinct, and the shapes " +
-				"its values take. Shapes render digits as 9 and letters as X, so 'CUS-004417' " +
-				"appears as 'XXX-999999'. This is the fastest way to find a column worth " +
-				"investigating.",
+				"its values take. Shapes render digits as 9 and letters as X in angle " +
+				"brackets, so 'CUS-004417' appears as ⟨XXX-999999⟩. The brief already carries " +
+				"this for every table it could fit, so call this only for a table listed " +
+				"there as described_on_request.",
 			Properties: map[string]any{
 				"table": str("the table name, as given by list_tables"),
 			},
@@ -231,20 +233,73 @@ func describeTable() *Tool {
 			if err != nil {
 				return nil, err
 			}
-
-			out := struct {
-				Table   string       `json:"table"`
-				Source  string       `json:"source"`
-				Rows    int64        `json:"rows"`
-				Columns []columnInfo `json:"columns"`
-			}{Table: t.Name, Source: t.Display, Rows: t.RowCount}
-
-			for _, c := range t.Columns {
-				out.Columns = append(out.Columns, summarizeColumn(w.Guard, c, false))
-			}
-			return out, nil
+			return describe(w.Guard, t), nil
 		},
 	}
+}
+
+// tableSummary is a table as the model sees it. The brief and describe_table
+// both render it, so the description a model is handed up front and the one it
+// can ask for later cannot disagree.
+type tableSummary struct {
+	Table          string       `json:"table"`
+	Source         string       `json:"source"`
+	Rows           int64        `json:"rows"`
+	UnreadableRows int64        `json:"unreadable_rows,omitempty"`
+	Columns        []columnInfo `json:"columns"`
+}
+
+func describe(g *redact.Guard, t *profile.Table) tableSummary {
+	out := tableSummary{Table: t.Name, Source: t.Display, Rows: t.RowCount}
+	if t.Ingest != nil {
+		out.UnreadableRows = t.Ingest.RejectCount
+	}
+	for _, c := range t.Columns {
+		out.Columns = append(out.Columns, summarizeColumn(g, c, false))
+	}
+	return out
+}
+
+// Overview describes every table for the brief, so that orientation costs no
+// steps at all.
+//
+// Both local models measured spent eight of their twenty-four steps calling
+// list_tables and describe_table before doing any work — a third of the budget
+// re-fetching what the deterministic pass already holds. This is that same
+// data, in the same form, handed over at the start.
+//
+// It goes through [redact.Guard.Seal] like a tool result, because it is one in
+// every respect that matters: it carries shapes derived from customer data, and
+// the guard is the only path from this process to a model. maxBytes bounds it —
+// a dataset of two hundred tables would otherwise fill the context before the
+// audit began — and any table that does not fit is named in omitted, so the
+// model knows to ask rather than assuming it has seen everything.
+func (r *Registry) Overview(maxBytes int) (redact.Sealed, error) {
+	out := struct {
+		Tables  []tableSummary `json:"tables"`
+		Omitted []string       `json:"described_on_request,omitempty"`
+		Note    string         `json:"note,omitempty"`
+	}{}
+
+	spent := 0
+	for _, t := range r.world.Profile.Tables {
+		summary := describe(r.world.Guard, t)
+		b, err := json.Marshal(summary)
+		// The first table goes in whatever it costs: a brief describing nothing
+		// would be worse than one over budget, and the alternative is a model
+		// with no idea what it is looking at.
+		if err == nil && (spent == 0 || spent+len(b) <= maxBytes) {
+			spent += len(b)
+			out.Tables = append(out.Tables, summary)
+			continue
+		}
+		out.Omitted = append(out.Omitted, t.Name)
+	}
+	if len(out.Omitted) > 0 {
+		out.Note = "the dataset was too large to describe in full here; " +
+			"call describe_table for the tables listed in described_on_request"
+	}
+	return r.world.Guard.Seal(out)
 }
 
 func profileColumn() *Tool {

@@ -243,6 +243,14 @@ what is true.**
   it fails to seal, at the point where it would have been sent. Use
   `Guard.Derived` for shapes the profiler already derived, so the "withheld"
   counters mean what they say.
+- **The brief carries the whole profile**, from `tools.Registry.Overview`, which
+  is the same renderer `describe_table` uses — so what a model is handed and
+  what it can ask for cannot drift apart. Orientation used to cost eight of
+  twenty-four steps on both local models measured; it now costs +540 tokens once.
+  It goes through `Guard.Seal` like a tool result, because the brief is the only
+  other path to the model and the guard has to be the whole of it. `overviewBudget`
+  bounds it, and any table that does not fit is named in `described_on_request`
+  rather than silently dropped.
 - **A shape sent to the model is delimited: `⟨XXX-999999⟩`.** A bare shape sits
   in a tool result exactly where a value would sit and looks like one, and two
   models eight times apart in size both read them as contents and queried for
@@ -399,9 +407,9 @@ trace summary, egress check; `--probe`, `--serve`, `-- <veritix flags>`), and
 target on purpose: nothing should run a twenty-minute nondeterministic model by
 accident, which is not a reason to make it tedious.
 - Ollama sizes its context window from VRAM and picks **4096 tokens** when there
-  is no GPU. Veritix's first agent prompt is ~3540, so it fits, runs for a step
-  or two, and then llama.cpp discards from the front — taking the system prompt
-  with it. The model stops knowing it may not see cell values and starts
+  is no GPU. Veritix's first agent prompt is ~4080 since the profile moved into
+  the brief, so it does not fit at all; even when it did, llama.cpp discarded
+  from the front within a step or two — taking the system prompt with it. The model stops knowing it may not see cell values and starts
   answering in prose, which reads as a stupid model rather than a truncated
   context. `OLLAMA_CONTEXT_LENGTH=32768` before `ollama serve`, always.
 - Take a **non-thinking** model (Qwen3's `2507` instruct tags). A hybrid emits a
