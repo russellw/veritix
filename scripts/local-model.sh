@@ -18,7 +18,9 @@
 #   MODEL       default qwen3:4b-instruct-2507-q4_K_M
 #   BASE_URL    default http://localhost:11434/v1
 #   DATASET     default testdata/dirty-retail
-#   MAX_STEPS   default 12
+#   MAX_STEPS   default 24
+#   TIMEOUT     default 30m   (one model call; the product default of 10m is
+#                              sized for a cloud endpoint, not for this)
 #   OUT_DIR     default ./local-runs
 #   ADDR        default 127.0.0.1:8080   (--serve only)
 set -euo pipefail
@@ -29,7 +31,15 @@ cd "$repo_root"
 MODEL="${MODEL:-qwen3:4b-instruct-2507-q4_K_M}"
 BASE_URL="${BASE_URL:-http://localhost:11434/v1}"
 DATASET="${DATASET:-testdata/dirty-retail}"
-MAX_STEPS="${MAX_STEPS:-12}"
+# 12 was not enough twice over: a small model spends its first several steps
+# working through list_tables and describe_table, so a short budget stops it
+# while it is still orienting and records nothing. Size the budget for the
+# model rather than for the dataset — docs/local-model.md, "Budget".
+MAX_STEPS="${MAX_STEPS:-24}"
+# Ten minutes is the product default and is right for a cloud endpoint. Here
+# generation slows as the context fills, so a late step can outrun it, and the
+# run then ends on an error instead of a report.
+TIMEOUT="${TIMEOUT:-30m}"
 OUT_DIR="${OUT_DIR:-$repo_root/local-runs}"
 ADDR="${ADDR:-127.0.0.1:8080}"
 
@@ -169,6 +179,7 @@ if [ "$mode" = serve ]; then
 		VERITIX_LLM_BASE_URL="$BASE_URL" \
 		VERITIX_LLM_MODEL="$MODEL" \
 		VERITIX_LLM_MAX_STEPS="$MAX_STEPS" \
+		VERITIX_LLM_REQUEST_TIMEOUT="$TIMEOUT" \
 		./bin/veritix serve --addr "$ADDR"
 fi
 
@@ -179,7 +190,7 @@ trace="$OUT_DIR/$stamp-$slug.trace.json"
 log="$OUT_DIR/$stamp-$slug.log"
 report="$OUT_DIR/$stamp-$slug.report.txt"
 
-say "Auditing $DATASET with $MODEL (max $MAX_STEPS steps)"
+say "Auditing $DATASET with $MODEL (max $MAX_STEPS steps, ${TIMEOUT}/call)"
 echo "trace:  $trace"
 echo "log:    $log"
 
@@ -187,7 +198,9 @@ echo "log:    $log"
 # lands at the end, and a long run with no output looks like a hang.
 started=$(date +%s)
 status=0
-./bin/veritix audit "$DATASET" \
+# There is no --llm-request-timeout flag; the setting is config and env only.
+VERITIX_LLM_REQUEST_TIMEOUT="$TIMEOUT" \
+	./bin/veritix audit "$DATASET" \
 	--llm openai-compatible \
 	--llm-base-url "$BASE_URL" \
 	--llm-model "$MODEL" \

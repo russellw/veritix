@@ -140,8 +140,8 @@ scripts/local-model.sh --serve    # the web interface, wired to the local model
 scripts/local-model.sh -- --rules my.yaml --format json   # extra veritix flags
 ```
 
-`MODEL`, `BASE_URL`, `DATASET`, `MAX_STEPS`, `OUT_DIR` and `ADDR` override the
-defaults, which are the ones this document arrived at. Traces, logs and reports
+`MODEL`, `BASE_URL`, `DATASET`, `MAX_STEPS`, `TIMEOUT`, `OUT_DIR` and `ADDR`
+override the defaults, which are the ones this document arrived at. Traces, logs and reports
 land in `local-runs/`, timestamped and named after the model, because the
 interesting comparison is against the previous run rather than against nothing.
 The rest of this section is what the script does and why each part is there.
@@ -149,11 +149,11 @@ The rest of this section is what the script does and why each part is there.
 From the CLI:
 
 ```sh
-./bin/veritix audit testdata/dirty-retail \
+VERITIX_LLM_REQUEST_TIMEOUT=30m ./bin/veritix audit testdata/dirty-retail \
     --llm openai-compatible \
     --llm-base-url http://localhost:11434/v1 \
     --llm-model qwen3:4b-instruct-2507-q4_K_M \
-    --llm-max-steps 12 \
+    --llm-max-steps 24 \
     --trace-out trace.json \
     --log-level debug
 ```
@@ -219,6 +219,17 @@ Which is the right behavior and worth keeping: a truncated investigation that
 says it was truncated is honest, where a truncated investigation reported as a
 clean bill of health would be the worst thing this product could do.
 
+Two further 12-step runs ended the same way — `step_budget`, nothing recorded —
+which is enough evidence that the default was wrong rather than that the runs
+were unlucky. `scripts/local-model.sh` now defaults to **24 steps**, above the
+point where orientation stops eating the whole budget, and to a **30-minute**
+per-call timeout with it: a longer run reaches the slow, full-context steps that
+outrun the product default of ten minutes, and there is no sense in buying more
+budget only to end on `provider_error` before spending it. Both are still
+`MAX_STEPS` and `TIMEOUT` in the environment. On hardware like the machine
+measured above, expect a 24-step run to take the better part of an hour; on
+anything with a GPU it is the cheaper half of the trade.
+
 ## What a second, longer run found
 
 A 30-step run over HTTP got 17 steps in 56 minutes and then died on
@@ -230,8 +241,10 @@ step re-prefills only the new tool result, 37 to 750 tokens — but throughput
 collapses as the window fills. At 225 tokens of context the model generates at
 5.6 tokens/s; at 8.2k it generates at **0.78** and prefills at 1.0. Steps that
 cost 30 seconds early cost two and a half minutes by step 15. The practical
-ceiling on this hardware is about 15 steps, and more budget does not buy
-proportionally more investigation.
+ceiling on this hardware is about 15 steps *per hour*, and more budget does not
+buy proportionally more investigation — it is a reason to expect a 24-step run
+to be long, not a reason to keep the budget below what the model needs to reach
+a hypothesis.
 
 **A self-imposed timeout is being retried as if it were a network failure.**
 `openaicompat` marks every transport error `Retryable` (`openaicompat.go`,

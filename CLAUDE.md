@@ -387,8 +387,11 @@ accident, which is not a reason to make it tedious.
 - Probe `/v1/chat/completions` with a two-tool payload before running a full
   audit: twenty seconds to learn what a full run takes twenty minutes to prove.
 - A small model does not ration its step budget — the first run here spent six
-  consecutive steps on `describe_table` and finished with nothing recorded.
-  Budget for the model, not the dataset.
+  consecutive steps on `describe_table` and finished with nothing recorded, and
+  two more 12-step runs did the same. Budget for the model, not the dataset:
+  the script defaults to 24 steps and a 30-minute per-call timeout, since a
+  longer run reaches the slow full-context steps that outrun the product's
+  10-minute default and would otherwise end on `provider_error`.
 
 **Uploads**
 - The upload directory used to be named with the first eight characters of a
