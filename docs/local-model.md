@@ -399,6 +399,43 @@ saved, each of which cost a full model call and 30–150 seconds here. A dataset
 too wide to fit is described as far as the budget goes and names the rest in
 `described_on_request`.
 
+## What the two fixes bought, and the third failure underneath
+
+The 4B again, with shapes delimited and the profile in the brief:
+
+| | orientation calls | steps | findings |
+|---|---|---|---|
+| 4B, before either fix | 7 | 24/24 `step_budget` | 0 |
+| 4B, + the check-tool note | 8 | 23/24 `finished` | 3 (1 real, 2 junk) |
+| 30B-A3B, + the note | 8 | 24/24 `step_budget` | 0 |
+| 4B, + delimiters + profile in brief | **1** | **13/24 `finished`** | 0 |
+
+**Orientation went from eight steps to one.** It called `list_tables` once out
+of habit and was running `check_referential_integrity` by step 2, reaching at
+step 4 the region-code finding that took the previous 4B run eleven steps and
+the 30B all twenty-four. The whole investigation was done by step 12, with
+eleven steps of budget unspent.
+
+**No shape reached SQL.** All three `run_sql` calls were clean referential
+counts, against five of seven for the 30B before the delimiters. Three queries
+is encouraging rather than conclusive, and the confusion has not gone: writing
+prose at the end, the model *stripped the brackets* and reasoned about `'99.99'`
+and `'#XXX!'` as though they were contents. The representation fix stops shapes
+reaching the engine; it does not make a 4B model understand what a shape is.
+
+**Then it wrote its tool calls out as text.** Step 13, `end_turn`, fourteen
+minutes of generation containing three complete `record_finding` payloads —
+the first of them the real finding, with a count query that would have
+reproduced at 2. The loop saw a model that had stopped calling tools, called
+that a clean finish, and recorded nothing.
+
+That is a malformed tool call, and Veritix has one mechanism for those: hand it
+back and let the model correct itself. `writtenCall` now matches a JSON object
+in a final message against the tool schemas and the loop says so, once. It does
+*not* execute what the model wrote — that would put a finding in the report
+without going through the tool that checks the count against the query, which
+is the whole basis of the design.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,

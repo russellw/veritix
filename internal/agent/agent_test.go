@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -452,6 +453,127 @@ func TestSampleValuesFollowThePolicy(t *testing.T) {
 	}
 	if !res.Trace.ValuesAllowed {
 		t.Error("the trace does not record that values were permitted")
+	}
+}
+
+// Verbatim from a qwen3-4b run that ended this way: three complete
+// record_finding payloads emitted as message content, the first of them a real
+// finding, and not one tool call made. Trimmed to two.
+const proseInsteadOfCalls = `I have finished. Here are the findings:
+{ "rule": "orphaned_region_reference", "severity": "error", "table": "%[1]s",
+  "title": "2 rows in %[1]s.region have no matching region_code in regions_csv",
+  "detail": "The sales data references a region that does not exist.",
+  "count_query": "SELECT count(*) FROM \"%[1]s\" WHERE trim(\"region\") NOT IN (SELECT trim(\"region_code\") FROM \"regions_csv\")",
+  "affected_count": 2 },
+{ "rule": "improper_margin_data", "severity": "warning", "table": "%[1]s",
+  "title": "1 value in margin is an Excel error", "detail": "margin cannot be summed.",
+  "count_query": "SELECT count(*) FROM \"%[1]s\" WHERE 1 = 0", "affected_count": 1 }`
+
+// A model that writes its tool call out as prose has done the work and fumbled
+// the handover. The loop used to read that as a model with nothing left to say
+// and end the run with nothing recorded.
+func TestAToolCallWrittenAsProseIsHandedBack(t *testing.T) {
+	in := fixture(t)
+	q1 := tableNamed(t, in, "q1")
+	prose := fmt.Sprintf(proseInsteadOfCalls, q1)
+
+	// Told what happened, the model makes the call — the real one only. The
+	// invented margin claim is left behind, which is the model's own doing and
+	// exactly what the correction must leave room for.
+	script := llmtest.New(
+		llmtest.Turn{Text: prose},
+		llmtest.Turn{Calls: []llmtest.Call{{Name: "record_finding", Input: map[string]any{
+			"rule": "orphaned_region_reference", "severity": "error", "table": q1,
+			"column": "region",
+			"title":  "2 rows in sales.xlsx#Q1.region have no matching region_code",
+			"detail": "the sales data references a region that does not exist",
+			"count_query": `SELECT count(*) FROM ` + engine.Ident(q1) +
+				` WHERE trim("region") NOT IN (SELECT trim("region_code") FROM "regions_csv")`,
+			"affected_count": 2,
+		}}}},
+		llmtest.Turn{Text: "done"},
+	)
+
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 5}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(res.Findings) != 1 {
+		t.Fatalf("recorded %d findings, want the 1 the model went on to call for: %+v",
+			len(res.Findings), res.Findings)
+	}
+	if res.Findings[0].Count != 2 {
+		t.Errorf("count = %d, want the 2 the engine measured", res.Findings[0].Count)
+	}
+
+	// What was sent back is in the trace, because the trace is the answer to
+	// "what was the model sent" and this is neither brief nor tool result.
+	correction := res.Trace.Steps[0].Correction
+	if !strings.Contains(correction, "record_finding") {
+		t.Errorf("the correction does not name the tool that was written out: %q", correction)
+	}
+	if !strings.Contains(correction, "nothing needs to be invented") {
+		t.Errorf("the correction does not leave room for an empty result: %q", correction)
+	}
+
+	// And it is said once. A model that keeps writing prose is finished.
+	stubborn := llmtest.New(
+		llmtest.Turn{Text: prose},
+		llmtest.Turn{Text: prose},
+		llmtest.Turn{Text: prose},
+	)
+	res, err = Run(t.Context(), in, Options{Provider: stubborn, MaxSteps: 5}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(res.Trace.Steps) != 2 {
+		t.Errorf("took %d steps, want 2: one prose turn, one correction, then done",
+			len(res.Trace.Steps))
+	}
+	if res.Trace.Stopped != StoppedModelFinished {
+		t.Errorf("stopped = %q, want %q", res.Trace.Stopped, StoppedModelFinished)
+	}
+	if len(res.Findings) != 0 {
+		t.Errorf("prose was turned into %d findings; nothing written as text may be "+
+			"recorded without going through the tool that checks it", len(res.Findings))
+	}
+}
+
+// Ordinary prose must not be mistaken for a fumbled call, or every run would
+// end with a pointless extra model call.
+func TestASummaryIsNotMistakenForAToolCall(t *testing.T) {
+	in := fixture(t)
+	registry := tools.New(&tools.World{
+		Engine: in.Engine, Profile: in.Profile, Guard: redact.New(redact.Policy{}),
+	})
+	defs := registry.Definitions()
+
+	for _, text := range []string{
+		"I looked at the seven tables and found nothing beyond the deterministic pass.",
+		"",
+		// A tool result quoted back: its keys are not any tool's parameters.
+		`The result was {"child":"orders_csv.customer_id","orphans":1,"orphan_share":0.125}`,
+		// An incomplete call is not one: record_finding needs seven arguments.
+		`I would record {"rule": "x"} but the count is wrong.`,
+	} {
+		if name, ok := writtenCall(text, defs); ok {
+			t.Errorf("writtenCall(%q) = %q: ordinary prose was read as a call", text, name)
+		}
+	}
+
+	// The known cost of a schema-driven test, stated rather than hidden: a
+	// quoted {"table": "..."} is indistinguishable from describe_table's
+	// arguments, so it draws a correction. That is one step, once in a run,
+	// against a whole run's work being dropped — and the correction says
+	// plainly that stopping is a legitimate answer.
+	if _, ok := writtenCall(`for instance {"table": "orders_csv"}`, defs); !ok {
+		t.Error("the single-argument case has stopped matching; the comment above is stale")
+	}
+
+	if name, ok := writtenCall(fmt.Sprintf(proseInsteadOfCalls, "t"), defs); !ok ||
+		name != "record_finding" {
+		t.Errorf("writtenCall on a written-out record_finding = %q, %v", name, ok)
 	}
 }
 

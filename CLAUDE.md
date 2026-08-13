@@ -277,6 +277,16 @@ what is true.**
   treated as a value, which is the safe direction.
 - **No model-supplied identifier reaches SQL.** A table or column name is looked
   up in the profile and the *profile's* name is what gets quoted.
+- **A tool call written as prose is handed back, not executed.** Weak models on
+  the chat-completions dialect finish a turn by emitting the call as message
+  content; qwen3-4b ended a run with three complete `record_finding` payloads in
+  text and nothing recorded. `writtenCall` matches a JSON object in the message
+  against the tool *schemas* — every required parameter present, no key that is
+  not a parameter — and the loop tells the model, once, to make the call.
+  Executing what it wrote is the thing not to do: that would put a finding in a
+  report without passing the tool that checks the count against the query. The
+  correction says stopping is a legitimate answer, because a nudge that reads as
+  "you were supposed to find something" is how a report fills with padding.
 - **The trace is a product feature.** It records every payload verbatim on both
   sides, is served at `/runs/{id}/trace`, and is written by `audit --trace-out`.
   It is how a customer checks the egress promise instead of taking it on trust,

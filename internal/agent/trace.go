@@ -85,6 +85,11 @@ type Step struct {
 	Text string `json:"text,omitempty"`
 	// Calls are the tools it invoked.
 	Calls []TraceCall `json:"calls,omitempty"`
+	// Correction is what Veritix sent back when this step's message was a tool
+	// call written as prose. It is recorded because the trace is the answer to
+	// "what was the model sent", and this is the one thing sent to a model that
+	// is neither the brief nor a tool result.
+	Correction string `json:"correction,omitempty"`
 
 	StopReason string        `json:"stop_reason,omitempty"`
 	Usage      llm.Usage     `json:"usage"`

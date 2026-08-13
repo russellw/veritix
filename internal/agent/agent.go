@@ -149,6 +149,10 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 		"provider", trace.Provider, "model", trace.Model,
 		"max_steps", opts.MaxSteps, "values_allowed", opts.Policy.AllowValues)
 
+	// corrected records that the model has already been told it wrote a tool
+	// call as text. See writtenCall.
+	corrected := false
+
 	for step := 1; ; step++ {
 		if err := ctx.Err(); err != nil {
 			trace.Stopped = StoppedCanceled
@@ -194,8 +198,27 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 
 		calls := res.Message.ToolCalls()
 		if len(calls) == 0 {
-			// Nothing more to do: the model has said its piece.
 			entry.Duration = time.Since(stepStarted)
+
+			// A model that wrote its tool call out as prose has done the work
+			// and fumbled the handover. That is a malformed call, so it goes
+			// back the way every other malformed call does — once, because a
+			// model that will not make the call after being told is not going
+			// to make it on the third attempt either.
+			if tool, ok := writtenCall(entry.Text, req.Tools); ok && !corrected {
+				corrected = true
+				entry.Correction = writtenCallCorrection(tool)
+				trace.Steps = append(trace.Steps, entry)
+				log.Warn("the model wrote a tool call as text rather than calling it",
+					"tool", tool, "step", step)
+				req.Messages = append(req.Messages, llm.Message{
+					Role:  llm.RoleUser,
+					Parts: []llm.Part{{Kind: llm.PartText, Text: entry.Correction}},
+				})
+				continue
+			}
+
+			// Nothing more to do: the model has said its piece.
 			trace.Steps = append(trace.Steps, entry)
 			if trace.Stopped == "" {
 				trace.Stopped = StoppedModelFinished
