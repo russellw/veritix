@@ -419,12 +419,15 @@ accident, which is not a reason to make it tedious.
 - Ollama sizes its context window from VRAM and picks **4096 tokens** when there
   is no GPU. Veritix's first agent prompt is ~4080 since the profile moved into
   the brief, so it does not fit at all; even when it did, llama.cpp discarded
-  from the front within a step or two — taking the system prompt with it. The model stops knowing it may not see cell values and starts
-  answering in prose, which reads as a stupid model rather than a truncated
-  context. `OLLAMA_CONTEXT_LENGTH=32768` before `ollama serve`, always.
+  from the front within a step or two — taking the system prompt with it. The
+  model stops knowing it may not see cell values and starts answering in prose,
+  which reads as a stupid model rather than a truncated context. `OLLAMA_CONTEXT_LENGTH=32768` before `ollama serve`, always.
 - Take a **non-thinking** model (Qwen3's `2507` instruct tags). A hybrid emits a
   reasoning block before every tool call, which on a CPU costs the same per
   token as useful output, and `openaicompat` drops it on the way back anyway.
+  Where there is no such tag — every `qwen3.5` variant is hybrid — `llm.effort`
+  (`--llm-effort none`) goes out as `reasoning_effort` and Ollama honors it:
+  73 completion tokens for one tool call becomes 14.
 - Probe `/v1/chat/completions` with a two-tool payload before running a full
   audit: twenty seconds to learn what a full run takes twenty minutes to prove.
 - A small model does not ration its step budget — the first run here spent six

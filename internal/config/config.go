@@ -98,6 +98,23 @@ type LLM struct {
 	// product's premise is that customer data stays on customer hardware.
 	AllowSampleValues bool `yaml:"allow_sample_values"`
 
+	// Effort asks the model for more or less deliberation, passed through to
+	// whatever the provider calls it: Anthropic's output effort, and
+	// reasoning_effort for the OpenAI dialect. Empty sends nothing, which
+	// leaves the model's own default in place.
+	//
+	// The vocabulary is deliberately not enumerated here. Providers disagree
+	// about it — "none", "minimal", "low", "medium", "high" — a value one
+	// accepts is a 400 from another, and a list Veritix maintained would be
+	// wrong within a release. The provider's error is the better teacher.
+	//
+	// "none" is what makes a hybrid reasoning model usable on a CPU. Ollama
+	// honors it in the OpenAI dialect, and qwen3.5-35b-a3b answers a tool call
+	// in 14 tokens with it against 73 without — five times the generation, on
+	// hardware where generation is the whole cost, for reasoning the dialect
+	// then throws away.
+	Effort string `yaml:"effort"`
+
 	// MaxSteps bounds the agent's tool-calling loop.
 	MaxSteps int `yaml:"max_steps"`
 	// TokenBudget bounds total tokens across one audit run. Zero means no cap.
@@ -217,6 +234,7 @@ func applyEnv(cfg *Config) {
 	str(&cfg.LLM.Model, "LLM_MODEL")
 	str(&cfg.LLM.BaseURL, "LLM_BASE_URL")
 	str(&cfg.LLM.APIKey, "LLM_API_KEY")
+	str(&cfg.LLM.Effort, "LLM_EFFORT")
 	boolean(&cfg.LLM.AllowSampleValues, "LLM_ALLOW_SAMPLE_VALUES")
 	num(&cfg.LLM.MaxSteps, "LLM_MAX_STEPS")
 	num(&cfg.LLM.TokenBudget, "LLM_TOKEN_BUDGET")

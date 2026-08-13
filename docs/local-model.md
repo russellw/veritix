@@ -86,16 +86,33 @@ The requirement is tool calling that works through Ollama's OpenAI-compatible
 shim, in as few parameters as possible. Two things matter more than benchmark
 scores:
 
-**Take the non-thinking variant.** Qwen3's hybrid models emit a reasoning block
-before every tool call. On a CPU those are tokens generated at the same speed as
-useful ones, several hundred of them per step, and `openaicompat` drops them on
-the way back anyway because this dialect has nowhere to replay them. `2507`
-instruct tags are the non-thinking refresh:
+**Take the non-thinking variant, or turn thinking off.** Qwen3's hybrid models
+emit a reasoning block before every tool call. On a CPU those are tokens
+generated at the same speed as useful ones, several hundred of them per step,
+and `openaicompat` drops them on the way back anyway because this dialect has
+nowhere to replay them. `2507` instruct tags are the non-thinking refresh:
 
 ```sh
 ollama pull qwen3:4b-instruct-2507-q4_K_M          # 2.5 GB, the small one
 ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M     # 18 GB, 3B active
 ```
+
+Newer families have no such tag — every `qwen3.5` variant is hybrid — and there
+the switch is `--llm-effort none`, which `openaicompat` sends as
+`reasoning_effort` and Ollama honors. Measured on `qwen3.5:35b-a3b-q4_K_M`, one
+tool call:
+
+| | completion tokens |
+|---|---|
+| default | 73 |
+| `--llm-effort none` | **14** |
+
+Five times the generation, on hardware where generation is the entire cost, for
+reasoning that is discarded on the way back. `scripts/local-model.sh` therefore
+passes `none` by default; the non-thinking instruct models accept it and ignore
+it. Ollama's native API spells the same thing `"think": false`, which is no use
+here because Veritix speaks the OpenAI dialect — but `reasoning_effort` reaches
+the same switch, and `chat_template_kwargs` and a bare `think` field do not.
 
 **Prefer a mixture-of-experts model if the RAM is there.** On a CPU the cost per
 token follows the *active* parameters, so the 30B-A3B above runs at about the

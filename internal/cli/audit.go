@@ -36,6 +36,7 @@ type auditOptions struct {
 	llmProvider       string
 	llmModel          string
 	llmBaseURL        string
+	llmEffort         string
 	llmMaxSteps       int
 	allowSampleValues bool
 }
@@ -76,6 +77,9 @@ func newAuditCmd(e *env) *cobra.Command {
 	f.StringVar(&opts.llmModel, "llm-model", "", "the model to use")
 	f.StringVar(&opts.llmBaseURL, "llm-base-url", "",
 		"the model endpoint, for a local Ollama, vLLM, or LM Studio")
+	f.StringVar(&opts.llmEffort, "llm-effort", "",
+		"how much deliberation to ask the model for; \"none\" turns off a hybrid "+
+			"reasoning model's thinking, which is what makes one usable on a CPU")
 	f.IntVar(&opts.llmMaxSteps, "llm-max-steps", 0, "cap the agent's tool-calling loop")
 	f.BoolVar(&opts.allowSampleValues, "allow-sample-values", false,
 		"permit the model to see cell values, masked; off by default, and the report says which was used")
@@ -102,6 +106,9 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 	}
 	if cmd.Flags().Changed("llm-base-url") {
 		cfg.BaseURL = opts.llmBaseURL
+	}
+	if cmd.Flags().Changed("llm-effort") {
+		cfg.Effort = opts.llmEffort
 	}
 	if cmd.Flags().Changed("llm-max-steps") {
 		cfg.MaxSteps = opts.llmMaxSteps

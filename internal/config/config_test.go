@@ -69,6 +69,7 @@ llm:
 	t.Setenv(EnvPrefix+"LOG_LEVEL", "warn")
 	t.Setenv(EnvPrefix+"ENGINE_THREADS", "4")
 	t.Setenv(EnvPrefix+"LLM_ALLOW_SAMPLE_VALUES", "true")
+	t.Setenv(EnvPrefix+"LLM_EFFORT", "none")
 
 	cfg, err = Load(path)
 	if err != nil {
@@ -82,6 +83,12 @@ llm:
 	}
 	if !cfg.LLM.AllowSampleValues {
 		t.Error("VERITIX_LLM_ALLOW_SAMPLE_VALUES=true should take effect")
+	}
+	// "none" is a value Validate must not reject: it is what turns a hybrid
+	// reasoning model's thinking off, and every provider spells effort
+	// differently.
+	if cfg.LLM.Effort != "none" {
+		t.Errorf("llm.effort = %q, want none", cfg.LLM.Effort)
 	}
 }
 

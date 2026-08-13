@@ -19,6 +19,8 @@
 #   BASE_URL    default http://localhost:11434/v1
 #   DATASET     default testdata/dirty-retail
 #   MAX_STEPS   default 24
+#   EFFORT      default none  (suppresses a hybrid model's thinking; the
+#                              openai dialect discards it anyway)
 #   TIMEOUT     default 30m   (one model call; the product default of 10m is
 #                              sized for a cloud endpoint, not for this)
 #   OUT_DIR     default ./local-runs
@@ -40,6 +42,11 @@ MAX_STEPS="${MAX_STEPS:-24}"
 # generation slows as the context fills, so a late step can outrun it, and the
 # run then ends on an error instead of a report.
 TIMEOUT="${TIMEOUT:-30m}"
+# A hybrid reasoning model emits a chain of thought before every tool call.
+# On a CPU those cost the same per token as useful output, openaicompat drops
+# them on the way back, and generation is the whole cost here. qwen3.5-35b-a3b:
+# 73 completion tokens for one tool call, 14 with this set.
+EFFORT="${EFFORT:-none}"
 OUT_DIR="${OUT_DIR:-$repo_root/local-runs}"
 ADDR="${ADDR:-127.0.0.1:8080}"
 
@@ -180,6 +187,7 @@ if [ "$mode" = serve ]; then
 		VERITIX_LLM_MODEL="$MODEL" \
 		VERITIX_LLM_MAX_STEPS="$MAX_STEPS" \
 		VERITIX_LLM_REQUEST_TIMEOUT="$TIMEOUT" \
+		VERITIX_LLM_EFFORT="$EFFORT" \
 		./bin/veritix serve --addr "$ADDR"
 fi
 
@@ -190,7 +198,7 @@ trace="$OUT_DIR/$stamp-$slug.trace.json"
 log="$OUT_DIR/$stamp-$slug.log"
 report="$OUT_DIR/$stamp-$slug.report.txt"
 
-say "Auditing $DATASET with $MODEL (max $MAX_STEPS steps, ${TIMEOUT}/call)"
+say "Auditing $DATASET with $MODEL (max $MAX_STEPS steps, ${TIMEOUT}/call, effort=$EFFORT)"
 echo "trace:  $trace"
 echo "log:    $log"
 
@@ -205,6 +213,7 @@ VERITIX_LLM_REQUEST_TIMEOUT="$TIMEOUT" \
 	--llm-base-url "$BASE_URL" \
 	--llm-model "$MODEL" \
 	--llm-max-steps "$MAX_STEPS" \
+	--llm-effort "$EFFORT" \
 	--trace-out "$trace" \
 	--log-level debug \
 	"${extra[@]}" >"$report" 2> >(tee "$log" >&2) || status=$?

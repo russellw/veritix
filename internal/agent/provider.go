@@ -33,6 +33,7 @@ func Configure(cfg config.LLM) (*Options, error) {
 		Policy: redact.Policy{
 			AllowValues: cfg.AllowSampleValues,
 		},
+		Effort:         cfg.Effort,
 		MaxSteps:       cfg.MaxSteps,
 		TokenBudget:    cfg.TokenBudget,
 		RequestTimeout: cfg.RequestTimeout,
