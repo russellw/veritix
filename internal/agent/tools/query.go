@@ -95,11 +95,11 @@ func hasShapedColumn(aggregate []bool) bool {
 func (w *World) query(ctx context.Context, q string) (*engine.ResultSet, *engine.Analysis, error) {
 	analysis, err := w.Engine.AnalyzeSelect(ctx, q)
 	if err != nil {
-		return nil, nil, fmt.Errorf("that statement was refused: %v", w.Guard.EngineError(err))
+		return nil, nil, fmt.Errorf("that statement was refused: %v", w.Guard.EngineError(err, q))
 	}
 	rs, err := w.Engine.Collect(ctx, q, w.MaxRows)
 	if err != nil {
-		return nil, nil, fmt.Errorf("that query failed: %v", w.Guard.EngineError(err))
+		return nil, nil, fmt.Errorf("that query failed: %v", w.Guard.EngineError(err, q))
 	}
 	return rs, analysis, nil
 }
@@ -108,7 +108,7 @@ func (w *World) query(ctx context.Context, q string) (*engine.ResultSet, *engine
 func (w *World) scanCount(ctx context.Context, q string) (int64, error) {
 	var n int64
 	if err := w.Engine.ScanOne(ctx, q, []any{&n}); err != nil {
-		return 0, fmt.Errorf("%v", w.Guard.EngineError(err))
+		return 0, fmt.Errorf("%v", w.Guard.EngineError(err, q))
 	}
 	return n, nil
 }
@@ -174,7 +174,7 @@ func checkCandidateKey() *Tool {
 
 			rs, err := w.Engine.Collect(ctx, q, 1)
 			if err != nil {
-				return nil, fmt.Errorf("%v", w.Guard.EngineError(err))
+				return nil, fmt.Errorf("%v", w.Guard.EngineError(err, q))
 			}
 			if len(rs.Rows) != 1 {
 				return nil, fmt.Errorf("the uniqueness check returned nothing")
@@ -402,7 +402,7 @@ func sampleValues() *Tool {
 
 			rs, err := w.Engine.Collect(ctx, q, limit)
 			if err != nil {
-				return nil, fmt.Errorf("%v", w.Guard.EngineError(err))
+				return nil, fmt.Errorf("%v", w.Guard.EngineError(err, q))
 			}
 
 			out := struct {

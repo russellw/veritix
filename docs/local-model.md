@@ -453,6 +453,41 @@ in a final message against the tool schemas and the loop says so, once. It does
 without going through the tool that checks the count against the query, which
 is the whole basis of the design.
 
+## The 35B run, and the mirage it walked into
+
+`qwen3.5:35b-a3b-q4_K_M` with `--llm-effort none`: 13 steps, 55 minutes, **7 of
+12 tool calls refused**, nothing recorded. The trace says why, and it was
+Veritix's fault rather than the model's.
+
+`Guard.EngineError` shapes every single-quoted run in a DuckDB error, so that a
+cell value quoted in a diagnostic cannot escape. DuckDB also echoes the
+offending statement back inside the message. Once shapes acquired delimiters,
+the model's own literals started coming back visibly rewritten:
+
+```
+sent:     REPLACE(amount, ',', '')      WHERE substring(amount,1,1) = '-'
+returned: REPLACE(amount, '⟨,⟩', '⟨⟩')  WHERE substring(amount,1,1) = '⟨-⟩'
+```
+
+It drew the obvious conclusion — *"the SQL engine is consistently
+misinterpreting literal strings in WHERE clauses"*, its own words at step 13 —
+and stopped writing SQL. Before the delimiters this was invisible, because
+punctuation is a fixed point of the shape function and `'-'` shaped to `'-'`.
+The change did not create the flaw; it made it legible to the model.
+
+The fix is the converse of the egress rule: text the model sent cannot be
+disclosed by sending it back. `EngineError` now takes the statement and passes
+through any quoted literal that appears in it verbatim. A conversion error
+quoting `'CUS-004417'` is still shaped, because that never appeared in the
+model's query. Function signatures in binder errors — `'length(BIGINT)'` — are
+still shaped, which is a safe false positive and still costs the model a
+diagnostic; the *Candidate functions* list underneath survives intact.
+
+The lesson worth keeping is about testing. Every scripted test passed
+throughout, because `llmtest` never writes bad SQL. This class of defect —
+Veritix corrupting its own conversation with the model — only appears when
+something on the other end is trying to do a job.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,

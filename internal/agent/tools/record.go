@@ -117,7 +117,7 @@ func recordFinding() *Tool {
 			// something that trusts it, so it has to be one read-only SELECT.
 			analysis, err := w.Engine.AnalyzeSelect(ctx, in.CountQuery)
 			if err != nil {
-				return nil, fmt.Errorf("the count_query was refused: %v", w.Guard.EngineError(err))
+				return nil, fmt.Errorf("the count_query was refused: %v", w.Guard.EngineError(err, in.CountQuery))
 			}
 			if len(analysis.Aggregate) != 1 {
 				return nil, fmt.Errorf(
@@ -176,7 +176,7 @@ func recordFinding() *Tool {
 				// A row query is served to a person on request, so it has to be
 				// safe to run later, when nothing is watching.
 				if _, err := w.Engine.AnalyzeSelect(ctx, in.RowQuery); err != nil {
-					return nil, fmt.Errorf("the row_query was refused: %v", w.Guard.EngineError(err))
+					return nil, fmt.Errorf("the row_query was refused: %v", w.Guard.EngineError(err, in.RowQuery))
 				}
 			}
 

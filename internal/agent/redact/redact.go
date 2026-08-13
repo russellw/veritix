@@ -290,14 +290,27 @@ func isNumber(v any) bool {
 // to INT" — so an error is a way for a cell value to escape without any tool
 // having decided to send it. Single-quoted content is therefore shaped and
 // everything else, including table and column names, is kept.
-func (g *Guard) EngineError(err error) Text {
+//
+// Except what the model already has. sql is the statement that produced the
+// error, and a quoted literal that appears in it verbatim is passed through
+// unchanged, because text the model sent cannot be disclosed to the model by
+// returning it. That exception is not a nicety. DuckDB echoes the offending
+// statement back inside the message, so without it every literal in the
+// model's own query comes back rewritten: qwen3.5-35b sent
+// REPLACE(amount, ',', ”) and was shown REPLACE(amount, '⟨,⟩', '⟨⟩'),
+// concluded the engine was mangling its literals — it said so, in as many
+// words — and gave up on SQL for the rest of the run.
+//
+// A cell value that happens to appear in the model's query is passed through
+// too, and that is correct: the model wrote it, so it already knew it.
+func (g *Guard) EngineError(err error, sql string) Text {
 	if err == nil {
 		return Text{}
 	}
-	return Text{g.scrubQuoted(err.Error())}
+	return Text{g.scrubQuoted(err.Error(), sql)}
 }
 
-func (g *Guard) scrubQuoted(s string) string {
+func (g *Guard) scrubQuoted(s, sql string) string {
 	var b strings.Builder
 	rest := s
 	for {
@@ -312,7 +325,12 @@ func (g *Guard) scrubQuoted(s string) string {
 			return b.String()
 		}
 		b.WriteString(rest[:i+1])
-		b.WriteString(g.Shape(rest[i+1 : i+1+j]).String())
+		quoted := rest[i+1 : i+1+j]
+		if sql != "" && strings.Contains(sql, "'"+quoted+"'") {
+			b.WriteString(quoted)
+		} else {
+			b.WriteString(g.Shape(quoted).String())
+		}
 		b.WriteByte('\'')
 		rest = rest[i+j+2:]
 	}

@@ -262,8 +262,16 @@ what is true.**
   vocabulary and `WHERE status = 'n/a'` is a query worth writing. Reports are
   unaffected — `internal/report` does not import `redact`, and a shape shown to
   a customer alongside their own data needs no such warning.
-- **DuckDB errors are scrubbed of single-quoted content.** "Could not convert
-  string 'N/A' to INT" is a cell value escaping through a diagnostic.
+- **DuckDB errors are scrubbed of single-quoted content** — "Could not convert
+  string 'N/A' to INT" is a cell value escaping through a diagnostic — **except
+  what the model already sent.** `Guard.EngineError` takes the statement and
+  passes through any quoted literal appearing in it verbatim, because text the
+  model wrote cannot be disclosed by returning it. DuckDB echoes the offending
+  statement inside the message, so without that exception every literal in the
+  model's own query comes back rewritten: qwen3.5-35b sent
+  `REPLACE(amount, ',', '')`, was shown `REPLACE(amount, '⟨,⟩', '⟨⟩')`,
+  concluded the engine was mangling its literals and gave up on SQL for the rest
+  of a 55-minute run.
 - **`Engine.Lockdown` runs before the agent starts**, from `audit.Run` rather
   than from a caller who has to remember. `enable_external_access=false` then
   `lock_configuration=true`, irreversibly, so `read_text('/etc/passwd')` and

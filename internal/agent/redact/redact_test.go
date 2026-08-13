@@ -132,7 +132,7 @@ func TestEngineErrorsKeepTheDiagnosisAndDropTheValue(t *testing.T) {
 	g := New(Policy{})
 
 	err := errors.New(`Conversion Error: Could not convert string 'N/A' to INT32 in column "amount"`)
-	got := g.EngineError(err).String()
+	got := g.EngineError(err, "SELECT sum(amount) FROM orders").String()
 
 	if strings.Contains(got, "N/A") {
 		t.Errorf("the error still carries the cell value: %q", got)
@@ -141,6 +141,43 @@ func TestEngineErrorsKeepTheDiagnosisAndDropTheValue(t *testing.T) {
 		if !strings.Contains(got, keep) {
 			t.Errorf("the error lost the part the model needs (%q): %q", keep, got)
 		}
+	}
+}
+
+// DuckDB echoes the offending statement back inside its error message, so
+// scrubbing every quoted run rewrites the model's own SQL in front of it.
+// qwen3.5-35b sent REPLACE(amount, ',', ”) and was shown REPLACE(amount, '⟨,⟩',
+// '⟨⟩'), concluded the engine was mangling literals — it said so — and stopped
+// writing SQL. Text the model sent cannot be disclosed by sending it back.
+func TestAnErrorDoesNotRewriteTheModelsOwnSQL(t *testing.T) {
+	g := New(Policy{})
+
+	sql := `SELECT count(*) FROM orders WHERE substring(amount, 1, 1) = '-' ` +
+		`AND REPLACE(amount, ',', '') <> 'N/A'`
+	err := errors.New(`Binder Error: no function REPLACE(VARCHAR, VARCHAR)` +
+		"\n" + `LINE 1: ... = '-' AND REPLACE(amount, ',', '') <> 'N/A'`)
+
+	got := g.EngineError(err, sql).String()
+
+	// Every literal here is the model's own, quoted back at it.
+	for _, keep := range []string{`'-'`, `','`, `''`, `'N/A'`} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("the model's own literal %s was rewritten: %q", keep, got)
+		}
+	}
+	if strings.ContainsAny(got, "⟨⟩") {
+		t.Errorf("a shape was substituted into the model's own statement: %q", got)
+	}
+
+	// The same value, when it is not something the model sent, is still shaped.
+	other := g.EngineError(
+		errors.New(`Conversion Error: Could not convert string 'CUS-004417' to INT`),
+		sql).String()
+	if strings.Contains(other, "CUS-004417") {
+		t.Errorf("a cell value the model never sent escaped through an error: %q", other)
+	}
+	if !strings.Contains(other, "⟨XXX-999999⟩") {
+		t.Errorf("the escaped value was not shaped: %q", other)
 	}
 }
 
