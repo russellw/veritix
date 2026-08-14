@@ -438,6 +438,15 @@ accident, which is not a reason to make it tedious.
   73 completion tokens for one tool call becomes 14.
 - Probe `/v1/chat/completions` with a two-tool payload before running a full
   audit: twenty seconds to learn what a full run takes twenty minutes to prove.
+- **Ollama is the default because customers have it, not because it is faster.**
+  llama.cpp's `llama-server --jinja` has been run end to end against
+  `dirty-retail` and is the same speed — identical 94 s median step, 24 tool
+  calls, none refused, byte-identical deterministic report. `--jinja` is what
+  makes it call tools at all, and it reads Ollama's blobs directly since those
+  are plain GGUF. The preflight in `scripts/local-model.sh` detects which server
+  answered and adapts; where it can read neither `/api/ps` nor `/props` it now
+  *says so*, because a silently skipped context check is indistinguishable from
+  a passing one. `docs/local-model.md` has the measurements.
 - **Parameter count does not predict whether a model can do this job.**
   `qwen3:4b-instruct-2507` uses the check tools and records the finding
   `relate.go` misses; `qwen3.5:35b-a3b` is eight times the size and answered

@@ -16,7 +16,9 @@
 #
 # Overridable:
 #   MODEL       default qwen3:4b-instruct-2507-q4_K_M
-#   BASE_URL    default http://localhost:11434/v1
+#   BASE_URL    default http://localhost:11434/v1  (Ollama; llama.cpp's
+#                             llama-server --jinja also works, and the preflight
+#                             adapts its advice to whichever answers)
 #   DATASET     default testdata/dirty-retail
 #   MAX_STEPS   default 24
 #   EFFORT      default none  (suppresses a hybrid model's thinking; the
@@ -83,6 +85,20 @@ warn() { printf '\033[33mwarning: %s\033[0m\n' "$*" >&2; }
 
 say "Checking the model server at $BASE_URL"
 
+# Veritix speaks one dialect to all of these, but the *diagnostics* are native:
+# where the context window is readable, and what "get the model" means, differ
+# per server. Identifying which one this is turns the two checks below from
+# silence into advice. Both probes are unauthenticated GETs that every install
+# answers, and neither loads a model.
+native="${BASE_URL%/v1}"
+backend=unknown
+if curl -fsS --max-time 5 "$native/api/tags" >/dev/null 2>&1; then
+	backend=ollama
+elif curl -fsS --max-time 5 "$native/props" >/dev/null 2>&1; then
+	backend=llama.cpp
+fi
+echo "server: $backend"
+
 # /models is a convenience, not the gate: the dialect's implementations disagree
 # about which endpoints they bother with, and the probe below is what actually
 # decides whether a run is worth starting.
@@ -90,7 +106,18 @@ if models=$(curl -fsS --max-time 5 "$BASE_URL/models" 2>/dev/null); then
 	if ! jq -e --arg m "$MODEL" 'any(.data[]?; .id == $m)' <<<"$models" >/dev/null 2>&1; then
 		warn "the server does not list a model called '$MODEL'"
 		echo "  it offers: $(jq -r '[.data[]?.id] | join(", ")' <<<"$models")" >&2
-		echo "  pull it with: ollama pull $MODEL" >&2
+		case "$backend" in
+		ollama)
+			echo "  pull it with: ollama pull $MODEL" >&2
+			;;
+		llama.cpp)
+			echo "  llama-server serves the one model it was started with, so MODEL" >&2
+			echo "  has to match its -a/--alias (it defaults to the GGUF's path)" >&2
+			;;
+		*)
+			echo "  set MODEL to one of those, or point BASE_URL at a server with it" >&2
+			;;
+		esac
 	else
 		echo "$MODEL is available"
 	fi
@@ -138,6 +165,11 @@ picks 4096, the first agent prompt is ~4080, and the system prompt is then
 discarded from the front mid-run. That reads as a stupid model rather than a
 truncated one.
 
+llama.cpp's server is the other one measured here, and --jinja is what makes it
+call tools at all; without it this probe fails exactly like this:
+
+  llama-server -m model.gguf --jinja -c 32768 --port 11434 -a $MODEL
+
 If something is listening, it answered an error — run the same request by hand
 to see what it said.
 EOF
@@ -153,19 +185,46 @@ else
 	echo "  a run may still work, but a non-thinking instruct model is the one to want" >&2
 fi
 
-# Ollama reports the context window of a loaded model on its native API, which
-# is the only way to see from out here whether OLLAMA_CONTEXT_LENGTH was set.
-native="${BASE_URL%/v1}"
-ctx=$(curl -fsS --max-time 5 "$native/api/ps" 2>/dev/null |
-	jq -r '.models[0].context_length // empty' 2>/dev/null || true)
-if [ -n "$ctx" ]; then
-	if [ "$ctx" -lt 8192 ]; then
-		warn "the loaded context window is $ctx tokens; the first agent prompt is ~4080"
-		echo "  restart the server with OLLAMA_CONTEXT_LENGTH=32768 or the system prompt" >&2
-		echo "  will be discarded mid-run" >&2
-	else
-		echo "context window: $ctx tokens"
-	fi
+# The context window is not in the OpenAI dialect anywhere, so it has to be read
+# natively. Ollama reports it only for a *loaded* model, which is why this runs
+# after the probe rather than before it; llama.cpp reports it any time.
+#
+# A check that cannot run must say so — the same reason `rules` reports a rule
+# that never applied. This one used to skip silently on anything that was not
+# Ollama, and silence here is indistinguishable from a pass on the setting most
+# likely to waste an hour.
+ctx=
+case "$backend" in
+ollama)
+	ctx=$(curl -fsS --max-time 5 "$native/api/ps" 2>/dev/null |
+		jq -r '.models[0].context_length // empty' 2>/dev/null || true)
+	;;
+llama.cpp)
+	ctx=$(curl -fsS --max-time 5 "$native/props" 2>/dev/null |
+		jq -r '.default_generation_settings.n_ctx // empty' 2>/dev/null || true)
+	;;
+esac
+if [ -z "$ctx" ]; then
+	warn "could not read this server's context window"
+	echo "  The first agent prompt is ~4080 tokens. A server whose window is" >&2
+	echo "  smaller discards from the front mid-run, taking the system prompt with" >&2
+	echo "  it; the model stops knowing it may not see cell values and answers in" >&2
+	echo "  prose, which reads as a stupid model rather than a truncated one." >&2
+	echo "  Confirm the window by hand before spending an hour on a run." >&2
+elif [ "$ctx" -lt 8192 ]; then
+	warn "the loaded context window is $ctx tokens; the first agent prompt is ~4080"
+	case "$backend" in
+	ollama)
+		echo "  restart the server with OLLAMA_CONTEXT_LENGTH=32768 or the system" >&2
+		echo "  prompt will be discarded mid-run" >&2
+		;;
+	*)
+		echo "  restart the server with a larger window (llama-server: -c 32768) or" >&2
+		echo "  the system prompt will be discarded mid-run" >&2
+		;;
+	esac
+else
+	echo "context window: $ctx tokens"
 fi
 
 if [ "$mode" = probe ]; then

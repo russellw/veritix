@@ -23,7 +23,9 @@ Claude rarely triggers at all.
 Ollama, because Ollama is what a customer running a model on their own hardware
 most often has. Any other server speaking the chat-completions dialect works
 the same way — vLLM, LM Studio, llama.cpp's `llama-server --jinja` — and only
-the base URL changes.
+the base URL changes. That last one has been run end to end and measured; see
+"llama.cpp, and why Ollama is still the default" below. The others are still
+claims.
 
 Installed here the same way Node was: the official tarball with its published
 SHA-256 checked, unpacked under `~/.local`, no root and no `curl | sh`.
@@ -79,6 +81,115 @@ wrong.
 
 `OLLAMA_KEEP_ALIVE=60m` keeps the weights resident between runs; the default 5m
 means paying the model load again every time you go and read something.
+
+## llama.cpp, and why Ollama is still the default
+
+Ollama is regularly described as adding nothing but overhead on top of
+llama.cpp. That is worth answering with a measurement rather than an opinion,
+because if it were true the default here would be wrong.
+
+It is half true. Ollama has grown its own engine for newer architectures, so in
+general it is a second implementation with its own bugs rather than a thin shim
+— but for the models used here it is still a wrapper, literally. Serving
+`qwen3:4b-instruct-2507-q4_K_M`, `pgrep` shows Ollama's runner is
+`lib/ollama/llama-server`, the same binary this section installs, invoked with
+`-c 32768 --flash-attn on --context-shift`.
+
+That is what makes the overhead claim testable, and it does not survive contact
+with this workload: both run the same GGML kernels over the same GGUF, and on
+the hardware below they generate at the same speed. What Ollama actually costs
+is **defaults**, not throughput, and the one that matters is the context window
+already documented above. What it buys is a model registry, automatic memory
+fit, hot-swapping between models, and a one-file install on Windows — which is
+not nothing for a product whose users are on Windows desktops.
+
+So Ollama stays the default because it is what a customer most often has, and
+that makes it the environment worth developing against. llama.cpp's server is
+supported and measured, not merely claimed to work.
+
+The CPU build is a 16.6 MB tarball unpacking to 41 MB, against Ollama's 1.4 GB
+and 2.1 GB — most of that difference being the CUDA and Vulkan libraries noted
+above. Installed the same way as everything else here: the official tarball with
+its published SHA-256 checked, unpacked under `~/.local`, no root.
+
+```sh
+V=b10423
+cd "$(mktemp -d)"
+curl -fsSL -O https://github.com/ggml-org/llama.cpp/releases/download/$V/llama-$V-bin-ubuntu-x64.tar.gz
+# the release API publishes each asset's digest; check it before unpacking
+curl -fsS https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/$V |
+    jq -r '.assets[] | select(.name == "llama-'$V'-bin-ubuntu-x64.tar.gz") | "\(.digest[7:])  \(.name)"' |
+    sha256sum -c -                                  # must print OK
+mkdir -p ~/.local/lib/llama.cpp
+tar -xzf llama-$V-bin-ubuntu-x64.tar.gz -C ~/.local/lib/llama.cpp
+```
+
+**`--jinja` is what makes it call tools at all.** Without it the server ignores
+the `tools` array and answers in prose, which is the exact failure the probe
+exists to catch, so it fails there rather than twenty minutes into a run.
+
+```sh
+LD_LIBRARY_PATH=~/.local/lib/llama.cpp/llama-$V \
+~/.local/lib/llama.cpp/llama-$V/llama-server \
+    -m ~/.ollama/models/blobs/sha256-<the model layer> \
+    --jinja -c 32768 -t 4 --host 127.0.0.1 --port 11436 \
+    -a qwen3:4b-instruct-2507-q4_K_M
+```
+
+Note the model path: **Ollama's blobs are plain GGUF files**, so llama-server
+reads them directly and the two servers share one model store — no conversion,
+and no second copy of an 18 GB download. Find the layer with
+
+```sh
+jq -r '.layers[] | select(.mediaType | endswith(".model")) | .digest | sub(":"; "-")' \
+    ~/.ollama/models/manifests/registry.ollama.ai/library/qwen3/4b-instruct-2507-q4_K_M
+```
+
+The `sub(":"; "-")` is not decoration: the manifest writes the digest
+`sha256:85e4…` and the file on disk is `sha256-85e4…`, so pasting the digest
+verbatim gets you a file-not-found.
+
+`-a` sets the id the server reports, so it is what `MODEL` has to match;
+llama-server serves one model per process, where Ollama loads on demand.
+
+Then the script drives it like anything else:
+
+```sh
+BASE_URL=http://127.0.0.1:11436/v1 scripts/local-model.sh
+```
+
+### Measured, same machine, same model, same fixture
+
+`llama-server b10423` against `qwen3:4b-instruct-2507-q4_K_M`, 24 steps, beside
+the Ollama run that also ran 24 steps:
+
+| | llama.cpp | Ollama |
+|---|---|---|
+| Median step | 94 s | 94 s |
+| First step (cold prefill) | 612 s | 287 s (688 and 689 s on other runs) |
+| End to end | 49m 0s | 39m 47s |
+| Tool calls | 24, 0 refused | 24, 0 refused |
+| Malformed calls needing correction | 0 | 0 |
+| Findings recorded | 0 | 0 |
+
+**The median step is identical**, which is the number that answers the
+efficiency question: there is no throughput difference for this model on this
+hardware. The end-to-end gap is the first step, and first-step prefill is noisy
+on both — Ollama's ranged from 287 s to 689 s across runs depending on how warm
+it was. The deterministic report body came back byte-identical, and the egress
+check passed with 34 values shaped.
+
+Recording no findings is not a llama.cpp result: across seven Ollama runs of
+this same model the counts were 0, 0, 0, 3, 0, 3, 2. This run's tool mix is
+nearly a twin of the Ollama 24-step run that also recorded nothing and also died
+on the step budget. That is the nondeterminism this document keeps warning
+about, which is why the comparison above is about the plumbing and not about
+audit quality.
+
+What this establishes is that `openaicompat` is not accidentally shaped to
+Ollama's quirks. What it does not establish is vLLM or LM Studio, or the error
+paths — this model behaved, so nothing exercised a refused query or a corrected
+count.
 
 ## Choosing a model
 
