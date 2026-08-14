@@ -438,6 +438,13 @@ accident, which is not a reason to make it tedious.
   73 completion tokens for one tool call becomes 14.
 - Probe `/v1/chat/completions` with a two-tool payload before running a full
   audit: twenty seconds to learn what a full run takes twenty minutes to prove.
+- **Parameter count does not predict whether a model can do this job.**
+  `qwen3:4b-instruct-2507` uses the check tools and records the finding
+  `relate.go` misses; `qwen3.5:35b-a3b` is eight times the size and answered
+  three whole runs with nothing but `run_sql` — forty calls, no
+  `record_finding`, findings narrated in prose at the end. What separates them
+  is whether the model will use a tool surface it was not asked to use, and the
+  only way to know is to run one audit and read the trace.
 - A small model does not ration its step budget — the first run here spent six
   consecutive steps on `describe_table` and finished with nothing recorded, and
   two more 12-step runs did the same. Budget for the model, not the dataset:

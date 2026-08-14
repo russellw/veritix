@@ -488,6 +488,46 @@ throughout, because `llmtest` never writes bad SQL. This class of defect —
 Veritix corrupting its own conversation with the model — only appears when
 something on the other end is trying to do a job.
 
+### Two more 35B runs, and the thing that does not fix
+
+With honest errors the same model ran twice more. It recorded nothing either
+time, and the traces say why:
+
+| | tool calls | outcome |
+|---|---|---|
+| errors rewritten | 12 (7 refused) | fought the mirage, 55m |
+| errors honest | 24 (6 refused) | `step_budget`, 29m |
+| prompt naming the check tools | 4 (1 refused) | stopped itself at step 5, 21m |
+
+**Forty tool calls across three runs, every one of them `run_sql`.** Not one
+call to `check_referential_integrity`, `check_candidate_key`, `sample_values`,
+`profile_column` or `record_finding`. It hand-wrote the orphan check that a
+tool answers in one call, then spent a step asking which customer and got a
+shape back; it spent six consecutive steps on `SELECT DISTINCT region_code`
+whose every answer was an indistinguishable `⟨XXXX⟩`. The third run added a
+sentence to the system prompt naming the check tools and saying what they save.
+It changed nothing, so that sentence was reverted: a prompt line that does not
+do the thing it was added for is worse than a shorter prompt.
+
+The run then ended at step 5 of 24 with seven numbered "Discrepancies" written
+out in prose, mid-sentence, having measured none of them. `writtenCall` did not
+fire and should not have — it matches a JSON object against the tool schemas,
+and this was English. That mechanism catches a fumbled handover, not a model
+that never intended to hand anything over.
+
+**The smaller model does this job and the larger one does not.**
+`qwen3:4b-instruct-2507` uses the check tools, records the region-code finding
+the deterministic pass misses, and gets its count right; `qwen3.5:35b-a3b` is
+eight times the size and has recorded nothing in three attempts. That is not
+capability in any simple sense — it is a prior. One model follows the tool
+descriptions it is given; the other has decided that auditing means writing SQL
+and narrating the results, and no amount of prompt says otherwise.
+
+So the practical advice for choosing a local model is not "take the biggest one
+that fits". It is: **probe whether it will use a tool it was not asked to use.**
+Two audits against a small fixture cost an hour and settle it; parameter count
+does not predict it at all.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,
