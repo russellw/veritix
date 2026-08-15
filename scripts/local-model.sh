@@ -25,6 +25,8 @@
 #                              openai dialect discards it anyway)
 #   TIMEOUT     default 30m   (one model call; the product default of 10m is
 #                              sized for a cloud endpoint, not for this)
+#   PROBE_TIMEOUT default 900 (seconds for the probe; a model paging its
+#                              weights from disk needs minutes, not seconds)
 #   OUT_DIR     default ./local-runs
 #   ADDR        default 127.0.0.1:8080   (--serve only)
 set -euo pipefail
@@ -49,6 +51,13 @@ TIMEOUT="${TIMEOUT:-30m}"
 # them on the way back, and generation is the whole cost here. qwen3.5-35b-a3b:
 # 73 completion tokens for one tool call, 14 with this set.
 EFFORT="${EFFORT:-none}"
+# The probe is meant to fail fast, but "fast" is relative to the model. One that
+# does not fit in RAM prefills its weights from disk at around a token a second,
+# so the 166-token probe alone can take three minutes before it generates
+# anything — and five minutes was not enough for gpt-oss-120b on a SATA SSD.
+# Failing here on a model that a run would have handled is the expensive
+# mistake, since the whole point of the probe is to save the run.
+PROBE_TIMEOUT="${PROBE_TIMEOUT:-900}"
 OUT_DIR="${OUT_DIR:-$repo_root/local-runs}"
 ADDR="${ADDR:-127.0.0.1:8080}"
 
@@ -131,8 +140,15 @@ fi
 say "Probing tool calling (this also loads the weights)"
 
 probe_body=$(
-	jq -n --arg m "$MODEL" '{
+	jq -n --arg m "$MODEL" --arg e "$EFFORT" '{
     model: $m, max_tokens: 128, temperature: 0,
+    # Ask for the same deliberation the run will ask for, by both spellings,
+    # because openaicompat sends both and the servers disagree about which one
+    # they read. A probe that omits them measures a model reasoning at its
+    # default, which on gpt-oss-120b is six times the output of effort=low —
+    # so the probe would time out here on a model the run handles fine.
+    reasoning_effort: $e,
+    chat_template_kwargs: {reasoning_effort: $e},
     messages: [
       {role: "system", content: "You inspect datasets. Use a tool. Never answer in prose."},
       {role: "user", content: "How many rows are in the orders table?"}
@@ -146,11 +162,14 @@ probe_body=$(
         parameters: {type: "object", required: ["sql"],
           properties: {sql: {type: "string", description: "the SELECT to run"}}}}}
     ]
-  }'
+  }
+  # An unset effort must ask for nothing rather than ask for "", which is what
+  # openaicompat does with the same setting.
+  | if $e == "" then del(.reasoning_effort, .chat_template_kwargs) else . end'
 )
 
 probe_start=$(date +%s)
-probe=$(curl -fsS --max-time 300 "$BASE_URL/chat/completions" \
+probe=$(curl -fsS --max-time "$PROBE_TIMEOUT" "$BASE_URL/chat/completions" \
 	-H 'Content-Type: application/json' -d "$probe_body") || {
 	cat >&2 <<EOF
 The probe failed: $BASE_URL/chat/completions did not answer a two-tool payload.

@@ -639,6 +639,245 @@ that fits". It is: **probe whether it will use a tool it was not asked to use.**
 Two audits against a small fixture cost an hour and settle it; parameter count
 does not predict it at all.
 
+## A model that does not fit in RAM
+
+Everything above is a model that fits. The question underneath it — does a
+*bigger* model use the tool surface that `qwen3.5:35b-a3b` would not — cannot be
+answered on 30GB of RAM by anything that fits in 30GB of RAM. So: run one that
+does not, and let the weights page from disk.
+
+That works. It is slow in a way that is worth stating precisely rather than
+hand-waving, and getting there costs three flags nobody would guess.
+
+### The blocker is not RAM, it is repacking
+
+Ollama refuses a 81GB model on this machine like this:
+
+```
+ggml_aligned_malloc: insufficient memory (attempted to allocate 43838.72 MB)
+alloc_tensor_range: failed to allocate CPU_REPACK buffer of size 45968228352
+```
+
+That is not the weights. `CPU_REPACK` is ggml's SIMD repacking buffer: for CPU
+inference it rewrites quantized tensors into an interleaved layout, which means
+**materializing them in anonymous memory**. Anonymous memory cannot be paged
+from the GGUF, so repacking defeats mmap by construction. Choosing a different
+quantization does not help — every type carries repack traits, `mxfp4` and
+`q4_K` and `q8_0` alike, which is checkable in the shipped library:
+
+```sh
+strings -a libggml-cpu-haswell.so |
+    grep -oE 'N4ggml3cpu6repack13tensor_traitsI[0-9]+block_[a-z0-9_A-Z]+'
+```
+
+**Ollama exposes no way to turn it off**, so a model larger than RAM is simply
+not something Ollama can serve. llama.cpp's server has the switch, and needs two
+more beside it:
+
+```sh
+llama-server -m model.gguf --jinja \
+    --no-repack --fit off --load-mode mmap \
+    -c 32768 -t 4 -fa on --port 11436 -a the-alias
+```
+
+- `--no-repack` is the one above. Ollama's *bundled* `llama-server` has it too,
+  so the flag is reachable without installing anything new.
+- `--fit off` is the one that looks optional and is not. The auto-fit pass
+  decides the model cannot fit, and rather than failing it falls back to a
+  non-mmap allocation of the whole file — which then fails anyway, reporting a
+  79GB `CPU buffer` instead of the repack one. Two different error messages for
+  the same cause.
+- `--load-mode mmap` is what actually lets the page cache hold a working set.
+
+The proof that it took is `VmSize` against `VmRSS`: 63.8GB mapped, 29.9GB
+resident. A failure to mmap shows up as the two being equal, or as no process
+at all.
+
+### Ollama's own GGUF cannot be paged, whatever the flags
+
+`qwen3.5:122b-a10b-q4_K_M` pulled from Ollama's registry is 81GB on disk and
+unusable for this at any setting. With `--no-repack` clearing the repack buffer,
+its own runner then says:
+
+```
+compat patch disabled mmap for transformed text tensors
+```
+
+Ollama converts qwen3.5 into a layout that needs transforming at load, and a
+tensor that is rewritten on the way in cannot be read from the file. Upstream
+llama.cpp will not open the file at all — `key qwen35moe.rope.dimension_sections
+has wrong array length; expected 4, got 3` — even though it supports the
+architecture, because Ollama's converter writes three sections where upstream
+writes four.
+
+So the model has to come from somewhere that publishes an upstream-format GGUF,
+verified the same way everything else here is:
+
+```sh
+curl -s -X POST https://huggingface.co/api/models/ggml-org/gpt-oss-120b-GGUF/paths-info/main \
+    -H 'Content-Type: application/json' -d '{"paths":["gpt-oss-120b-MXFP4.gguf"]}' |
+    jq '.[] | {size, sha256: .lfs.oid}'
+# then, after downloading
+echo "582bd40f6886200101f4c4ed9f25f3fe80cc14c86e9e2b37746cd8904a0c622d  gpt-oss-120b-MXFP4.gguf" |
+    sha256sum -c -
+```
+
+### What paging costs, measured
+
+The storage matters more than anything else here, and this machine's is SATA,
+not NVMe — `/dev/sda`, an M.2 SATA drive:
+
+| read pattern | throughput |
+|---|---|
+| sequential, cold | 395 MB/s |
+| random, 1 MiB blocks | 280 MB/s |
+| random, 64 KiB blocks | 114 MB/s |
+| random, 4 KiB blocks | 22 MB/s |
+
+Expert tensors are contiguous, so real paging lands near the top of that range,
+not the bottom.
+
+The cost of oversubscription is separable from the cost of a bigger model, and
+worth measuring on its own: `qwen3:30b-a3b-instruct-2507-q4_K_M` (18.5GB of
+weights, 3B active) run normally, and then again confined to an 8GB cgroup —
+`systemd-run --user --scope -p MemoryMax=8G -p MemorySwapMax=0` — which is about
+the same 2–3× oversubscription a 63GB model faces in 30GB of RAM. Same prompts,
+same machine, same binary:
+
+| | fits in RAM | 2.3× oversubscribed |
+|---|---|---|
+| generation | 6.7 tok/s | 0.9 tok/s |
+| prefill, small batch | 13.3 tok/s | 0.9 tok/s |
+| disk read | none | 310–380 MB **per token** |
+
+Roughly **7× on generation**, and the model is re-read from disk about once per
+request. That is the tax, and it is worth knowing before choosing a model,
+because the next choice changes how often you pay it.
+
+### Active parameters set the paging bill
+
+The rule for a model that fits is that generation cost follows *active*
+parameters. For one that does not fit the same rule is sharper, because active
+parameters are also the bytes that must come off the disk each token. Between
+two models of similar total size, the one with fewer active parameters is
+straightforwardly faster here:
+
+| | total | active | file |
+|---|---|---|---|
+| `gpt-oss-120b` | 117B | **5.1B** | 63GB, MXFP4 |
+| `qwen3.5:122b-a10b` | 122B | 10B | 81GB, Q4_K_M |
+| `GLM-4.5-Air` | 106B | 12B | ~62GB, Q4 |
+
+gpt-oss-120b was the pick: half the active parameters of the qwen3.5, and
+natively 4-bit rather than quantized down to it — MXFP4 is what it was trained
+in, so 63GB is not a lossy version of something better.
+
+Measured on this machine, `-c 32768`:
+
+| | |
+|---|---|
+| load | 2m51s |
+| mapped / resident | 63.8GB / 29.9GB |
+| generation | 0.63 tok/s |
+| prefill, 166-token prompt | 1.1 tok/s |
+| prefill, 2126-token prompt | **4.4 tok/s** |
+
+**Prefill accelerates fourfold as the batch grows**, and that is the number that
+makes this viable rather than hopeless. A batch reads each expert once and uses
+it for every token in the batch, so a long prompt amortizes what a short one
+pays per token. It is also why the first agent step is expensive in a way no
+setting fixes: the ~4080-token brief costs **45 minutes** of prefill, and that
+figure barely moved across every configuration tried below.
+
+### `reasoning_effort` reached nothing, for six hours
+
+The first full 24-step audit took **6h47m** and spent nearly all of it
+reasoning: 51,736 characters of it, on all 24 steps, 13,149 output tokens
+against a *documented* setting of `--llm-effort low`.
+
+The setting was not being applied. Asking the same question two ways:
+
+| how the effort is sent | output tokens, low | high |
+|---|---|---|
+| top-level `reasoning_effort` | 285 | 243 |
+| `chat_template_kwargs` | **47** | 400 |
+
+The top-level field — the OpenAI-dialect spelling, the one `openaicompat` sent —
+reaches nothing, and `low` and `high` are indistinguishable through it. llama.cpp
+hands the request to the model's own jinja template, and gpt-oss's harmony
+template reads `reasoning_effort` only out of `chat_template_kwargs`. Nothing
+errors; the model simply reasons at its default forever.
+
+This is the mirror image of the Ollama quirk documented above, where the
+top-level field is the one that works and `chat_template_kwargs` is ignored. So
+`openaicompat` now sends **both**, and each server ignores the spelling it does
+not implement. `TestEffortIsSentBothWays` pins it, and
+`TestNoEffortSendsNeitherField` pins the other half, because an unset effort has
+to ask for nothing rather than ask for `""`.
+
+`scripts/local-model.sh`'s probe needed the same treatment for a different
+reason: it is raw `curl`, so it never got the fix and measured a model reasoning
+at its default — which then blew through the probe's hardcoded 300-second
+timeout on a model whose actual run was fine. The probe now sends the effort the
+run will send, and the timeout is `PROBE_TIMEOUT` (default 900), because failing
+a model in preflight that a run would have handled defeats the point of having a
+preflight.
+
+### What it bought, and what it cost
+
+Same model, same fixture, same 24-step budget, the only change being that the
+effort now arrives:
+
+| | effort ignored | `low`, applied |
+|---|---|---|
+| wall clock | 6h47m | **1h5m** |
+| output tokens | 13,149 | **641** |
+| thinking | 51,736 chars | 456 chars |
+| steps | 24, `step_budget` | 3, `finished` |
+| findings | 3 (1 did not reproduce) | 1 |
+| first step | 55m36s, 665 out | 45m11s, 118 out |
+
+Reasoning fell 113× and the run got six times faster. It also **stopped after
+three steps with 21 of its budget unused** — `finished`, meaning the model
+decided it was done, not that anything cut it off.
+
+What it recorded before stopping was the best finding either run produced:
+
+```
+agent.orphaned_reference at sales.xlsx#Q1
+  Region codes in sales data do not match any entry in the reference region list
+```
+
+`check_referential_integrity` on step 1, `record_finding` on step 2, stop. That
+is the `sales.xlsx#Q1.region → regions.csv.region_code` pair `relate.go` does not
+propose — the defect this whole tier of the product exists to catch, found in
+three steps. The 6h47m run found the same class of thing on `customers.csv`
+plus an invalid email and an outlier, one of which did not survive `Set.Verify`.
+
+So the honest reading is that `low` traded breadth for speed, and on this
+fixture the first thing it looked at happened to be the right one. Whether that
+holds is a question about `medium`, and about a dataset with more than one
+finding worth reaching.
+
+**gpt-oss-120b answered the question the 35B could not.** It used
+`check_referential_integrity` and `record_finding` — the tool surface
+`qwen3.5:35b-a3b` ignored across forty consecutive `run_sql` calls — on its
+first two steps, unprompted. That is the prior described above, and it is the
+thing worth probing for. It is not a size effect: the 4B has it and the 35B does
+not.
+
+### Whether it is worth it
+
+A run is between one and seven hours depending on a setting that is easy to get
+wrong, against 40 minutes for a model that fits. The 45-minute first step is a
+floor that no configuration touches.
+
+What it buys is the only evidence so far that a model *can* do the interesting
+half of this job on hardware a customer might actually own — no GPU, 30GB of
+RAM, a SATA SSD, and a 63GB model streaming off it. That is worth an overnight
+run. It is not worth an iteration loop, and nothing here changes the conclusion
+below.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,

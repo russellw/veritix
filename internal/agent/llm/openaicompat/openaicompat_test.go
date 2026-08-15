@@ -220,3 +220,53 @@ func asLLMError(err error, target **llm.Error) bool {
 	}
 	return false
 }
+
+// TestEffortIsSentBothWays pins the two spellings of the same setting. Ollama
+// reads the top-level reasoning_effort; llama.cpp's harmony template for
+// gpt-oss reads only chat_template_kwargs and ignores the other without
+// complaining, which cost a 24-step audit six hours of reasoning at an effort
+// that was never applied. Whichever server is on the far end, one of these has
+// to reach it.
+func TestEffortIsSentBothWays(t *testing.T) {
+	const reply = `{"model":"m","choices":[{"finish_reason":"stop",
+	  "message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`
+
+	p, captured := serve(t, http.StatusOK, reply)
+
+	if _, err := p.Complete(t.Context(), &llm.Request{
+		Effort:   "low",
+		Messages: []llm.Message{{Role: llm.RoleUser, Parts: []llm.Part{{Kind: llm.PartText, Text: "go"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	if captured.ReasoningEffort != "low" {
+		t.Errorf("reasoning_effort = %q, want low", captured.ReasoningEffort)
+	}
+	if got := captured.ChatTemplateKwargs["reasoning_effort"]; got != "low" {
+		t.Errorf("chat_template_kwargs.reasoning_effort = %q, want low", got)
+	}
+}
+
+// An unset effort must not put an empty setting on the wire: a server that
+// takes chat_template_kwargs literally would otherwise be handed an empty
+// reasoning_effort, which is not the same as not asking.
+func TestNoEffortSendsNeitherField(t *testing.T) {
+	const reply = `{"model":"m","choices":[{"finish_reason":"stop",
+	  "message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`
+
+	p, captured := serve(t, http.StatusOK, reply)
+
+	if _, err := p.Complete(t.Context(), &llm.Request{
+		Messages: []llm.Message{{Role: llm.RoleUser, Parts: []llm.Part{{Kind: llm.PartText, Text: "go"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	if captured.ReasoningEffort != "" {
+		t.Errorf("reasoning_effort = %q, want empty", captured.ReasoningEffort)
+	}
+	if captured.ChatTemplateKwargs != nil {
+		t.Errorf("chat_template_kwargs = %v, want absent", captured.ChatTemplateKwargs)
+	}
+}

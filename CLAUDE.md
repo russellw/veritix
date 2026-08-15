@@ -447,6 +447,31 @@ accident, which is not a reason to make it tedious.
   answered and adapts; where it can read neither `/api/ps` nor `/props` it now
   *says so*, because a silently skipped context check is indistinguishable from
   a passing one. `docs/local-model.md` has the measurements.
+- **`reasoning_effort` has two spellings and the servers disagree.** Ollama
+  reads the top-level field; llama.cpp hands the request to the model's own
+  jinja template, and gpt-oss's harmony template reads it only out of
+  `chat_template_kwargs`. Neither errors on the one it ignores. Sent the wrong
+  way it is silently inert — `low` and `high` measured 285 and 243 completion
+  tokens, against 47 the right way — and a 24-step audit spent 6h47m reasoning
+  at an effort nobody asked for. `openaicompat` sends **both**;
+  `TestEffortIsSentBothWays` pins it. `scripts/local-model.sh`'s probe is raw
+  curl and needed the same fix, plus `PROBE_TIMEOUT` (default 900s), since it
+  was failing models in preflight that a run handled fine.
+- **A model larger than RAM needs llama.cpp, and three flags.** Not Ollama: a
+  model that does not fit fails on ggml's SIMD repack buffer, which materializes
+  weights in anonymous memory and so defeats mmap by construction — every quant
+  type has repack traits, `mxfp4` included, so no choice of quantization avoids
+  it, and Ollama exposes no switch. `llama-server --no-repack --fit off
+  --load-mode mmap` is the recipe; `--fit off` matters as much as the others,
+  because auto-fit otherwise falls back to a non-mmap allocation of the whole
+  file and fails with a different message for the same cause. Ollama's *bundled*
+  llama-server has the flags. Confirm it took by `VmSize` ≫ `VmRSS`. Ollama's
+  own qwen3.5 GGUF cannot be paged at all whatever the flags — it transforms
+  tensors at load, which disables mmap, and upstream llama.cpp rejects the file
+  outright. `gpt-oss-120b` (63GB, 5.1B active) runs this way at 0.63 tok/s
+  generating and 4.4 tok/s prefilling a long prompt; the ~4080-token brief costs
+  a **45-minute** first step that no setting improves. Active parameters, not
+  total, set the paging bill. `docs/local-model.md` has the measurements.
 - **Parameter count does not predict whether a model can do this job.**
   `qwen3:4b-instruct-2507` uses the check tools and records the finding
   `relate.go` misses; `qwen3.5:35b-a3b` is eight times the size and answered

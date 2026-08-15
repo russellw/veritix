@@ -100,6 +100,18 @@ type chatRequest struct {
 	Tools           []chatTool    `json:"tools,omitempty"`
 	ToolChoice      string        `json:"tool_choice,omitempty"`
 	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
+	// ChatTemplateKwargs carries the same effort setting by the other route,
+	// because the servers speaking this dialect read it from different places.
+	// Ollama honors the top-level reasoning_effort; llama.cpp hands the request
+	// to the model's own jinja template, and gpt-oss's harmony template reads
+	// reasoning_effort only out of chat_template_kwargs — the top-level field
+	// reaches nothing and fails silently. Measured on gpt-oss-120b, one
+	// question: 285 completion tokens by the top-level field against 47 by
+	// this one, with "high" and "low" indistinguishable through the former.
+	// A whole 24-step audit was spent reasoning at an effort nobody asked for.
+	// Sending both is what makes llm.effort mean the same thing on either
+	// server; each ignores the spelling it does not implement.
+	ChatTemplateKwargs map[string]string `json:"chat_template_kwargs,omitempty"`
 }
 
 type chatMessage struct {
@@ -234,6 +246,9 @@ func (p *Provider) request(req *llm.Request) chatRequest {
 		Model:           p.model,
 		MaxTokens:       maxTokens,
 		ReasoningEffort: req.Effort,
+	}
+	if req.Effort != "" {
+		out.ChatTemplateKwargs = map[string]string{"reasoning_effort": req.Effort}
 	}
 
 	if req.System != "" {
