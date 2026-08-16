@@ -794,7 +794,7 @@ contains its own refutation. If a batch reads each expert once and uses it for
 every token in the batch, then the size of that batch is the whole cost — and
 llama.cpp has a flag for it, `--ubatch-size`, defaulting to **512**. Raising it
 to 2048 divides the expert reads over four times as many tokens. Measured on the
-same brief, same model, prefetch on in both arms:
+same brief, same model, prefetch ungated in both arms:
 
 | `--ubatch-size` | brief | prefill |
 |---|---|---|
@@ -908,6 +908,14 @@ also sets `--no-repack --load-mode mmap --fit off`, the micro-batch, and
 `--parallel 1`. That last one matters more than it looks: with several slots, a
 follow-up turn can be scheduled onto a cold one and re-prefill the entire
 conversation, which here is half an hour.
+
+Of those, **the prefetch hook is the one that does not matter here**, which was
+measured afterwards and is worth knowing before spending a day on it. Prefetch
+is a win when the set it advises stays in RAM until it is read, and a prefill
+micro-batch selects nearly the whole expert pool, so it does not: on this brief
+the hook costs 4% of prefill and returns 1.3x on generation, which is 1% of an
+agent call. It now advises for generation only and is neutral. What makes a
+63GB model usable is the three paging flags and `--ubatch-size`, not the hook.
 
 **`--llm-effort none` is silently ignored by gpt-oss.** Its harmony template
 knows `low`, `medium` and `high`; anything else falls back to the default and

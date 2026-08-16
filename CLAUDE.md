@@ -481,7 +481,12 @@ accident, which is not a reason to make it tedious.
   `~/big-local-llms`, which sets this along with the three paging flags, an
   expert-prefetch `LD_PRELOAD` hook, and `--parallel 1` — several slots let a
   follow-up turn land on a cold one and re-prefill the whole conversation, which
-  here is half an hour. **`--llm-effort none` is silently ignored by gpt-oss**:
+  here is half an hour. The **hook itself is neutral for an agent** and was
+  measured to be: prefetch pays only while what it advises survives in RAM, and
+  a prefill micro-batch selects nearly the whole expert pool, so it advises 317GB
+  into 30GB and re-reads what was evicted. It now advises for generation only,
+  where it is worth 1.3x — which is 1% of a call that is 99% prefill. The paging
+  flags and `--ubatch-size` are what make the model usable. **`--llm-effort none` is silently ignored by gpt-oss**:
   harmony knows `low`/`medium`/`high` and quietly defaults anything else, at 317
   output tokens against 132, which reads as a slow model rather than a setting
   that did not take. Size `--llm-request-timeout` above the *first* step, which
