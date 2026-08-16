@@ -938,11 +938,13 @@ trace.
 Serving it takes an `LD_PRELOAD` shim that puts an expert-prefetch hook into a
 stock `llama-server` (`~/big-local-llms`, `scripts/serve-prefetch.sh`), which
 also sets `--no-repack --load-mode mmap --fit off`, the micro-batch, and
-`--parallel 1`. That is what `scripts/local-model.sh` now starts by default when
-nothing is already listening, because a recipe that has to be remembered in
-another terminal is a recipe that will one day be typed without `--no-repack`. That last one matters more than it looks: with several slots, a
+`--parallel 1`. That last one matters more than it looks: with several slots, a
 follow-up turn can be scheduled onto a cold one and re-prefill the entire
 conversation, which here is half an hour.
+
+That script is what `scripts/local-model.sh` now starts by default when nothing
+is already listening, because a recipe that has to be remembered in another
+terminal is a recipe that will one day be typed without `--no-repack`.
 
 Of those, **the prefetch hook is the one that does not matter here**, which was
 measured afterwards and is worth knowing before spending a day on it. Prefetch
@@ -965,6 +967,71 @@ Sized wrong, this fails without recording anything. The first step is nearly
 half the wall clock, so `--llm-request-timeout` has to clear it; at the product
 default of 10 minutes, or even at 45, the run ends on `provider_error` with zero
 findings while the deterministic 36 come through untouched.
+
+### The two orphaned references are alternatives, not a set
+
+The run on 16 August 2026 — the first through the script's new defaults, which
+also started and stopped the server itself — finished in 53m 13s:
+
+```
+4 steps, 3 tool calls (0 refused), 1 finding recorded, 0 not reproduced
+stopped: finished          -- 20 of 24 steps unspent
+27,650 tokens in, 780 out
+```
+
+The deterministic half was byte-identical to the previous run's, 37 findings at
+15/13/9, and the egress check passed again: `values_allowed: false`, 7 shapes, no
+fixture cell value in the trace. What differed was *which* agent finding came
+out. Three runs, three answers:
+
+| | steps | wall clock | recorded |
+|---|---|---|---|
+| 14 Aug (effort ignored) | 24, `step_budget` | 6h 47m | 3, one of which did not reproduce |
+| 15 Aug | 3, `finished` | 1h 5m | `sales.xlsx#Q1 → regions.csv`, 2 rows |
+| 16 Aug | 4, `finished` | 53m | `customers.csv → regions.csv`, 4 rows |
+
+Both of the later runs found **one** of the two unresolved references, never
+both, and not the same one. The trace says why, and it is more interesting than
+nondeterminism:
+
+```
+step 1  check_referential_integrity  sales_xlsx_q1.region → sales_xlsx_reference.region_code
+        → rows_with_a_reference 6, orphans 0
+step 2  check_referential_integrity  customers_csv.region → regions_csv.region_code
+        → orphans 4, "no deterministic finding covers this"
+step 3  record_finding               recorded, engine measured 4
+step 4  prose summary, stop
+```
+
+Step 1 examined the right *column* and paired it with the wrong *parent*. The
+workbook carries its own reference sheet, `sales.xlsx#reference`, whose
+`region_code` covers every region appearing in `Q1` — so the check is clean, and
+the model concluded the column was fine and moved on. The 2 orphans are against
+`regions.csv`, the file the 15 August run happened to try first. Neither run was
+wrong about what it measured; each asked one question about one column and
+believed the answer.
+
+Two things follow. The first is about reading these runs: a check tool returning
+zero orphans is evidence about *that pair*, not about that column, and nothing
+currently says so — not the result, not the brief. A model that stops after one
+clean answer per column will systematically miss a defect whose column also has
+an innocent parent nearby, which is exactly the shape of the `sales.xlsx#Q1`
+case. Whether to say so in the tool result is the same judgment call as the
+`note` that already tells the model when a defect is new: a nudge that costs a
+few tokens and leaves the decision with the model. It is not obviously right —
+the model spending its steps re-checking a column it has cleared is a real cost
+too — and it wants a second dataset before anything changes.
+
+The second is about the fixture: `dirty-retail` cannot distinguish "the model
+found the defects" from "the model found *a* defect and stopped", because with
+one defect reachable per column there is no run that has to find two. That is a
+limit of the test data, not of the auditor.
+
+The timing also settles the timeout question that the previous section left
+approximate. Step 1 was **27m 36s** — prefilling the ~6300-token brief — against
+366s, 550s and 619s for the three that followed. The 60-minute default clears it;
+the 30 minutes the script used to pass would have cleared it by two and a half
+minutes, which is not margin.
 
 ### Whether it is worth it
 

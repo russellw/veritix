@@ -508,6 +508,17 @@ loop rather than to the auditing.
   `record_finding`, findings narrated in prose at the end. What separates them
   is whether the model will use a tool surface it was not asked to use, and the
   only way to know is to run one audit and read the trace.
+- **A clean `check_referential_integrity` is evidence about that pair, not about
+  that column**, and a model reads it as the latter. gpt-oss-120b has found each
+  of `dirty-retail`'s two unresolved references on a different run and never
+  both: on 16 Aug it checked `sales_xlsx_q1.region` against the workbook's own
+  `sales.xlsx#reference`, where every code resolves, called the column fine and
+  moved on — the 2 orphans are against `regions.csv`, which is the parent the
+  previous run happened to try first. Neither run measured anything wrong. Worth
+  knowing before reading a single run as coverage, and worth a second dataset
+  before deciding whether the tool result should say so; the fixture cannot tell
+  "found the defects" from "found *a* defect and stopped", since there is one
+  reachable per column. `docs/local-model.md` has both traces.
 - A small model does not ration its step budget — the first run here spent six
   consecutive steps on `describe_table` and finished with nothing recorded, and
   two more 12-step runs did the same. Budget for the model, not the dataset:
