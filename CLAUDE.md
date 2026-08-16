@@ -469,9 +469,23 @@ accident, which is not a reason to make it tedious.
   own qwen3.5 GGUF cannot be paged at all whatever the flags — it transforms
   tensors at load, which disables mmap, and upstream llama.cpp rejects the file
   outright. `gpt-oss-120b` (63GB, 5.1B active) runs this way at 0.63 tok/s
-  generating and 4.4 tok/s prefilling a long prompt; the ~4080-token brief costs
-  a **45-minute** first step that no setting improves. Active parameters, not
+  generating and 4.4 tok/s prefilling a long prompt. Active parameters, not
   total, set the paging bill. `docs/local-model.md` has the measurements.
+- **`--ubatch-size` is the flag that makes a too-big model usable, and 512 is
+  the wrong default for one.** Prefill reads each expert once per micro-batch
+  and uses it for every token in that batch, so the micro-batch size divides the
+  I/O outright. Raising it to 2048 took the ~6300-token brief's first step from
+  2308s to 1522s — **1.7x**, and the difference between a 24-step audit that
+  ends on `provider_error` mid-prefill and one that finishes in 59 minutes with
+  two verified findings. Serve with `scripts/serve-prefetch.sh` in
+  `~/big-local-llms`, which sets this along with the three paging flags, an
+  expert-prefetch `LD_PRELOAD` hook, and `--parallel 1` — several slots let a
+  follow-up turn land on a cold one and re-prefill the whole conversation, which
+  here is half an hour. **`--llm-effort none` is silently ignored by gpt-oss**:
+  harmony knows `low`/`medium`/`high` and quietly defaults anything else, at 317
+  output tokens against 132, which reads as a slow model rather than a setting
+  that did not take. Size `--llm-request-timeout` above the *first* step, which
+  is nearly half the wall clock.
 - **Parameter count does not predict whether a model can do this job.**
   `qwen3:4b-instruct-2507` uses the check tools and records the finding
   `relate.go` misses; `qwen3.5:35b-a3b` is eight times the size and answered

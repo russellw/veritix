@@ -785,9 +785,28 @@ Measured on this machine, `-c 32768`:
 **Prefill accelerates fourfold as the batch grows**, and that is the number that
 makes this viable rather than hopeless. A batch reads each expert once and uses
 it for every token in the batch, so a long prompt amortizes what a short one
-pays per token. It is also why the first agent step is expensive in a way no
-setting fixes: the ~4080-token brief costs **45 minutes** of prefill, and that
-figure barely moved across every configuration tried below.
+pays per token. It is also why the first agent step is expensive: the ~4080-token brief costs
+**45 minutes** of prefill, and that figure barely moved across every
+configuration tried below.
+
+That last sentence stood for a while and was wrong, and the paragraph above
+contains its own refutation. If a batch reads each expert once and uses it for
+every token in the batch, then the size of that batch is the whole cost — and
+llama.cpp has a flag for it, `--ubatch-size`, defaulting to **512**. Raising it
+to 2048 divides the expert reads over four times as many tokens. Measured on the
+same brief, same model, prefetch on in both arms:
+
+| `--ubatch-size` | brief | prefill |
+|---|---|---|
+| 512 (default) | 6342 tokens | 2308 s (2.75 tok/s) |
+| 2048 | 6346 tokens | **1522 s (4.17 tok/s)** |
+
+**1.7x, from one flag**, and it is why the complete run below finishes in an
+hour rather than not at all. Nothing about it is Veritix-specific; it applies to
+anything serving a model that does not fit, and it is invisible to anyone
+benchmarking with short prompts, because a 35-token prompt is one micro-batch
+however the flag is set. An agent is the opposite case: every request it makes
+begins with a long brief.
 
 ### `reasoning_effort` reached nothing, for six hours
 
@@ -866,11 +885,48 @@ first two steps, unprompted. That is the prior described above, and it is the
 thing worth probing for. It is not a size effect: the 4B has it and the 35B does
 not.
 
+### A complete 120b run, in 59 minutes
+
+With the micro-batch raised and the effort setting actually taking, the run
+finishes:
+
+```
+5 steps, 4 tool calls (0 refused), 2 findings recorded, 0 not reproduced
+stopped: finished          -- the model decided it was done, not a budget
+59m 12s
+```
+
+Both findings were `agent.orphaned_reference` — `customers.csv` region codes
+with no matching region entry (4 rows) and the same on `sales.xlsx#Q1` (2 rows)
+— the two unresolved references `relate.go` does not propose, both surviving
+`Set.Verify`. The egress check passed: no fixture cell value anywhere in the
+trace.
+
+Serving it takes an `LD_PRELOAD` shim that puts an expert-prefetch hook into a
+stock `llama-server` (`~/big-local-llms`, `scripts/serve-prefetch.sh`), which
+also sets `--no-repack --load-mode mmap --fit off`, the micro-batch, and
+`--parallel 1`. That last one matters more than it looks: with several slots, a
+follow-up turn can be scheduled onto a cold one and re-prefill the entire
+conversation, which here is half an hour.
+
+**`--llm-effort none` is silently ignored by gpt-oss.** Its harmony template
+knows `low`, `medium` and `high`; anything else falls back to the default and
+the model reasons at length before every tool call — 317 completion tokens
+against 132 for `low`, at 0.67 tok/s. Neither the server nor the template
+complains, so it presents as a slow model rather than as a setting that did not
+take. This is the same class of failure as the `chat_template_kwargs` bug above,
+and the same lesson: on this dialect, an effort setting that is not honored is
+indistinguishable from one that is, except in the token count.
+
+Sized wrong, this fails without recording anything. The first step is nearly
+half the wall clock, so `--llm-request-timeout` has to clear it; at the product
+default of 10 minutes, or even at 45, the run ends on `provider_error` with zero
+findings while the deterministic 36 come through untouched.
+
 ### Whether it is worth it
 
-A run is between one and seven hours depending on a setting that is easy to get
-wrong, against 40 minutes for a model that fits. The 45-minute first step is a
-floor that no configuration touches.
+A run is between one and seven hours depending on settings that are easy to get
+wrong — an hour once they are right.
 
 What it buys is the only evidence so far that a model *can* do the interesting
 half of this job on hardware a customer might actually own — no GPU, 30GB of
