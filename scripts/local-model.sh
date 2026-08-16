@@ -8,25 +8,46 @@
 # of — the flags, the preflight and the checks afterwards all come from there.
 #
 # Usage:
-#   scripts/local-model.sh                 # probe, audit, then check the trace
+#   scripts/local-model.sh                 # start the model, probe, audit, check
 #   scripts/local-model.sh --probe         # just the probe: is this thing usable
 #   scripts/local-model.sh --serve         # serve the UI wired to the model
 #   scripts/local-model.sh -- --rules x.yaml --format json
 #                                          # anything after -- goes to veritix
 #
+# The default model is gpt-oss-120b under llama.cpp, because it is the only one
+# measured here that does the interesting half of the job: it reaches for the
+# check tools unprompted and records the orphaned reference relate.go does not
+# propose. It is 63GB against 30GB of RAM, so it is served paged from disk by
+# ~/big-local-llms/scripts/serve-prefetch.sh — and if nothing is listening at
+# BASE_URL this script starts one and stops it again when the run ends. A server
+# that was already up is left alone and left running, which is how to keep one
+# warm across several runs and skip the load each time.
+#
+# A small model still runs, and is the cheap way to exercise a change to the
+# loop rather than to the auditing:
+#
+#   BASE_URL=http://localhost:11434/v1 MODEL=qwen3:4b-instruct-2507-q4_K_M \
+#     EFFORT=none TIMEOUT=30m scripts/local-model.sh
+#
 # Overridable:
-#   MODEL       default qwen3:4b-instruct-2507-q4_K_M
-#   BASE_URL    default http://localhost:11434/v1  (Ollama; llama.cpp's
-#                             llama-server --jinja also works, and the preflight
-#                             adapts its advice to whichever answers)
+#   MODEL       default gpt-oss-120b  (also the alias a server started here is
+#                             given, so what is asked for and what is served
+#                             cannot disagree)
+#   MODEL_GGUF  default ~/big-local-llms/models/gpt-oss-120b-MXFP4.gguf
+#   SERVE_SCRIPT default ~/big-local-llms/scripts/serve-prefetch.sh
+#   BASE_URL    default http://127.0.0.1:11500/v1  (llama.cpp; Ollama on 11434
+#                             works too, and the preflight adapts its advice to
+#                             whichever answers)
 #   DATASET     default testdata/dirty-retail
 #   MAX_STEPS   default 24
-#   EFFORT      default none  (suppresses a hybrid model's thinking; the
-#                              openai dialect discards it anyway)
-#   TIMEOUT     default 30m   (one model call; the product default of 10m is
-#                              sized for a cloud endpoint, not for this)
+#   EFFORT      default low   (gpt-oss quietly ignores anything that is not
+#                              low/medium/high; `none` is for a hybrid Qwen and
+#                              is inert here)
+#   TIMEOUT     default 60m   (one model call; the first step of a paged run is
+#                              nearly half the wall clock)
 #   PROBE_TIMEOUT default 900 (seconds for the probe; a model paging its
 #                              weights from disk needs minutes, not seconds)
+#   START_TIMEOUT default 600 (seconds to wait for a server started here)
 #   OUT_DIR     default ./local-runs
 #   ADDR        default 127.0.0.1:8080   (--serve only)
 set -euo pipefail
@@ -34,8 +55,18 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-MODEL="${MODEL:-qwen3:4b-instruct-2507-q4_K_M}"
-BASE_URL="${BASE_URL:-http://localhost:11434/v1}"
+# Parameter count does not predict whether a model can do this job, but nothing
+# smaller than this has done it: the 4B uses the check tools and finds one thing,
+# the 35B answered three whole runs with run_sql and never recorded anything, and
+# gpt-oss-120b reached for check_referential_integrity and record_finding on its
+# first two steps. docs/local-model.md has the traces.
+MODEL="${MODEL:-gpt-oss-120b}"
+MODEL_GGUF="${MODEL_GGUF:-$HOME/big-local-llms/models/gpt-oss-120b-MXFP4.gguf}"
+# The shim that serves a model larger than RAM: --no-repack --load-mode mmap
+# --fit off, a 2048 micro-batch and one slot. Typing llama-server by hand
+# without those is how a 63GB model gets SIGKILLed instead of paged.
+SERVE_SCRIPT="${SERVE_SCRIPT:-$HOME/big-local-llms/scripts/serve-prefetch.sh}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:11500/v1}"
 DATASET="${DATASET:-testdata/dirty-retail}"
 # 12 was not enough twice over: a small model spends its first several steps
 # working through list_tables and describe_table, so a short budget stops it
@@ -43,14 +74,18 @@ DATASET="${DATASET:-testdata/dirty-retail}"
 # model rather than for the dataset — docs/local-model.md, "Budget".
 MAX_STEPS="${MAX_STEPS:-24}"
 # Ten minutes is the product default and is right for a cloud endpoint. Here
-# generation slows as the context fills, so a late step can outrun it, and the
-# run then ends on an error instead of a report.
-TIMEOUT="${TIMEOUT:-30m}"
-# A hybrid reasoning model emits a chain of thought before every tool call.
-# On a CPU those cost the same per token as useful output, openaicompat drops
-# them on the way back, and generation is the whole cost here. qwen3.5-35b-a3b:
-# 73 completion tokens for one tool call, 14 with this set.
-EFFORT="${EFFORT:-none}"
+# the *first* step is the expensive one — prefilling a ~6300-token brief against
+# weights coming off a disk is nearly half the wall clock of a whole run — and a
+# timeout that does not clear it ends the run on provider_error with nothing
+# recorded, while the deterministic findings come through untouched.
+TIMEOUT="${TIMEOUT:-60m}"
+# The effort a reasoning model is asked for, sent by both spellings (see the
+# probe below). gpt-oss's harmony template knows low, medium and high and
+# quietly defaults anything else: `none` there measured 317 output tokens
+# against 132, which presents as a slow model rather than as a setting that did
+# not take. For a hybrid Qwen it is the other way round and `none` is the one to
+# pass, since openaicompat discards the reasoning on the way back anyway.
+EFFORT="${EFFORT:-low}"
 # The probe is meant to fail fast, but "fast" is relative to the model. One that
 # does not fit in RAM prefills its weights from disk at around a token a second,
 # so the 166-token probe alone can take three minutes before it generates
@@ -58,6 +93,9 @@ EFFORT="${EFFORT:-none}"
 # Failing here on a model that a run would have handled is the expensive
 # mistake, since the whole point of the probe is to save the run.
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-900}"
+# Waiting for a server this script started to answer. mmap makes the load itself
+# quick, but the file is 63GB and the first pages come off the disk.
+START_TIMEOUT="${START_TIMEOUT:-600}"
 OUT_DIR="${OUT_DIR:-$repo_root/local-runs}"
 ADDR="${ADDR:-127.0.0.1:8080}"
 
@@ -100,12 +138,84 @@ say "Checking the model server at $BASE_URL"
 # silence into advice. Both probes are unauthenticated GETs that every install
 # answers, and neither loads a model.
 native="${BASE_URL%/v1}"
-backend=unknown
-if curl -fsS --max-time 5 "$native/api/tags" >/dev/null 2>&1; then
-	backend=ollama
-elif curl -fsS --max-time 5 "$native/props" >/dev/null 2>&1; then
-	backend=llama.cpp
+identify() {
+	if curl -fsS --max-time 5 "$native/api/tags" >/dev/null 2>&1; then
+		echo ollama
+	elif curl -fsS --max-time 5 "$native/props" >/dev/null 2>&1; then
+		echo llama.cpp
+	else
+		echo unknown
+	fi
+}
+backend=$(identify)
+
+# ── the server, if there is not one already ────────────────────────────────
+#
+# Starting it here rather than in another terminal is the whole difference
+# between one command and a remembered recipe, and the recipe is three paging
+# flags and a micro-batch size that are not guessable. What this must not do is
+# take over a server that is already up: that one may be serving something else,
+# and it is also how a warm model is kept across runs, since stopping this one
+# at exit means the next run reloads.
+server_pid=
+server_log=
+stop_server() {
+	[ -n "$server_pid" ] || return 0
+	say "Stopping the model server this run started (pid $server_pid)"
+	kill "$server_pid" 2>/dev/null || true
+	wait "$server_pid" 2>/dev/null || true
+	server_pid=
+}
+
+if [ "$backend" = unknown ] && ! curl -fsS --max-time 5 "$BASE_URL/models" >/dev/null 2>&1; then
+	if [ ! -x "$SERVE_SCRIPT" ] || [ ! -r "$MODEL_GGUF" ]; then
+		echo "nothing is listening at $BASE_URL, and this script cannot start one:" >&2
+		[ -x "$SERVE_SCRIPT" ] || echo "  no server script at $SERVE_SCRIPT (set SERVE_SCRIPT)" >&2
+		[ -r "$MODEL_GGUF" ] || echo "  no model file at $MODEL_GGUF (set MODEL_GGUF)" >&2
+		echo "  or point BASE_URL at a server you started yourself" >&2
+		exit 1
+	fi
+
+	hostport="${native#*://}"
+	mkdir -p "$OUT_DIR"
+	server_log="$OUT_DIR/$(date +%Y%m%d-%H%M%S)-llama-server.log"
+	echo "nothing listening — starting $(basename "$SERVE_SCRIPT")"
+	echo "  model: $MODEL_GGUF"
+	echo "  log:   $server_log"
+
+	# The alias is MODEL, so the name asked for over the dialect and the name the
+	# server answers to are the same string by construction. llama-server's own
+	# default alias is the GGUF's full path, which nobody would guess.
+	"$SERVE_SCRIPT" -m "$MODEL_GGUF" -a "$MODEL" \
+		--host "${hostport%%:*}" --port "${hostport##*:}" \
+		>"$server_log" 2>&1 &
+	server_pid=$!
+	# On a signal, stop and leave rather than falling back into the script: a
+	# Ctrl-C in the middle of an audit means the run is over, not that the trace
+	# summary below should run against half a file.
+	trap stop_server EXIT
+	trap 'stop_server; exit 130' INT
+	trap 'stop_server; exit 143' TERM
+
+	waited=0
+	until curl -fsS --max-time 5 "$native/props" >/dev/null 2>&1; do
+		if ! kill -0 "$server_pid" 2>/dev/null; then
+			server_pid=
+			echo "the server exited while starting; its last lines:" >&2
+			tail -20 "$server_log" | sed 's/^/  /' >&2
+			exit 1
+		fi
+		if [ "$waited" -ge "$START_TIMEOUT" ]; then
+			echo "the server did not answer within ${START_TIMEOUT}s; see $server_log" >&2
+			exit 1
+		fi
+		sleep 2
+		waited=$((waited + 2))
+	done
+	echo "  ready in ${waited}s"
+	backend=$(identify)
 fi
+
 echo "server: $backend"
 
 # /models is a convenience, not the gate: the dialect's implementations disagree
@@ -171,27 +281,32 @@ probe_body=$(
 probe_start=$(date +%s)
 probe=$(curl -fsS --max-time "$PROBE_TIMEOUT" "$BASE_URL/chat/completions" \
 	-H 'Content-Type: application/json' -d "$probe_body") || {
-	cat >&2 <<EOF
-The probe failed: $BASE_URL/chat/completions did not answer a two-tool payload.
+	{
+		echo "The probe failed: $BASE_URL/chat/completions did not answer a two-tool payload."
+		echo
+		if [ -n "$server_pid" ]; then
+			echo "This run started that server, so whatever it has to say is in its log:"
+			echo "  $server_log"
+			tail -20 "$server_log" | sed 's/^/  /'
+		else
+			cat <<EOF
+Something that was already running is serving $BASE_URL, so it answered an
+error — run the same request by hand to see what it said. Two things produce
+exactly this failure:
 
-If nothing is listening, start Ollama with the settings that are not optional:
+  llama.cpp started without --jinja. That flag is what makes it call tools at
+  all, and this passes it along with the flags a model larger than RAM needs:
+    $SERVE_SCRIPT -m MODEL.gguf -a $MODEL
 
-  OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_NO_CLOUD=1 OLLAMA_KEEP_ALIVE=60m \\
-    OLLAMA_FLASH_ATTENTION=1 ollama serve
+  Ollama at its default context window. With no GPU it picks 4096, the first
+  agent prompt is ~4080, and the system prompt is then discarded from the front
+  mid-run — which reads as a stupid model rather than a truncated one:
 
-OLLAMA_CONTEXT_LENGTH is the one that will cost you a day: with no GPU Ollama
-picks 4096, the first agent prompt is ~4080, and the system prompt is then
-discarded from the front mid-run. That reads as a stupid model rather than a
-truncated one.
-
-llama.cpp's server is the other one measured here, and --jinja is what makes it
-call tools at all; without it this probe fails exactly like this:
-
-  llama-server -m model.gguf --jinja -c 32768 --port 11434 -a $MODEL
-
-If something is listening, it answered an error — run the same request by hand
-to see what it said.
+    OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_NO_CLOUD=1 OLLAMA_KEEP_ALIVE=60m \\
+      OLLAMA_FLASH_ATTENTION=1 ollama serve
 EOF
+		fi
+	} >&2
 	exit 1
 }
 probe_secs=$(($(date +%s) - probe_start))
@@ -259,7 +374,12 @@ if [ "$mode" = serve ]; then
 	say "Serving on http://$ADDR with the agent available"
 	echo "The agent is per-run: tick it when starting an audit, or POST /runs with"
 	echo '{"agent": true}. The trace lands at /api/v1/runs/<id>/trace.'
-	exec env \
+	# Not `exec` when this run owns the model server: exec replaces the shell and
+	# the EXIT trap with it, and the server would outlive the thing that started
+	# it with nothing left to stop it.
+	serve=(env)
+	[ -n "$server_pid" ] || serve=(exec env)
+	"${serve[@]}" \
 		VERITIX_LLM_PROVIDER=openai-compatible \
 		VERITIX_LLM_BASE_URL="$BASE_URL" \
 		VERITIX_LLM_MODEL="$MODEL" \
@@ -267,6 +387,7 @@ if [ "$mode" = serve ]; then
 		VERITIX_LLM_REQUEST_TIMEOUT="$TIMEOUT" \
 		VERITIX_LLM_EFFORT="$EFFORT" \
 		./bin/veritix serve --addr "$ADDR"
+	exit $?
 fi
 
 mkdir -p "$OUT_DIR"

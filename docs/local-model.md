@@ -155,8 +155,13 @@ llama-server serves one model per process, where Ollama loads on demand.
 Then the script drives it like anything else:
 
 ```sh
-BASE_URL=http://127.0.0.1:11436/v1 scripts/local-model.sh
+BASE_URL=http://127.0.0.1:11436/v1 MODEL=qwen3:4b-instruct-2507-q4_K_M \
+    EFFORT=none TIMEOUT=30m scripts/local-model.sh
 ```
+
+`MODEL` is not optional here: the script's default is the 120b described below,
+and a server already answering `BASE_URL` is used as it is rather than restarted
+with something else, so a mismatched name fails in the preflight.
 
 ### Measured, same machine, same model, same fixture
 
@@ -219,9 +224,12 @@ tool call:
 | `--llm-effort none` | **14** |
 
 Five times the generation, on hardware where generation is the entire cost, for
-reasoning that is discarded on the way back. `scripts/local-model.sh` therefore
-passes `none` by default; the non-thinking instruct models accept it and ignore
-it. Ollama's native API spells the same thing `"think": false`, which is no use
+reasoning that is discarded on the way back. `scripts/local-model.sh` passes
+`none` for a Qwen — the non-thinking instruct models accept it and ignore it —
+but its own default is `EFFORT=low`, because gpt-oss's harmony template knows
+only `low`/`medium`/`high` and quietly defaults anything else, which costs six
+times the output tokens. Whichever model is being run, the value that suppresses
+reasoning is a property of the model, so it moves with `MODEL`. Ollama's native API spells the same thing `"think": false`, which is no use
 here because Veritix speaks the OpenAI dialect — but `reasoning_effort` reaches
 the same switch, and `chat_template_kwargs` and a bare `think` field do not.
 
@@ -275,8 +283,31 @@ scripts/local-model.sh --serve    # the web interface, wired to the local model
 scripts/local-model.sh -- --rules my.yaml --format json   # extra veritix flags
 ```
 
-`MODEL`, `BASE_URL`, `DATASET`, `MAX_STEPS`, `TIMEOUT`, `OUT_DIR` and `ADDR`
-override the defaults, which are the ones this document arrived at. Traces, logs and reports
+**It runs `gpt-oss-120b` by default**, on the reasoning in "A model larger than
+RAM" below: it is the only model measured here that reaches for the check tools
+unprompted and records a finding `relate.go` does not propose, which is the half
+of the job worth testing. So if nothing is listening at `BASE_URL` the script
+starts `~/big-local-llms/scripts/serve-prefetch.sh` itself — the paging flags and
+the micro-batch are not guessable, and a run started without them is a run that
+fails — and stops it again when the run ends. A server that is *already* up is
+left alone and left running, which is both how to serve something else and how to
+keep a model warm across several runs, since the load and the first prefill are
+the expensive part.
+
+The small models still run, and are the cheap way to exercise a change to the
+loop rather than to the auditing:
+
+```sh
+BASE_URL=http://localhost:11434/v1 MODEL=qwen3:4b-instruct-2507-q4_K_M \
+    EFFORT=none TIMEOUT=30m scripts/local-model.sh
+```
+
+`MODEL`, `MODEL_GGUF`, `SERVE_SCRIPT`, `BASE_URL`, `DATASET`, `MAX_STEPS`,
+`EFFORT`, `TIMEOUT`, `PROBE_TIMEOUT`, `START_TIMEOUT`, `OUT_DIR` and `ADDR`
+override the defaults, which are the ones this document arrived at — including
+`EFFORT=low`, because gpt-oss quietly ignores anything that is not
+`low`/`medium`/`high`, and `TIMEOUT=60m`, because the first step of a paged run
+is nearly half its wall clock. Traces, logs and reports
 land in `local-runs/`, timestamped and named after the model, because the
 interesting comparison is against the previous run rather than against nothing.
 The rest of this section is what the script does and why each part is there.
@@ -357,11 +388,13 @@ clean bill of health would be the worst thing this product could do.
 Two further 12-step runs ended the same way — `step_budget`, nothing recorded —
 which is enough evidence that the default was wrong rather than that the runs
 were unlucky. `scripts/local-model.sh` now defaults to **24 steps**, above the
-point where orientation stops eating the whole budget, and to a **30-minute**
-per-call timeout with it: a longer run reaches the slow, full-context steps that
+point where orientation stops eating the whole budget, and to a per-call timeout
+long enough to spend them: a longer run reaches the slow, full-context steps that
 outrun the product default of ten minutes, and there is no sense in buying more
-budget only to end on `provider_error` before spending it. Both are still
-`MAX_STEPS` and `TIMEOUT` in the environment. On hardware like the machine
+budget only to end on `provider_error` before spending it. Thirty minutes was
+that figure for a model that fits in RAM; the default is **60 minutes** now that
+the script serves a model paged off a disk, whose *first* step is the one to
+size for. Both are still `MAX_STEPS` and `TIMEOUT` in the environment. On hardware like the machine
 measured above, expect a 24-step run to take the better part of an hour; on
 anything with a GPU it is the cheaper half of the trade.
 
@@ -905,7 +938,9 @@ trace.
 Serving it takes an `LD_PRELOAD` shim that puts an expert-prefetch hook into a
 stock `llama-server` (`~/big-local-llms`, `scripts/serve-prefetch.sh`), which
 also sets `--no-repack --load-mode mmap --fit off`, the micro-batch, and
-`--parallel 1`. That last one matters more than it looks: with several slots, a
+`--parallel 1`. That is what `scripts/local-model.sh` now starts by default when
+nothing is already listening, because a recipe that has to be remembered in
+another terminal is a recipe that will one day be typed without `--no-repack`. That last one matters more than it looks: with several slots, a
 follow-up turn can be scheduled onto a cold one and re-prefill the entire
 conversation, which here is half an hour.
 

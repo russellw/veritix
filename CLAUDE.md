@@ -423,7 +423,15 @@ positives, both commented in place:
 trace summary, egress check; `--probe`, `--serve`, `-- <veritix flags>`), and
 `docs/local-model.md` is the whole setup. It is a script rather than a `make`
 target on purpose: nothing should run a twenty-minute nondeterministic model by
-accident, which is not a reason to make it tedious.
+accident, which is not a reason to make it tedious. It runs **`gpt-oss-120b`
+under llama.cpp by default**, since that is the only model measured here that
+does the interesting half of the job, and it **starts the server itself** —
+`~/big-local-llms/scripts/serve-prefetch.sh`, stopped again at exit — when
+nothing answers `BASE_URL`. One that is already up is left alone and left
+running, which is how to keep a model warm across runs. A small model is an
+override away (`BASE_URL=…:11434/v1 MODEL=qwen3:4b-instruct-2507-q4_K_M
+EFFORT=none TIMEOUT=30m`) and is still the cheap way to exercise a change to the
+loop rather than to the auditing.
 - Ollama sizes its context window from VRAM and picks **4096 tokens** when there
   is no GPU. Veritix's first agent prompt is ~4080 since the profile moved into
   the brief, so it does not fit at all; even when it did, llama.cpp discarded
@@ -438,7 +446,9 @@ accident, which is not a reason to make it tedious.
   73 completion tokens for one tool call becomes 14.
 - Probe `/v1/chat/completions` with a two-tool payload before running a full
   audit: twenty seconds to learn what a full run takes twenty minutes to prove.
-- **Ollama is the default because customers have it, not because it is faster.**
+- **Ollama is `openaicompat`'s default base URL because customers have it, not
+  because it is faster** — that is the product's default, and it is not what the
+  test script points at any more, which is llama.cpp on 11500.
   llama.cpp's `llama-server --jinja` has been run end to end against
   `dirty-retail` and is the same speed — identical 94 s median step, 24 tool
   calls, none refused, byte-identical deterministic report. `--jinja` is what
@@ -501,9 +511,10 @@ accident, which is not a reason to make it tedious.
 - A small model does not ration its step budget — the first run here spent six
   consecutive steps on `describe_table` and finished with nothing recorded, and
   two more 12-step runs did the same. Budget for the model, not the dataset:
-  the script defaults to 24 steps and a 30-minute per-call timeout, since a
+  the script defaults to 24 steps and a 60-minute per-call timeout, since a
   longer run reaches the slow full-context steps that outrun the product's
-  10-minute default and would otherwise end on `provider_error`.
+  10-minute default and would otherwise end on `provider_error` — and with a
+  paged model it is the *first* step that has to fit inside it.
 
 **Uploads**
 - The upload directory used to be named with the first eight characters of a
