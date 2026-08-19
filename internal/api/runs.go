@@ -13,6 +13,7 @@ import (
 	"github.com/russellw/veritix/internal/profile"
 	"github.com/russellw/veritix/internal/report"
 	"github.com/russellw/veritix/internal/rules"
+	"github.com/russellw/veritix/internal/runs"
 	"github.com/russellw/veritix/internal/store"
 )
 
@@ -173,7 +174,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbPath, err := s.runDatabasePath(run.ID)
+	dbPath, err := runs.DatabasePath(s.cfg.Server.DataDir, run.ID)
 	if err != nil {
 		s.log.Error("could not prepare the run directory", "run", run.ID, "error", err)
 		_ = s.store.StopRun(r.Context(), run.ID, store.StatusFailed, err.Error())

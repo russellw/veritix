@@ -2,18 +2,13 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"log/slog"
-	"os"
-	"path/filepath"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/russellw/veritix/internal/audit"
-	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/report"
+	"github.com/russellw/veritix/internal/runs"
 	"github.com/russellw/veritix/internal/store"
 )
 
@@ -180,7 +175,23 @@ func (rn *runner) start(run *store.Run, opts audit.Options, reportOpts report.Op
 		defer rn.wg.Done()
 		defer cancel()
 
-		rn.execute(ctx, a, run, opts, reportOpts)
+		a.publish(Event{Type: eventProgress, Message: "starting the audit"})
+
+		// The outcome is not inspected: it has already been recorded on the
+		// run, and the store is what every reader of this run consults.
+		_ = runs.Execute(ctx, runs.Options{
+			Store:   rn.srv.store,
+			RunID:   run.ID,
+			Version: rn.srv.version,
+			Audit:   opts,
+			Report:  reportOpts,
+			Log:     rn.srv.log,
+			Watch: func(p runs.Progress) {
+				a.publish(Event{
+					Type: eventProgress, Message: p.Message, Time: p.Time, Fields: p.Fields,
+				})
+			},
+		})
 
 		// Deregister before closing the stream: a subscriber that sees the
 		// channel close goes to the store for the outcome, and by then the run
@@ -190,210 +201,4 @@ func (rn *runner) start(run *store.Run, opts audit.Options, reportOpts report.Op
 		rn.mu.Unlock()
 		a.close()
 	}()
-}
-
-func (rn *runner) execute(
-	ctx context.Context,
-	a *activeRun,
-	run *store.Run,
-	opts audit.Options,
-	reportOpts report.Options,
-) {
-	s := rn.srv
-
-	// The store write is done on a context that outlives cancellation: a
-	// canceled run still has to be recorded as canceled.
-	recordCtx := context.WithoutCancel(ctx)
-
-	if err := s.store.StartRun(recordCtx, run.ID); err != nil {
-		s.log.Error("could not mark the run as started", "run", run.ID, "error", err)
-		return
-	}
-	a.publish(Event{Type: eventProgress, Message: "starting the audit"})
-
-	log := slog.New(&progressHandler{inner: s.log.Handler(), run: a}).With("run", run.ID)
-
-	res, err := audit.Run(ctx, opts, log)
-	if err != nil {
-		// A canceled context is reported as cancellation whatever error the
-		// pipeline surfaced on the way out, because the layer that noticed
-		// first varies with where the run had got to.
-		status, message := store.StatusFailed, err.Error()
-		if ctx.Err() != nil {
-			status, message = store.StatusCanceled, "canceled"
-		}
-		if err := s.store.StopRun(recordCtx, run.ID, status, message); err != nil {
-			s.log.Error("could not record the run's failure", "run", run.ID, "error", err)
-		}
-		return
-	}
-
-	// The document is built, and then the engine is released, before anything
-	// is stored: the DuckDB file has to be closed and flushed before the rows
-	// endpoint can reopen it read-only.
-	doc := report.Build(res, s.version, reportOpts)
-	trace := res.Trace
-	if err := res.Close(); err != nil {
-		s.log.Warn("could not close the run's engine", "run", run.ID, "error", err)
-	}
-
-	if ctx.Err() != nil {
-		if err := s.store.StopRun(recordCtx, run.ID, store.StatusCanceled, "canceled"); err != nil {
-			s.log.Error("could not record the cancellation", "run", run.ID, "error", err)
-		}
-		return
-	}
-
-	body, err := json.Marshal(doc)
-	if err != nil {
-		s.log.Error("could not encode the report", "run", run.ID, "error", err)
-		_ = s.store.StopRun(recordCtx, run.ID, store.StatusFailed, "the report could not be encoded")
-		return
-	}
-
-	counts := store.Counts{
-		Errors:   doc.FindingSummary.Errors,
-		Warnings: doc.FindingSummary.Warnings,
-		Infos:    doc.FindingSummary.Info,
-	}
-	if err := s.store.FinishRun(recordCtx, run.ID, body, counts, storeFindings(res.Findings)); err != nil {
-		s.log.Error("could not record the run's findings", "run", run.ID, "error", err)
-		_ = s.store.StopRun(recordCtx, run.ID, store.StatusFailed, "the results could not be stored")
-		return
-	}
-
-	// The trace is stored last and its failure does not fail the run: the
-	// findings are already safe, and losing the record of how they were
-	// investigated is worth a loud log line rather than throwing away a
-	// completed audit.
-	if trace != nil {
-		if body, err := json.Marshal(trace); err != nil {
-			s.log.Error("could not encode the agent trace", "run", run.ID, "error", err)
-		} else if err := s.store.SaveTrace(recordCtx, run.ID, body); err != nil {
-			s.log.Error("could not record the agent trace", "run", run.ID, "error", err)
-		}
-	}
-
-	// No completion event is published here: audit.Run logs its own, and the
-	// terminal `done` event carries the counts. Two "finished" lines in a row
-	// is how a progress display ends up looking broken.
-}
-
-// storeFindings reduces findings to what the store keeps: identity, plus the
-// row query that no report is allowed to carry.
-func storeFindings(set *finding.Set) []store.Finding {
-	if set == nil {
-		return nil
-	}
-	all := set.All()
-	out := make([]store.Finding, 0, len(all))
-	for i, f := range all {
-		out = append(out, store.Finding{
-			ID:       f.ID(),
-			Ordinal:  i,
-			Rule:     f.Rule,
-			Severity: f.Severity.String(),
-			Title:    f.Title,
-			Table:    f.Location.Table,
-			Column:   f.Location.Column,
-			RowQuery: f.Evidence.RowQuery,
-		})
-	}
-	return out
-}
-
-// runDatabasePath is where a run's ingested dataset lives. It outlives the run
-// so that a finding's offending rows can be fetched afterwards without reading
-// the customer's files a second time.
-func (s *Server) runDatabasePath(runID string) (string, error) {
-	dir := filepath.Join(s.cfg.Server.DataDir, "runs", runID)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("could not create the run directory: %w", err)
-	}
-	return filepath.Join(dir, "dataset.duckdb"), nil
-}
-
-// progressHandler turns the pipeline's own log lines into progress events.
-//
-// audit.Run already announces every stage it reaches, to a logger it is
-// handed. Publishing from there rather than adding a second notification
-// mechanism means the two cannot drift: a stage that is logged is a stage the
-// browser sees, and there is no way to add one and forget the other.
-type progressHandler struct {
-	inner slog.Handler
-	run   *activeRun
-	attrs []slog.Attr
-}
-
-// Enabled accepts info and above even when the operator has turned the log
-// down, because the progress stream is a user interface rather than a
-// diagnostic. The inner handler is consulted separately in Handle.
-func (h *progressHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return level >= slog.LevelInfo || h.inner.Enabled(ctx, level)
-}
-
-func (h *progressHandler) Handle(ctx context.Context, r slog.Record) error {
-	if r.Level >= slog.LevelInfo {
-		fields := make(map[string]any, r.NumAttrs()+len(h.attrs))
-		for _, a := range h.attrs {
-			addField(fields, a)
-		}
-		r.Attrs(func(a slog.Attr) bool {
-			addField(fields, a)
-			return true
-		})
-		if len(fields) == 0 {
-			fields = nil
-		}
-		h.run.publish(Event{
-			Type: eventProgress, Message: r.Message, Time: r.Time, Fields: fields,
-		})
-	}
-
-	if !h.inner.Enabled(ctx, r.Level) {
-		return nil
-	}
-	return h.inner.Handle(ctx, r)
-}
-
-func (h *progressHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &progressHandler{
-		inner: h.inner.WithAttrs(attrs),
-		run:   h.run,
-		attrs: append(slices.Clip(h.attrs), attrs...),
-	}
-}
-
-func (h *progressHandler) WithGroup(name string) slog.Handler {
-	// Groups are passed to the diagnostic log but ignored for progress: the
-	// pipeline does not use them, and flattening them would produce colliding
-	// field names rather than a useful nesting.
-	return &progressHandler{inner: h.inner.WithGroup(name), run: h.run, attrs: h.attrs}
-}
-
-// addField converts a log attribute into something that survives JSON.
-// Anything exotic is rendered as text rather than risking an event that cannot
-// be encoded and so silently never arrives.
-func addField(fields map[string]any, a slog.Attr) {
-	v := a.Value.Resolve()
-	switch v.Kind() {
-	case slog.KindString:
-		fields[a.Key] = v.String()
-	case slog.KindInt64:
-		fields[a.Key] = v.Int64()
-	case slog.KindUint64:
-		fields[a.Key] = v.Uint64()
-	case slog.KindFloat64:
-		fields[a.Key] = v.Float64()
-	case slog.KindBool:
-		fields[a.Key] = v.Bool()
-	case slog.KindDuration:
-		// Suffixed rather than left bare: a client receiving `duration: 208`
-		// has no way to know what unit it is looking at.
-		fields[a.Key+"_ms"] = v.Duration().Milliseconds()
-	case slog.KindTime:
-		fields[a.Key] = v.Time()
-	default:
-		fields[a.Key] = v.String()
-	}
 }

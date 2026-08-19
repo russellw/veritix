@@ -94,7 +94,7 @@ func (s *Server) queryRows(
 	if run.DatabasePath == "" {
 		return nil, fmt.Errorf("run %s kept no database", run.ID)
 	}
-	// The path was written by runDatabasePath from the data directory and the
+	// The path was written by runs.DatabasePath from the data directory and the
 	// run's generated id, never by anything a request supplied.
 	if _, err := os.Stat(run.DatabasePath); err != nil { //nolint:gosec // server-generated path
 

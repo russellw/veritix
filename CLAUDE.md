@@ -29,7 +29,8 @@ Everything is on `main`. M0 through M3 are done.
 | M3a | HTTP API, SSE, SQLite run store, `veritix serve` | done |
 | M3b | React web interface, embedded and served behind a CSP | done |
 | M4 | Agentic LLM auditor with the egress guard | done |
-| M5 | MCP server and client | **next** |
+| M5a | MCP server: `veritix mcp` on stdio | done |
+| M5b | MCP client: the agent pulls the customer's own context | **next** |
 | M6 | Hardening, evals, deployment | |
 
 M4 is off by default: `llm.provider: none` is the complete deterministic
@@ -58,6 +59,9 @@ make audit          # typecheck, pnpm audit, go mod verify, govulncheck
 ./bin/veritix serve                          # loopback, no token
 ./bin/veritix serve --addr 0.0.0.0:8080 --auth-token "$(openssl rand -hex 16)"
 VERITIX_LLM_PROVIDER=anthropic ./bin/veritix serve   # offers the agent in the UI
+
+./bin/veritix mcp                            # stdio; an assistant launches it
+claude mcp add veritix -- "$PWD/bin/veritix" mcp --data-dir ~/.veritix
 ```
 
 Driving the API by hand:
@@ -138,8 +142,10 @@ internal/
   finding/             the finding model, severity, evidence, Set.Verify
   report/              text, JSON, SARIF, self-contained HTML
   audit/               the orchestrator every entry point drives
+  runs/                one recorded run: audit.Run plus the store bookkeeping
   store/               SQLite: datasets, runs, findings — the audit trail
   api/                 REST + SSE over audit.Run; openapi.yaml is the contract
+  mcp/                 the Model Context Protocol server: `veritix mcp`
   agent/               the tool-calling loop, the system prompt, the trace
     llm/               provider-agnostic message and tool types
       anthropic/       Claude, through the official SDK
@@ -150,15 +156,18 @@ internal/
 web/                   React + TS + Vite → dist, //go:embed-ed; embed.go
 testdata/dirty-retail/ fixtures with a known defect manifest
 docs/frontend-stack.md the front end's dependency and supply-chain policy
+docs/mcp.md            wiring an assistant to `veritix mcp`, and what it may ask
 LICENSING.md           the dual license: AGPL, or commercial terms
 CLA.md                 the contributor agreement that makes the second possible
 CONTRIBUTING.md        how to work on it, and the four things a patch must not do
 ```
 
 `audit.Run` is the single pipeline: discover → engine → ingest → profile →
-checks → rules → *lockdown → agent* → verify. The CLI and the HTTP API both call it, and the MCP
-server will. Three entry points assembling the pipeline slightly differently is
-how a tool ends up reporting different results depending on how it was invoked.
+checks → rules → *lockdown → agent* → verify. The CLI, the HTTP API, and the
+MCP server all call it. Three entry points assembling the pipeline slightly
+differently is how a tool ends up reporting different results depending on how
+it was invoked — and `internal/runs` is the same argument one layer up, for the
+bookkeeping that wraps a run rather than the run itself.
 
 ## How the server is put together
 
@@ -323,6 +332,55 @@ The honest limit, stated in `redact`'s doc comment: the guard bounds what
 Veritix *sends*. It is not a defense against a model deliberately smuggling data
 out through carefully chosen aggregates. The guarantee is that ordinary
 operation discloses no cell values, and that everything sent is in the trace.
+
+## How the MCP server is put together
+
+`internal/mcp` is a third door onto the same building, not a third building.
+`veritix mcp` serves stdio; `docs/mcp.md` is how to wire an assistant to it.
+
+- **An MCP-started audit is an ordinary run.** It goes through `runs.Execute`
+  and therefore `audit.Run`, is recorded in the same SQLite store, keeps its
+  DuckDB file in the same place, and produces the same `report.Document`. Point
+  `veritix mcp --data-dir` at the directory `veritix serve` uses and an audit an
+  assistant ran is in the run list in the browser, rows and all.
+- **`internal/runs` exists so that is true by construction.** It holds the
+  bookkeeping that wraps a run — StartRun, `report.Build`, close the engine,
+  FinishRun, SaveTrace — and the order is load-bearing: the engine is released
+  before the run is recorded as finished because the DuckDB file has to be
+  flushed before the rows endpoint reopens it. Two callers each remembering
+  that for themselves is how one of them eventually forgets. `internal/api`
+  keeps the SSE fan-out, which is its own business, and calls `runs.Execute`
+  through a `Watch` callback.
+- **The caller chooses what to audit; the operator chooses what Veritix may
+  disclose.** `--include-values` and `--agent` are flags on the server, not tool
+  parameters, because the client of an MCP server is somebody else's model in a
+  context Veritix neither controls nor records. Lifting an egress policy is a
+  decision a person takes. `TestNoToolLetsTheCallerLiftTheEgressPolicy` pins
+  that no tool schema carries one.
+- **There is no rows tool.** The per-finding rows endpoint is `internal/api`'s
+  one deliberate exception and stays there: over HTTP it is one person clicking
+  one finding in a page they opened, and an automated caller could walk every
+  finding of every run. Same data, different thing.
+- **Everything served is read back from the stored document**, decoded rather
+  than rebuilt, for the same reason the HTTP API writes those bytes verbatim.
+  One document, built once, so what an assistant is told and what a person sees
+  cannot drift.
+- **`audit_dataset` is synchronous, on the caller's context.** An assistant
+  asked a question and is waiting; a tool returning an id to poll would spend
+  the caller's turns on bookkeeping. Cancellation follows the call.
+- **A caller's mistake is a tool error, not a protocol failure** — the same rule
+  `tools.Registry.Invoke` follows for Veritix's own agent. An unknown id, both
+  `path` and `dataset_id`, a severity that is not one: all come back as
+  something the model can correct.
+- **It does not call `store.MarkInterrupted`.** `api.New` does, because a run
+  marked in-flight belongs to the process that started it. An MCP server is a
+  subprocess that may be one of several, possibly alongside a `veritix serve`
+  with runs genuinely running, and marking those interrupted would be one
+  process declaring another one's work dead.
+- **The trace promise does not extend past the boundary.** `/runs/{id}/trace`
+  records what Veritix's *own* agent was sent. It says nothing about an MCP
+  client, because Veritix is not driving that model. `docs/mcp.md` says so
+  rather than letting the existing claim quietly over-reach.
 
 ## Conventions
 
@@ -541,6 +599,21 @@ loop rather than to the auditing.
   10-minute default and would otherwise end on `provider_error` — and with a
   paged model it is the *first* step that has to fit inside it.
 
+**MCP**
+- **Raw JSON-RPC piped in from the shell does not smoke-test it.** The pipe
+  reaches EOF while the audit is still running, the session is torn down, and
+  *nothing* is written back — not even the `initialize` response that was
+  already answered. It looks like a server that ignores its input. Connect a
+  real client as a subprocess instead (`mcp.CommandTransport`); that is also the
+  only way to catch a stray write to stdout, which is the protocol.
+- **Do not illustrate the egress policy with a value from the fixtures.** The
+  server's instructions explained shapes with "CUS-000001 is reported as
+  XXX-999999", and `TestNothingSentOverMCPContainsARawValue` flagged it —
+  correctly, because a scanner cannot tell an example from a leak and neither
+  can a reader watching bytes cross the wire. Describe the shape instead of
+  inventing an instance of it. Prose in `docs/` is free to use the example; text
+  the server *sends* is not.
+
 **Uploads**
 - The upload directory used to be named with the first eight characters of a
   UUIDv7, and the comment called them random. They are the high bits of the
@@ -592,6 +665,12 @@ API is not shadowed, and the binary built without an interface — against a
 `fstest.MapFS` stub rather than a real build, so `go test` never depends on
 `make web` having been run. `web/embed_test.go` checks the real bundle when one
 is present and skips when it is not.
+
+`internal/mcp`'s tests drive the real server over an in-memory transport with a
+real SDK client, against the same fixtures — no stub pipeline, for the reason
+`internal/api`'s tests give. Every frame in both directions is recorded through
+`mcp.LoggingTransport`, so the egress test scans the bytes that actually
+crossed the connection rather than the values a handler meant to return.
 
 `internal/agent`'s tests drive the real loop over the same fixtures with a
 scripted provider (`llm/llmtest`): every outbound payload is scanned for the
@@ -656,6 +735,13 @@ text — rather than as a missing dependency.
   `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`;
   `make lint` falls back to `go vet` alone without it, which will not catch
   what CI catches.
+- **The MCP Go SDK is the one dependency M5 added** — the official
+  `github.com/modelcontextprotocol/go-sdk`, seven modules with its transitive
+  set, Apache-2.0 and permissive throughout, reasoning in `docs/mcp.md`. Unlike
+  the OpenAI-compatible provider, MCP is a versioned specification with a
+  reference Go implementation maintained beside it, so hand-writing the framing
+  and the schema inference would be a standing cost against a moving target for
+  no gain in auditability.
 - **The Anthropic SDK is the one dependency M4 added** — eleven modules with
   its transitive set, measured before adopting it, reasoning in
   `docs/frontend-stack.md` §6.1. The OpenAI-compatible provider is hand-written

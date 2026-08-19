@@ -19,7 +19,8 @@ Early development. See `.claude/plans/` for the build plan; the milestones are:
 | M2 | Deterministic checks, relationships, rules, reports — **done** |
 | M3 | HTTP server and React web interface — **done** |
 | M4 | Agentic LLM auditor with a strict data-egress guard — **done** |
-| M5 | MCP server and client |
+| M5a | MCP server: audit datasets from Claude Code or Claude Desktop — **done** |
+| M5b | MCP client: pull your own context into an audit |
 | M6 | Hardening, evals, deployment |
 
 ## Design in one page
@@ -88,6 +89,9 @@ veritix audit ./data --format html -o report.html
 veritix audit ./data --format sarif -o veritix.sarif   # for code scanning
 veritix audit ./data --rules my-expectations.yaml
 veritix audit ./data --fail-on error                   # non-zero exit for CI
+
+# Serve it to an assistant over MCP (see docs/mcp.md)
+veritix mcp --data-dir ~/.veritix
 
 # Run the server and web interface (loopback by default)
 veritix serve
