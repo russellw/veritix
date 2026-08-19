@@ -93,6 +93,9 @@ llm:
 }
 
 func TestProviderKeyFallback(t *testing.T) {
+	// The explicit variable wins over the fallback, so a developer who exports
+	// it in their own shell would otherwise fail this test and nothing else.
+	t.Setenv("VERITIX_LLM_API_KEY", "")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
 	cfg := Default()
 	cfg.LLM.Provider = ProviderAnthropic
