@@ -301,6 +301,20 @@ what is true.**
   which is why nothing in it is summarized. Both entry points emit the same
   document — the CLI encodes `audit.Result.Trace`, which is what the API stores
   — so there is one answer to "what was the model sent", not two.
+- **The transcript carries a rolling cache breakpoint, not just the prompt.**
+  A step re-sends every earlier tool call and result, so an agent run's cost is
+  quadratic in its length unless the growing prefix is cached. Caching only the
+  system prompt is the trap: an 18-step audit read back 3,679 tokens per step,
+  flat, and paid full price for 257k. `markConversationPrefix` marks the last
+  block of each of the final *two* messages — two because a breakpoint finds an
+  earlier entry only by walking back 20 content blocks, and a step appends both
+  an assistant message and its tool results, so one mark each halves the reach
+  and survives a step that fires many tools at once. Measured on
+  `dirty-retail`: full-price input 215k → 42 tokens, a 21-step run costing
+  $0.76 against $1.96 for the same work uncached. It changes billing and
+  nothing else — caching is a hash over bytes already being sent, so the guard,
+  the trace and the report are untouched. `openaicompat` needs none of this;
+  llama.cpp and Ollama reuse their own KV cache.
 - **A model that misbehaves is not an error.** Bad arguments, refused SQL, a
   finding that does not reproduce — all come back to the model as tool errors so
   it can correct itself. A run ends when the model stops or a budget does.

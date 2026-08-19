@@ -93,7 +93,9 @@ func (p *Provider) params(req *llm.Request) (sdk.MessageNewParams, error) {
 
 	// The system prompt is the same on every turn of a run and sits at the
 	// front of the prefix, so a cache breakpoint here is read back by every
-	// subsequent call. Tools render before it and are cached with it.
+	// subsequent call. Tools render before it and are cached with it. That
+	// covers a fixed few thousand tokens; markConversationPrefix below covers
+	// the transcript, which is the part that grows.
 	if req.System != "" {
 		params.System = []sdk.TextBlockParam{{
 			Text:         req.System,
@@ -135,7 +137,48 @@ func (p *Provider) params(req *llm.Request) (sdk.MessageNewParams, error) {
 		}
 	}
 
+	markConversationPrefix(params.Messages)
+
 	return params, nil
+}
+
+// markConversationPrefix puts cache breakpoints at the end of the conversation.
+//
+// The system breakpoint above only covers the prompt and the tools, which are
+// a fixed few thousand tokens. What actually grows is the transcript: a step
+// re-sends every earlier tool call and result, so without this the same bytes
+// are billed at full input price on every call and the cost of a run is
+// quadratic in its length. An 18-step audit measured 257k full-price input
+// tokens against 66k of cache reads, the latter being nothing but the system
+// prefix read back once per step.
+//
+// Two breakpoints, not one, because a breakpoint finds an earlier entry only by
+// walking back at most 20 content blocks, and a step appends both an assistant
+// message and the user message carrying its tool results. Marking each halves
+// the distance the next request has to reach back, so the hit survives a step
+// that fires many tools at once. Three in total is inside the limit of four.
+func markConversationPrefix(messages []sdk.MessageParam) {
+	marked := 0
+	for i := len(messages) - 1; i >= 0 && marked < 2; i-- {
+		if markLastBlock(messages[i].Content) {
+			marked++
+		}
+	}
+}
+
+// markLastBlock sets a breakpoint on the last block of a message that can carry
+// one, reporting whether it found any. Thinking blocks cannot, so a message
+// ending in one is walked past rather than counted as marked.
+func markLastBlock(blocks []sdk.ContentBlockParamUnion) bool {
+	for i := len(blocks) - 1; i >= 0; i-- {
+		// The union holds a pointer to the block, so this writes through to
+		// the block the request will marshal.
+		if cc := blocks[i].GetCacheControl(); cc != nil {
+			*cc = sdk.NewCacheControlEphemeralParam()
+			return true
+		}
+	}
+	return false
 }
 
 func translateParts(parts []llm.Part) ([]sdk.ContentBlockParamUnion, error) {
