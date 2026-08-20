@@ -120,6 +120,14 @@ defects:
     why: the header is on row 3, under two title rows
     caught_by: excel.header_offset
 
+  - id: sales.region_not_in_customers
+    where: sales.xlsx#Q1.region
+    why: >-
+      LATAM appears in the Q1 sheet and in no other file's region column. Both
+      files evidently hold the same category and disagree about what is in it,
+      which splits any report that groups by region across the two.
+    caught_by: domain.inconsistent_values
+
   - id: sales.hidden_sheet
     where: sales.xlsx#Archive
     why: the Archive worksheet is hidden
@@ -146,9 +154,11 @@ defects:
   - id: sales.region_orphans
     where: sales.xlsx#Q1.region
     why: >-
-      two of the six region codes in the Q1 sheet do not appear in regions.csv.
-      The workbook's own reference sheet covers all six, so the defect is only
-      visible against regions.csv.
+      APAC and LATAM appear in the Q1 sheet's region column and in neither
+      case in regions.csv. The workbook's own reference sheet covers both, so
+      the defect is invisible to anyone checking the workbook against itself —
+      which is the trap: a clean referential check is evidence about that pair,
+      not about that column.
     caught_by: none
     agent:
       count: 2

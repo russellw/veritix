@@ -30,8 +30,9 @@ Everything is on `main`. M0 through M3 are done.
 | M3b | React web interface, embedded and served behind a CSP | done |
 | M4 | Agentic LLM auditor with the egress guard | done |
 | M5a | MCP server: `veritix mcp` on stdio | done |
-| M5b | MCP client: the agent pulls the customer's own context | **next** |
-| M6 | Hardening, evals, deployment | |
+| M5b | MCP client: the agent pulls the customer's own context | |
+| M6a | The eval harness: defect manifests, `veritix eval`, a second fixture | done |
+| M6b | Rule proposal, OpenTelemetry, deployment, docs | **next** |
 
 M4 is off by default: `llm.provider: none` is the complete deterministic
 auditor, and over HTTP the agent is per-run (`"agent": true`) rather than a
@@ -50,6 +51,9 @@ make audit          # typecheck, pnpm audit, go mod verify, govulncheck
 ./bin/veritix audit testdata/dirty-retail --format html -o /tmp/report.html
 ./bin/veritix audit testdata/dirty-retail --format sarif
 ./bin/veritix audit testdata/dirty-retail --fail-on error   # exits 1
+
+make eval                                    # score the checks against the manifest
+./bin/veritix eval testdata/dirty-logistics --llm anthropic --runs 5
 
 ./bin/veritix audit testdata/dirty-retail --llm anthropic
 ./bin/veritix audit testdata/dirty-retail \
@@ -142,6 +146,7 @@ internal/
   finding/             the finding model, severity, evidence, Set.Verify
   report/              text, JSON, SARIF, self-contained HTML
   audit/               the orchestrator every entry point drives
+  eval/                score an audit against a dataset whose defects are known
   runs/                one recorded run: audit.Run plus the store bookkeeping
   store/               SQLite: datasets, runs, findings — the audit trail
   api/                 REST + SSE over audit.Run; openapi.yaml is the contract
@@ -154,8 +159,10 @@ internal/
     redact/            the egress guard: the only path from process to model
     tools/             what the model may touch; record_finding is its only output
 web/                   React + TS + Vite → dist, //go:embed-ed; embed.go
-testdata/dirty-retail/ fixtures with a known defect manifest
+testdata/dirty-retail/    fixtures with a known defect manifest
+testdata/dirty-logistics/ a second one, whose defects need reasoning not a tool
 docs/frontend-stack.md the front end's dependency and supply-chain policy
+docs/eval.md           the defect manifest format and what a score means
 docs/mcp.md            wiring an assistant to `veritix mcp`, and what it may ask
 LICENSING.md           the dual license: AGPL, or commercial terms
 CLA.md                 the contributor agreement that makes the second possible
@@ -381,6 +388,54 @@ operation discloses no cell values, and that everything sent is in the trace.
   records what Veritix's *own* agent was sent. It says nothing about an MCP
   client, because Veritix is not driving that model. `docs/mcp.md` says so
   rather than letting the existing claim quietly over-reach.
+
+## How the eval is put together
+
+`internal/eval` scores an audit against a dataset whose defects are already
+known. `docs/eval.md` is the whole of it; these are the decisions.
+
+- **Two numbers, and they do not collapse into one.** Mean recall is what one
+  audit finds; coverage is what repeated runs find between them. Half and half
+  is a model that finds some defects and misses others; half and all is a model
+  that finds a different one each time, which is what three `gpt-oss-120b` runs
+  on `dirty-retail` turned out to be doing. A single figure would have called
+  both of those the same product.
+- **Credit is the engine's number at the manifest's location, never the
+  model's prose.** A model's rule slug and title are wording, and two runs word
+  the same defect two ways; scoring on them would measure vocabulary. Location
+  alone would credit any observation about the column, and a count alone would
+  credit a coincidence elsewhere, so it takes both. `MatchesTarget` is the only
+  definition of "found it", because `internal/checks`'s suite asks the same
+  question for the opposite reason — has a deterministic rule started covering a
+  target the model is still being paid for.
+- **The manifest's own counts are re-run**, from `agent.query`, exactly as a
+  finding's evidence is. A target with a wrong count is a target nothing can
+  ever match, and the eval would report every model missing it forever with
+  nothing saying why.
+- **Row counts and distinct counts have to agree.** Veritix's own
+  `reference.orphan_values` counts distinct offending values; a model writing
+  `count(*)` counts rows. Where they disagree one of two correct models is
+  refused credit and it reads as the model's failure.
+  `TestAgentTargetCountsDoNotDependOnPhrasing` pins it. `equivalent:` exists for
+  targets that genuinely admit two figures and should stay rare: reaching for it
+  once immediately collided with a `column.missing_values` finding measuring the
+  same number at the same location, and `sales.xlsx` was edited instead.
+- **An eval run is an ordinary run.** `eval.Run` drives `audit.Run`, so what is
+  scored is the auditor a customer runs. One thing is forced rather than
+  configured: `--include-values` is off whatever the configuration says, because
+  a score obtained by showing the model cell values is not a score for the
+  product anybody ships. `TestEvalWillNotShowTheModelCellValues` pins it.
+- **The gate fails on the checks and not on the model.** A missed planted defect
+  or a check firing on clean data exits non-zero unasked, because the manifest
+  is not an opinion. `--min-recall` is opt-in, because a build that fails when a
+  model has a bad afternoon is a build people learn to ignore.
+- **Two fixtures measuring different things.** `dirty-retail`'s targets are both
+  unresolved references, so it measures whether a model will use a tool surface
+  it was not asked to use. `dirty-logistics`'s four are invisible to every check
+  tool — a row whose two dates contradict each other, three weights in grams in
+  a kilogram column, a currency column contradicting the name of the amount
+  column beside it, and a contradiction that only exists across a join. A model
+  can score full marks on the first with four tool calls and zero on the second.
 
 ## Conventions
 
@@ -641,11 +696,15 @@ loop rather than to the auditing.
 
 ## Testing
 
-`testdata/dirty-retail/` carries deliberately broken files. The defect
-manifest in `internal/checks/checks_test.go` lists **21 planted defects**, each
-named with the check that must catch it, plus a companion list of places the
+`testdata/dirty-retail/` and `testdata/dirty-logistics/` carry deliberately
+broken files, and each one's `veritix-manifest.yaml` is the list: every planted
+defect with the check that must catch it, and a companion list of places the
 data is clean that must stay quiet — a check that fires on everything is
-useless. Add to both lists when adding a check.
+useless. The manifest is one file, read by `internal/eval`'s tests and by
+`veritix eval` alike; a second copy of a defect list disagrees with the first
+eventually, and then a passing test means nothing. Add to both halves when
+adding a check, and add a new fixture to `scoredFixtures` in `eval_test.go`,
+which is the only wiring a dataset needs.
 
 `sales.xlsx` is a committed binary fixture (title rows, a hidden row, merged
 cells, `#REF!`/`#DIV/0!`, a stacked TOTAL table, a hidden sheet). It was

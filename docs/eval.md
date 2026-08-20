@@ -81,6 +81,7 @@ clean:
 ```
 
 `where` is the location a finding reports: `<display>` or `<display>.<column>`.
+`equivalent` is described under "counts that are stable" below.
 
 `caught_by` names the deterministic rule that must catch the defect, or `none`
 when nothing proposes it. A defect marked `none` and carrying an `agent` block
@@ -172,21 +173,66 @@ One thing is forced rather than configured: **an eval never lifts the egress
 policy**, whatever `llm.allow_sample_values` says. A score obtained by showing
 the model cell values is not a score for the product anybody ships.
 
+## The two fixtures, and why there are two
+
+They measure different things on purpose.
+
+**`testdata/dirty-retail`** has two agent targets and both are unresolved
+references. `check_referential_integrity` finds either one in a single call, so
+what this fixture measures is whether a model will *use a tool surface it was
+not asked to use*. That is a real and discriminating question:
+`qwen3:4b-instruct-2507` uses the check tools and scores; `qwen3.5:35b-a3b` is
+eight times the size and answered three whole runs with nothing but `run_sql`.
+
+**`testdata/dirty-logistics`** has four, and no check tool measures any of
+them:
+
+| target | kind |
+|---|---|
+| `shipments.delivered_before_dispatch` | two columns of one row contradict each other |
+| `shipments.weight_in_grams` | three values are in the wrong unit, none implausible alone |
+| `invoices.currency_contradicts_column` | a column's name contradicts the column beside it |
+| `invoices.issued_before_dispatch` | the contradiction only exists across a join |
+
+Each needs the model to read the profile, form a hypothesis about what the
+columns are supposed to mean to each other, and write the SQL that would settle
+it. A model can score full marks on `dirty-retail` with four tool calls and
+score zero here.
+
+Its deterministic half is worth having too. `relate.go` proposes
+`shipments.dest_site → sites.site_code` on its own, from a naming convention
+that shares no word with the parent key — which is evidence the relationship
+inference generalizes past the fixture it was written against.
+
 ## Adding a dataset
 
-A second dataset is worth more than a second model. `dirty-retail` has one
-reachable target per column, so it cannot distinguish "found the defects" from
-"found *a* defect and stopped" — which is exactly the failure the three
-`gpt-oss-120b` runs turned out to be.
-
-What a fixture needs to be worth scoring:
+A third dataset is worth more than a third model. What one needs to be worth
+scoring:
 
 - **More than one target in reach at once**, so partial credit means something.
+  `dirty-retail` has one reachable target per column, which is why three
+  `gpt-oss-120b` runs could not distinguish "found the defects" from "found *a*
+  defect and stopped".
 - **Targets of different kinds**, so a model that only knows how to check
   referential integrity scores differently from one that reads a profile.
 - **A `clean` list that is honestly hard** — places that look wrong and are
-  not. A model that reports everything scores well against a manifest with no
-  clean half.
-- **Counts that are stable.** A target whose correct count depends on how the
-  question is asked cannot be scored on the number, and the number is what
-  makes credit meaningful.
+  not, and especially the neighbor of something that is wrong. A check that
+  generalized from `dest_site` to `origin_site` would catch every planted
+  defect in `dirty-logistics` and be useless.
+- **An unambiguous location.** Credit needs the finding to land at the target's
+  `where`. A defect that spans a join has two plausible homes, so put it where
+  the wrong value actually is — the invoice is what is dated too early, not the
+  shipment.
+- **Counts that do not depend on phrasing.** This is the one that bites.
+  Veritix's own `reference.orphan_values` counts *distinct* offending values; a
+  model writing `count(*)` counts *rows*. Where those disagree, one of two
+  correct models is refused credit and it looks like the model's failure.
+  `TestAgentTargetCountsDoNotDependOnPhrasing` checks it, and every target in
+  `dirty-logistics` has row count equal to distinct count by construction.
+
+  Where a target genuinely admits two true figures, `equivalent: [n]` lists the
+  others. Use it sparingly: it widens what counts as a match, and the first
+  time it was reached for it produced a collision with a different defect at
+  the same location — two orphaned rows sharing one code measure 1, and so did
+  a `column.missing_values` finding on the same column. The fixture was changed
+  instead.

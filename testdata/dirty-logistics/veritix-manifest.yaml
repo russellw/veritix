@@ -1,0 +1,176 @@
+version: 1
+dataset: dirty-logistics
+description: >-
+  A second scored fixture, and deliberately not a second copy of the first.
+
+  dirty-retail measures whether a model will use a tool surface it was not
+  asked to use: both of its agent targets are unresolved references, and
+  check_referential_integrity finds either one in a single call. That is worth
+  measuring and it is one capability.
+
+  Every agent target here is invisible to every check tool. Each one needs the
+  model to read the profile, form a hypothesis about what the columns are
+  supposed to mean to each other, and write the SQL that would settle it. Two
+  of them span a join. A model can score full marks on dirty-retail with four
+  tool calls and score zero here.
+
+  Each target's affected row count also equals its distinct-value count, so a
+  model that counts rows and one that counts distinct offenders arrive at the
+  same number. That is not an accident: crediting a finding on the engine's
+  figure only works when the figure does not depend on how the question was
+  phrased.
+
+defects:
+  # ── the deterministic half ───────────────────────────────────────────────
+  - id: invoices.duplicate_rows
+    where: invoices.csv
+    why: INV-2014 was exported twice, identical in every column
+    caught_by: table.duplicate_rows
+
+  - id: invoices.duplicate_key
+    where: invoices.csv.invoice_id
+    why: invoice_id repeats, so it does not identify an invoice
+    caught_by: key.duplicate_values
+
+  - id: invoices.duplicate_shipment_ref
+    where: invoices.csv.shipment_id
+    why: >-
+      the duplicated row makes SHP-1018 appear twice, which reads as one
+      shipment billed two times
+    caught_by: key.duplicate_values
+
+  - id: invoices.no_candidate_key
+    where: invoices.csv
+    why: with invoice_id repeating, no single column identifies a row
+    caught_by: table.no_candidate_key
+
+  - id: invoices.mixed_date_formats
+    where: invoices.csv.issued_at
+    why: INV-2008 is dated 16/01/2025 where every other row is ISO
+    caught_by: column.mixed_date_formats
+
+  - id: invoices.shipment_orphan
+    where: invoices.csv.shipment_id
+    why: INV-2012 bills SHP-9999, which was never shipped
+    caught_by: reference.orphan_values
+
+  - id: shipments.dest_site_orphans
+    where: shipments.csv.dest_site
+    why: >-
+      three shipments are addressed to BCN-01, OSL-04 and LIS-05, none of which
+      is a site. relate.go proposes this pair from the naming convention and
+      the value overlap, which is why it is not the agent's to find.
+    caught_by: reference.orphan_values
+
+  - id: shipments.cost_type_violation
+    where: shipments.csv.cost_usd
+    why: SHP-1017 records a cost of 'pending', so the column is not numeric
+    caught_by: column.type_violation
+
+  - id: sites.whitespace_padding
+    where: sites.csv.name
+    why: "'  Madrid Vallecas  ' is padded with spaces"
+    caught_by: column.whitespace_padding
+
+  # ── agent territory ──────────────────────────────────────────────────────
+  #
+  # No check proposes any of these and no check tool measures one. They are
+  # four different kinds of defect on purpose: a model that has learned to run
+  # one referential check and stop scores zero on all four.
+
+  - id: shipments.delivered_before_dispatch
+    where: shipments.csv.delivered_at
+    why: >-
+      SHP-1003 and SHP-1013 record a delivery date earlier than their dispatch
+      date. Every transit-time average built on this file is dragged negative
+      by them, and neither column is wrong on its own — only the pair is.
+    caught_by: none
+    agent:
+      count: 2
+      query: >-
+        SELECT count(*) FROM shipments_csv
+        WHERE TRY_CAST(delivered_at AS DATE) < TRY_CAST(dispatched_at AS DATE)
+
+  - id: shipments.weight_in_grams
+    where: shipments.csv.weight_kg
+    why: >-
+      three shipments record 14200, 9800 and 23500 in a column where every
+      other value is between 3.2 and 48.5. They are grams in a kilogram
+      column, and they are three orders of magnitude out, so any total
+      shipped weight is wrong by a factor of ten and no row is individually
+      implausible enough to look wrong.
+    caught_by: none
+    agent:
+      count: 3
+      query: >-
+        SELECT count(*) FROM shipments_csv
+        WHERE TRY_CAST(weight_kg AS DOUBLE) > 1000
+
+  - id: invoices.currency_contradicts_column
+    where: invoices.csv.currency
+    why: >-
+      the amount column is named amount_usd, and two invoices carry EUR and
+      GBP in the currency column beside it. Summing amount_usd adds three
+      currencies together and produces a number in none of them.
+    caught_by: none
+    agent:
+      count: 2
+      query: SELECT count(*) FROM invoices_csv WHERE currency <> 'USD'
+
+  - id: invoices.issued_before_dispatch
+    where: invoices.csv.issued_at
+    why: >-
+      INV-2004 and INV-2013 are dated before the shipment they bill was
+      dispatched. Finding it needs the join: neither date is wrong beside the
+      other values in its own column, and both files pass every check on their
+      own.
+    caught_by: none
+    agent:
+      count: 2
+      query: >-
+        SELECT count(*) FROM invoices_csv i
+        JOIN shipments_csv s ON i.shipment_id = s.shipment_id
+        WHERE TRY_CAST(i.issued_at AS DATE) < TRY_CAST(s.dispatched_at AS DATE)
+
+# Places the data is deliberately correct. Several of them are the neighbor of
+# something that is wrong, which is the case worth guarding: a check that
+# generalizes from dest_site to origin_site, or from invoice_id to
+# shipment_id, would catch every planted defect above and be useless.
+clean:
+  - rule: reference.orphan_values
+    where: shipments.csv.origin_site
+    why: every origin site is in sites.csv, unlike every third destination
+
+  - rule: reference.orphan_values
+    where: shipments.csv.carrier_code
+    why: every carrier code is in carriers.csv
+
+  - rule: key.duplicate_values
+    where: shipments.csv.shipment_id
+    why: no shipment is recorded twice
+
+  - rule: table.duplicate_rows
+    where: shipments.csv
+    why: no two shipment rows are identical in every column
+
+  - rule: column.case_variants
+    where: shipments.csv.status
+    why: status is lowercase in every row
+
+  - rule: column.mixed_date_formats
+    where: shipments.csv.dispatched_at
+    why: every dispatch date is ISO, unlike issued_at in invoices.csv
+
+  - rule: column.type_violation
+    where: shipments.csv.weight_kg
+    why: >-
+      every weight is a number. Three of them are in the wrong unit, which is
+      a defect no type check can see and is listed as an agent target instead.
+
+  - rule: column.whitespace_padding
+    where: sites.csv.site_code
+    why: the codes are not padded, only one of the names is
+
+  - rule: table.unreadable_rows
+    where: invoices.csv
+    why: every row has the right number of fields

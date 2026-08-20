@@ -70,8 +70,20 @@ type Defect struct {
 type AgentTarget struct {
 	// Count is what a correct measurement of this defect returns.
 	Count int64 `yaml:"count"`
-	// Query is a SELECT returning that count, so the manifest's own claim can
-	// be re-run rather than believed.
+	// Equivalent are other true measurements of the same defect.
+	//
+	// Two orphaned rows sharing one bad code are two rows and one value, and a
+	// model that counts distinct offenders rather than affected rows has found
+	// the same defect. Where a target admits more than one true figure the
+	// manifest has to say so: the alternative is a correct model scoring zero,
+	// which would show up as the model's failure rather than the fixture's.
+	//
+	// This is a concession and it should stay a small one. A target whose
+	// figure genuinely depends on how the question is asked is a target that
+	// cannot be credited reliably, and the fixture is usually the thing to fix.
+	Equivalent []int64 `yaml:"equivalent"`
+	// Query is a SELECT returning Count, so the manifest's own claim can be
+	// re-run rather than believed.
 	//
 	// It is not shown to the model and it is not how a finding is credited —
 	// the model has to write its own query and the engine has to run that one.
@@ -91,6 +103,19 @@ type Clean struct {
 	Where string `yaml:"where"`
 	// Why explains why this location is clean.
 	Why string `yaml:"why"`
+}
+
+// Measures reports whether a figure is a true measurement of this defect.
+func (a *AgentTarget) Measures(n int64) bool {
+	if n == a.Count {
+		return true
+	}
+	for _, alt := range a.Equivalent {
+		if n == alt {
+			return true
+		}
+	}
+	return false
 }
 
 // Deterministic reports whether a check is supposed to catch this defect.
@@ -167,6 +192,13 @@ func (m *Manifest) Validate() error {
 					"%s is an agent target with no count: state what a correct measurement "+
 						"returns, because a model is credited on the engine's figure rather "+
 						"than on its own wording", where)
+			}
+			for _, alt := range d.Agent.Equivalent {
+				if alt <= 0 || alt == d.Agent.Count {
+					return fmt.Errorf(
+						"%s lists %d as an equivalent measurement, which is either not a "+
+							"count or is the count it already states", where, alt)
+				}
 			}
 			if strings.TrimSpace(d.Agent.Query) == "" {
 				return fmt.Errorf(

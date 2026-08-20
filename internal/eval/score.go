@@ -293,7 +293,7 @@ func (s Score) UnclassifiedClaims() []Claim {
 // started covering a defect the model is still being credited for. A target
 // caught by both would quietly inflate every score after it.
 func MatchesTarget(f finding.Finding, d Defect) bool {
-	return d.Agent != nil && covers(f, d.Where) && f.Count == d.Agent.Count
+	return d.Agent != nil && covers(f, d.Where) && d.Agent.Measures(f.Count)
 }
 
 // locationOf renders a finding's location the way a manifest writes one.

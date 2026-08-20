@@ -3,6 +3,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -11,17 +12,26 @@ import (
 	"github.com/russellw/veritix/internal/agent/llm/llmtest"
 	"github.com/russellw/veritix/internal/audit"
 	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/engine"
 	"github.com/russellw/veritix/internal/finding"
 )
 
 const fixtureDir = "../../testdata/dirty-retail"
 
-// runFixture audits the fixture with no model configured: exactly the auditor
-// a customer gets by default.
-func runFixture(t *testing.T) *audit.Result {
+// scoredFixtures is every dataset in the repository that carries a manifest.
+// Each one is scored by the tests below, so a new fixture is covered by adding
+// it here and nothing else.
+var scoredFixtures = []string{
+	"../../testdata/dirty-retail",
+	"../../testdata/dirty-logistics",
+}
+
+// runFixture audits a fixture with no model configured: exactly the auditor a
+// customer gets by default.
+func runFixture(t *testing.T, dir string) *audit.Result {
 	t.Helper()
 	res, err := audit.Run(t.Context(), audit.Options{
-		Paths:  []string{fixtureDir},
+		Paths:  []string{dir},
 		Engine: config.Default().Engine,
 	}, nil)
 	if err != nil {
@@ -31,37 +41,82 @@ func runFixture(t *testing.T) *audit.Result {
 	return res
 }
 
-func loadFixtureManifest(t *testing.T) *Manifest {
+func loadManifest(t *testing.T, dir string) *Manifest {
 	t.Helper()
-	m, err := Load(fixtureDir)
+	m, err := Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	return m
 }
 
+func loadFixtureManifest(t *testing.T) *Manifest {
+	t.Helper()
+	return loadManifest(t, fixtureDir)
+}
+
+// eachFixture runs a body over every scored dataset.
+func eachFixture(t *testing.T, body func(t *testing.T, m *Manifest, res *audit.Result)) {
+	t.Helper()
+	for _, dir := range scoredFixtures {
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			body(t, loadManifest(t, dir), runFixture(t, dir))
+		})
+	}
+}
+
 // A target whose count is wrong is a target nothing can ever match, and the
 // eval would report every model missing it forever without saying why. The
 // manifest's own claims are re-run for the same reason a finding's are.
 func TestAgentTargetCountsAreMeasurable(t *testing.T) {
-	m := loadFixtureManifest(t)
-	res := runFixture(t)
+	eachFixture(t, func(t *testing.T, m *Manifest, res *audit.Result) {
+		targets := m.AgentTargets()
+		if len(targets) == 0 {
+			t.Fatal("this manifest lists no agent targets")
+		}
+		for _, d := range targets {
+			var got int64
+			if err := res.Engine().ScanOne(t.Context(), d.Agent.Query, []any{&got}); err != nil {
+				t.Errorf("%s: its query did not run: %v\n    %s", d.ID, err, d.Agent.Query)
+				continue
+			}
+			if got != d.Agent.Count {
+				t.Errorf("%s claims %d affected rows, but its own query returns %d\n    %s",
+					d.ID, d.Agent.Count, got, d.Agent.Query)
+			}
+		}
+	})
+}
 
-	targets := m.AgentTargets()
-	if len(targets) == 0 {
-		t.Fatal("the fixture manifest lists no agent targets")
-	}
-	for _, d := range targets {
-		var got int64
-		if err := res.Engine().ScanOne(t.Context(), d.Agent.Query, []any{&got}); err != nil {
-			t.Errorf("%s: its query did not run: %v\n    %s", d.ID, err, d.Agent.Query)
-			continue
+// Credit is given on the engine's number, so a target whose number depends on
+// how the question was phrased cannot be credited reliably. Counting affected
+// rows and counting distinct offenders are the two ways a model asks, and a
+// fixture is only scorable where they agree.
+func TestAgentTargetCountsDoNotDependOnPhrasing(t *testing.T) {
+	eachFixture(t, func(t *testing.T, m *Manifest, res *audit.Result) {
+		for _, d := range m.AgentTargets() {
+			column := d.Where[strings.LastIndex(d.Where, ".")+1:]
+			distinct := strings.Replace(d.Agent.Query,
+				"count(*)", "count(DISTINCT "+engine.Ident(column)+")", 1)
+			if distinct == d.Agent.Query {
+				continue // not phrased as a row count; nothing to compare
+			}
+			var got int64
+			if err := res.Engine().ScanOne(t.Context(), distinct, []any{&got}); err != nil {
+				// A join or an expression can make the rewrite meaningless.
+				// That is not a failure of the fixture.
+				t.Logf("%s: the distinct rewrite does not apply: %v", d.ID, err)
+				continue
+			}
+			if !d.Agent.Measures(got) {
+				t.Errorf("%s: %d affected rows but %d distinct values in %s.\n"+
+					"    A model counting one way would be credited and a model counting\n"+
+					"    the other way would not. Adjust the fixture so they agree, or\n"+
+					"    list %d under equivalent: and say why both are true.",
+					d.ID, d.Agent.Count, got, column, got)
+			}
 		}
-		if got != d.Agent.Count {
-			t.Errorf("%s claims %d affected rows, but its own query returns %d\n    %s",
-				d.ID, d.Agent.Count, got, d.Agent.Query)
-		}
-	}
+	})
 }
 
 // The fixture carries a known set of planted defects and the manifest beside it
@@ -74,9 +129,10 @@ func TestAgentTargetCountsAreMeasurable(t *testing.T) {
 // score zero on the agent half, or the two halves are not separable and the
 // eval is measuring the checks.
 func TestTheDeterministicRunIsTheBaseline(t *testing.T) {
-	m := loadFixtureManifest(t)
-	res := runFixture(t)
+	eachFixture(t, theDeterministicRunIsTheBaseline)
+}
 
+func theDeterministicRunIsTheBaseline(t *testing.T, m *Manifest, res *audit.Result) {
 	score := ScoreRun(m, res.Findings.All())
 	for _, d := range score.Checks.Missed {
 		t.Errorf("missed %s at %s\n    (%s)", d.CaughtBy, d.Where, d.Why)
@@ -108,9 +164,10 @@ func TestTheDeterministicRunIsTheBaseline(t *testing.T) {
 // by a check that is good news and the manifest has to say so — otherwise the
 // eval goes on crediting a model for restating what the checks already found.
 func TestUncoveredDefectsAreNotCaughtByAnyCheck(t *testing.T) {
-	m := loadFixtureManifest(t)
-	res := runFixture(t)
+	eachFixture(t, uncoveredDefectsAreNotCaughtByAnyCheck)
+}
 
+func uncoveredDefectsAreNotCaughtByAnyCheck(t *testing.T, m *Manifest, res *audit.Result) {
 	score := ScoreChecks(m, res.Findings.All())
 	if len(score.Uncovered) == 0 {
 		t.Fatal("the manifest lists nothing for the agent to find")
@@ -391,7 +448,7 @@ func TestAnUnplannedFindingIsReportedNotScored(t *testing.T) {
 // The scorecard renders without a model, which is the configuration CI runs.
 func TestScorecardRendersForADeterministicRun(t *testing.T) {
 	m := loadFixtureManifest(t)
-	res := runFixture(t)
+	res := runFixture(t, fixtureDir)
 	score := Aggregate(m, []RunScore{ScoreRun(m, res.Findings.All())})
 
 	var text, jsonOut strings.Builder
