@@ -84,6 +84,31 @@ type RunScore struct {
 	Err string
 }
 
+// Scorable reports whether this run says anything about the model.
+//
+// A run that ended because the model stopped, or because a budget did, is
+// evidence: the model had its chance and either used it or spent it badly. A
+// run that ended because the provider stopped answering is not. The first
+// measurement taken with this harness averaged a 30-minute request timeout in
+// as a zero, which measured the machine the model was running on.
+//
+// Such runs are kept and printed. They are only left out of the averages, and
+// the scorecard says how many.
+func (r RunScore) Scorable() bool {
+	if r.Err != "" {
+		return false
+	}
+	if r.Trace == nil {
+		return true
+	}
+	switch r.Trace.Stopped {
+	case agent.StoppedProviderError, agent.StoppedCanceled:
+		return false
+	default:
+		return true
+	}
+}
+
 // Recall is the fraction of this manifest's agent targets this run found.
 func (r RunScore) Recall() float64 {
 	total := len(r.Detected) + len(r.Missed)
@@ -179,17 +204,37 @@ type Score struct {
 	ChecksUnstable bool
 }
 
-// MeanRecall is the average fraction of targets found per run.
+// MeanRecall is the average fraction of targets found per scorable run.
 func (s Score) MeanRecall() float64 {
-	if len(s.Runs) == 0 {
+	var sum float64
+	var n int
+	for _, r := range s.Runs {
+		if !r.Scorable() {
+			continue
+		}
+		sum += r.Recall()
+		n++
+	}
+	if n == 0 {
 		return 0
 	}
-	var sum float64
-	for _, r := range s.Runs {
-		sum += r.Recall()
-	}
-	return sum / float64(len(s.Runs))
+	return sum / float64(n)
 }
+
+// Scored is how many runs the averages are over, and Unscored how many were
+// left out because nothing about them was the model's doing.
+func (s Score) Scored() int {
+	var n int
+	for _, r := range s.Runs {
+		if r.Scorable() {
+			n++
+		}
+	}
+	return n
+}
+
+// Unscored is the rest.
+func (s Score) Unscored() int { return len(s.Runs) - s.Scored() }
 
 // Coverage is the fraction of targets found by at least one run.
 func (s Score) Coverage() float64 {
@@ -218,18 +263,23 @@ func Aggregate(m *Manifest, runs []RunScore) Score {
 		if r.Err != "" {
 			continue
 		}
-		counted++
+		// The deterministic half is compared across every run that got that
+		// far, including one the provider later abandoned: the checks ran
+		// before the agent did, so their result is still evidence.
 		if first {
 			s.Checks, first = r.Checks, false
 		} else if !sameChecks(s.Checks, r.Checks) {
 			s.ChecksUnstable = true
+		}
+		if r.Scorable() {
+			counted++
 		}
 	}
 
 	for _, d := range m.AgentTargets() {
 		t := TargetScore{Defect: d, Runs: counted}
 		for _, r := range runs {
-			if r.Err != "" {
+			if !r.Scorable() {
 				continue
 			}
 			for _, id := range r.Detected {

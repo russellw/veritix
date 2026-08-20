@@ -60,9 +60,20 @@ func writeAgentText(p *printer, s Score) {
 	} else {
 		p.printf("\nAgent  %s via %s, %s%s\n",
 			s.Model, s.Provider, plural(len(s.Runs), "run"), budgets(s))
+		if n := s.Unscored(); n > 0 {
+			// Left out of the averages, not hidden: a run the provider
+			// abandoned says nothing about the model, and averaging it in as a
+			// zero measures the machine instead.
+			p.printf("  %d run(s) left out of the averages, having ended for reasons that "+
+				"were not the model's\n", n)
+		}
+		if s.Scored() == 0 {
+			p.printf("  no run got far enough to score\n")
+			return
+		}
 		p.printf("  mean recall  %5.0f%%   what one audit finds\n", 100*s.MeanRecall())
 		p.printf("  coverage     %5.0f%%   what %s find between them\n",
-			100*s.Coverage(), plural(len(s.Runs), "run"))
+			100*s.Coverage(), plural(s.Scored(), "run"))
 	}
 
 	for _, t := range s.Targets {
@@ -182,6 +193,8 @@ type docChecks struct {
 type docAgent struct {
 	MeanRecall float64     `json:"mean_recall"`
 	Coverage   float64     `json:"coverage"`
+	Scored     int         `json:"scored_runs"`
+	Unscored   int         `json:"unscored_runs"`
 	Targets    []docTarget `json:"targets"`
 }
 
@@ -202,6 +215,7 @@ type docClaim struct {
 }
 
 type docRun struct {
+	Scorable     bool         `json:"scorable"`
 	Detected     []string     `json:"detected"`
 	Missed       []string     `json:"missed"`
 	Unclassified []docClaim   `json:"unclassified,omitempty"`
@@ -232,6 +246,8 @@ func document(s Score) doc {
 	d.Agent = docAgent{
 		MeanRecall: s.MeanRecall(),
 		Coverage:   s.Coverage(),
+		Scored:     s.Scored(),
+		Unscored:   s.Unscored(),
 		Targets:    make([]docTarget, 0, len(s.Targets)),
 	}
 	for _, t := range s.Targets {
@@ -244,6 +260,7 @@ func document(s Score) doc {
 	d.Runs = make([]docRun, 0, len(s.Runs))
 	for _, r := range s.Runs {
 		run := docRun{
+			Scorable: r.Scorable(),
 			Detected: r.Detected, Missed: r.Missed,
 			Recall: r.Recall(), Trace: r.Trace, Error: r.Err,
 		}

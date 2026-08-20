@@ -476,3 +476,63 @@ func TestScorecardRendersForADeterministicRun(t *testing.T) {
 		t.Errorf("agent = %+v, want targets listed and none found", back.Agent)
 	}
 }
+
+// A run the provider abandoned says nothing about the model, and averaging it
+// in as a zero measures the machine the model was running on. This is not
+// hypothetical: the first measurement taken with this harness was a 4B on a
+// four-core laptop, whose 24th step exceeded a 30-minute request timeout after
+// the transcript had grown to 20k tokens.
+func TestARunTheProviderAbandonedIsNotScoredAgainstTheModel(t *testing.T) {
+	m := loadFixtureManifest(t)
+	targets := m.AgentTargets()
+
+	found := RunScore{
+		Detected: []string{targets[0].ID, targets[1].ID},
+		Trace:    &agent.Trace{Model: "scripted", Stopped: agent.StoppedModelFinished},
+	}
+	abandoned := RunScore{
+		Missed: []string{targets[0].ID, targets[1].ID},
+		Trace:  &agent.Trace{Model: "scripted", Stopped: agent.StoppedProviderError},
+	}
+
+	s := Aggregate(m, []RunScore{found, abandoned})
+	if s.Scored() != 1 || s.Unscored() != 1 {
+		t.Fatalf("scored %d and left out %d, want one of each", s.Scored(), s.Unscored())
+	}
+	if got := s.MeanRecall(); got != 1 {
+		t.Errorf("MeanRecall = %v, want 1: the only run that says anything found both", got)
+	}
+	for _, target := range s.Targets {
+		if target.Runs != 1 || target.Hits != 1 {
+			t.Errorf("%s: %d/%d, want 1/1 — the abandoned run is not a run it missed",
+				target.Defect.ID, target.Hits, target.Runs)
+		}
+	}
+
+	// It is still printed. Excluding a failure from an average is defensible;
+	// hiding it is not.
+	var out strings.Builder
+	if err := WriteText(&out, s); err != nil {
+		t.Fatalf("WriteText: %v", err)
+	}
+	if !strings.Contains(out.String(), "left out of the averages") {
+		t.Errorf("the scorecard does not disclose the excluded run:\n%s", out.String())
+	}
+}
+
+// A run stopped by its own step budget is entirely different: the model had its
+// chance and spent it. That one counts.
+func TestARunThatSpentItsStepBudgetIsScored(t *testing.T) {
+	m := loadFixtureManifest(t)
+
+	s := Aggregate(m, []RunScore{{
+		Missed: []string{m.AgentTargets()[0].ID},
+		Trace:  &agent.Trace{Stopped: agent.StoppedStepBudget},
+	}})
+	if s.Scored() != 1 {
+		t.Errorf("a run that hit its step budget was not scored")
+	}
+	if s.MeanRecall() != 0 {
+		t.Errorf("MeanRecall = %v, want 0", s.MeanRecall())
+	}
+}
