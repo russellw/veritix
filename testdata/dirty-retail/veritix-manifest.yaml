@@ -1,0 +1,189 @@
+version: 1
+dataset: dirty-retail
+description: >-
+  The defects deliberately planted in this fixture, and the places it is
+  deliberately clean. This file is the ground truth for two things at once:
+  internal/checks asserts that every defect with a caught_by rule is found and
+  that nothing fires where the data is clean, and `veritix eval` scores a
+  model's agent run against the defects that carry an agent block.
+
+  One manifest, not two. A second list of the same defects kept somewhere else
+  would disagree with this one eventually, and then a passing test would mean
+  nothing.
+
+# Each defect is one problem placed on purpose.
+#
+#   where     the location, as "<display>" or "<display>.<column>"
+#   caught_by the deterministic rule that must catch it, or "none" when no
+#             check proposes it and the agent is the only thing that will
+#   agent     present when a model is expected to find it; count is what a
+#             correct measurement returns, and is checked against the engine's
+#             own figure rather than against the model's prose
+defects:
+  - id: customers.duplicate_header
+    where: customers.csv.region_1
+    why: customers.csv repeats the header name 'region'
+    caught_by: column.duplicate_header
+
+  - id: customers.mixed_date_formats
+    where: customers.csv.signup_date
+    why: signup_date mixes ISO and DD/MM/YYYY
+    caught_by: column.mixed_date_formats
+
+  - id: customers.date_type_violation
+    where: customers.csv.signup_date
+    why: signup_date contains the literal 'not a date'
+    caught_by: column.type_violation
+
+  - id: customers.case_variants
+    where: customers.csv.status
+    why: status holds Active, active, and ACTIVE
+    caught_by: column.case_variants
+
+  - id: customers.whitespace_padding
+    where: customers.csv.name
+    why: "'  Bob Jones  ' is padded with spaces"
+    caught_by: column.whitespace_padding
+
+  - id: customers.missing_value_placeholders
+    where: customers.csv.region
+    why: region uses '-' and 'N/A' as placeholders
+    caught_by: column.missing_values
+
+  - id: customers.duplicate_rows
+    where: customers.csv
+    why: CUS-000005 appears as two identical rows
+    caught_by: table.duplicate_rows
+
+  - id: customers.duplicate_key
+    where: customers.csv.customer_id
+    why: customer_id repeats CUS-000005
+    caught_by: key.duplicate_values
+
+  - id: orders.unreadable_rows
+    where: orders.csv
+    why: two rows have the wrong number of fields
+    caught_by: table.unreadable_rows
+
+  - id: orders.customer_orphan
+    where: orders.csv.customer_id
+    why: CUS-999999 is not in customers.csv
+    caught_by: reference.orphan_values
+
+  - id: orders.implausible_date
+    where: orders.csv.order_date
+    why: 1900-01-01 is a placeholder date
+    caught_by: column.implausible_dates
+
+  - id: orders.negative_amount
+    where: orders.csv.amount
+    why: an amount cannot sensibly be negative
+    caught_by: column.unexpected_negative
+
+  - id: orders.width_disagreement
+    where: orders.csv
+    why: a stray comma makes one row wider than the header
+    caught_by: csv.width_disagreement
+
+  - id: regions.encoding
+    where: regions.csv
+    why: regions.csv is Latin-1 encoded
+    caught_by: csv.encoding_not_utf8
+
+  - id: products.no_header
+    where: products.tsv
+    why: products.tsv has no header row
+    caught_by: csv.no_header
+
+  - id: sales.hidden_rows
+    where: sales.xlsx#Q1
+    why: one data row is hidden from a reader of the workbook
+    caught_by: excel.hidden_rows
+
+  - id: sales.formula_errors
+    where: sales.xlsx#Q1
+    why: "#REF! and #DIV/0! are left in cells"
+    caught_by: excel.formula_errors
+
+  - id: sales.merged_cells
+    where: sales.xlsx#Q1
+    why: the title row is merged across four columns
+    caught_by: excel.merged_cells
+
+  - id: sales.stacked_tables
+    where: sales.xlsx#Q1
+    why: a TOTAL row sits below a blank separator
+    caught_by: excel.stacked_tables
+
+  - id: sales.header_offset
+    where: sales.xlsx#Q1
+    why: the header is on row 3, under two title rows
+    caught_by: excel.header_offset
+
+  - id: sales.hidden_sheet
+    where: sales.xlsx#Archive
+    why: the Archive worksheet is hidden
+    caught_by: excel.hidden_sheet
+
+  # Agent territory. checks/relate.go does not propose either of these pairs,
+  # so nothing deterministic looks at them and a run with no model configured
+  # is expected to miss both. They are the reason the agentic tier exists, and
+  # the only defects here whose discovery is evidence that a model is doing the
+  # job rather than restating what the checks already said.
+  - id: customers.region_orphans
+    where: customers.csv.region
+    why: >-
+      four customer region codes do not appear in regions.csv: APAC, the
+      placeholders 'N/A' and '-', and 'emea' lowercased. Joining customers to
+      regions silently drops those customers from any regional total.
+    caught_by: none
+    agent:
+      count: 4
+      query: >-
+        SELECT count(*) FROM customers_csv
+        WHERE region NOT IN (SELECT region_code FROM regions_csv)
+
+  - id: sales.region_orphans
+    where: sales.xlsx#Q1.region
+    why: >-
+      two of the six region codes in the Q1 sheet do not appear in regions.csv.
+      The workbook's own reference sheet covers all six, so the defect is only
+      visible against regions.csv.
+    caught_by: none
+    agent:
+      count: 2
+      query: >-
+        SELECT count(*) FROM sales_xlsx_q1
+        WHERE region NOT IN (SELECT region_code FROM regions_csv)
+
+# The other half of a defect manifest: a check that fires on everything is
+# useless. These are places the fixture is deliberately clean, and a finding
+# here is a false positive.
+clean:
+  - rule: column.type_violation
+    where: orders.csv.order_id
+    why: every order_id is a whole number
+
+  - rule: column.case_variants
+    where: customers.csv.customer_id
+    why: the ids differ by more than case
+
+  - rule: column.whitespace_padding
+    where: customers.csv.email
+    why: the emails are not padded
+
+  - rule: table.duplicate_rows
+    where: orders.csv
+    why: no two order rows are identical in every column
+
+  - rule: table.empty
+    where: customers.csv
+    why: customers.csv has rows
+
+  - rule: column.empty
+    where: customers.csv.name
+    why: every customer has a name
+
+  - rule: reference.orphan_values
+    where: sales.xlsx#Reference.region_code
+    why: the reference sheet is the authority, not a referrer

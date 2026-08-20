@@ -8,6 +8,7 @@ import (
 
 	"github.com/russellw/veritix/internal/config"
 	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/eval"
 	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/ingest"
 	"github.com/russellw/veritix/internal/profile"
@@ -45,24 +46,6 @@ func runChecks(t *testing.T) (*engine.Engine, *finding.Set) {
 	return e, set
 }
 
-// at reports whether a finding with this rule exists at this location.
-// Location is "source" or "source.column".
-func at(set *finding.Set, rule, where string) bool {
-	for _, f := range set.All() {
-		if f.Rule != rule {
-			continue
-		}
-		loc := f.Location.Display
-		if f.Location.Column != "" {
-			loc += "." + f.Location.Column
-		}
-		if loc == where {
-			return true
-		}
-	}
-	return false
-}
-
 func describe(set *finding.Set) string {
 	var lines []string
 	for _, f := range set.All() {
@@ -76,105 +59,66 @@ func describe(set *finding.Set) string {
 	return strings.Join(lines, "\n")
 }
 
-// The fixtures carry a known set of planted defects. This test is the
-// manifest: each entry is a defect deliberately placed in a file, and the
-// check that must catch it.
+// The fixtures carry a known set of planted defects, and the manifest beside
+// them is the list. It is read rather than repeated here: `veritix eval` scores
+// a model against the same file, and two copies of a defect list would
+// eventually disagree — at which point a passing test would mean nothing.
 func TestPlantedDefectsAreAllFound(t *testing.T) {
 	_, set := runChecks(t)
 
-	manifest := []struct {
-		rule  string
-		where string
-		why   string
-	}{
-		{"column.duplicate_header", "customers.csv.region_1",
-			"customers.csv repeats the header name 'region'"},
-		{"column.mixed_date_formats", "customers.csv.signup_date",
-			"signup_date mixes ISO and DD/MM/YYYY"},
-		{"column.type_violation", "customers.csv.signup_date",
-			"signup_date contains the literal 'not a date'"},
-		{"column.case_variants", "customers.csv.status",
-			"status holds Active, active, and ACTIVE"},
-		{"column.whitespace_padding", "customers.csv.name",
-			"'  Bob Jones  ' is padded with spaces"},
-		{"column.missing_values", "customers.csv.region",
-			"region uses '-' and 'N/A' as placeholders"},
-		{"table.duplicate_rows", "customers.csv",
-			"CUS-000005 appears as two identical rows"},
-		{"key.duplicate_values", "customers.csv.customer_id",
-			"customer_id repeats CUS-000005"},
+	m, err := eval.Load(fixtureDir)
+	if err != nil {
+		t.Fatalf("loading the manifest: %v", err)
+	}
+	score := eval.ScoreChecks(m, set.All())
 
-		{"table.unreadable_rows", "orders.csv",
-			"two rows have the wrong number of fields"},
-		{"reference.orphan_values", "orders.csv.customer_id",
-			"CUS-999999 is not in customers.csv"},
-		{"column.implausible_dates", "orders.csv.order_date",
-			"1900-01-01 is a placeholder date"},
-		{"column.unexpected_negative", "orders.csv.amount",
-			"an amount cannot sensibly be negative"},
-		{"csv.width_disagreement", "orders.csv",
-			"a stray comma makes one row wider than the header"},
-
-		{"csv.encoding_not_utf8", "regions.csv",
-			"regions.csv is Latin-1 encoded"},
-		{"csv.no_header", "products.tsv",
-			"products.tsv has no header row"},
-
-		{"excel.hidden_rows", "sales.xlsx#Q1",
-			"one data row is hidden from a reader of the workbook"},
-		{"excel.formula_errors", "sales.xlsx#Q1",
-			"#REF! and #DIV/0! are left in cells"},
-		{"excel.merged_cells", "sales.xlsx#Q1",
-			"the title row is merged across four columns"},
-		{"excel.stacked_tables", "sales.xlsx#Q1",
-			"a TOTAL row sits below a blank separator"},
-		{"excel.header_offset", "sales.xlsx#Q1",
-			"the header is on row 3, under two title rows"},
-		{"excel.hidden_sheet", "sales.xlsx#Archive",
-			"the Archive worksheet is hidden"},
+	for _, d := range score.Missed {
+		t.Errorf("missed %s at %s\n    (%s)", d.CaughtBy, d.Where, d.Why)
 	}
 
-	var missed int
-	for _, m := range manifest {
-		if !at(set, m.rule, m.where) {
-			missed++
-			t.Errorf("missed %s at %s\n    (%s)", m.rule, m.where, m.why)
-		}
+	// The other half of a defect manifest: a check that fires on everything is
+	// useless, and only the clean list catches one.
+	for _, c := range score.FalsePositives {
+		t.Errorf("false positive: %s fired at %s\n    (%s)", c.Rule, c.Where, c.Why)
 	}
-	if missed > 0 {
+
+	if !score.Complete() {
 		t.Logf("findings actually produced:\n%s", describe(set))
+	}
+	if len(score.Found) == 0 {
+		t.Fatal("the manifest scored nothing; it is probably not being read")
 	}
 }
 
-// The other half of a defect manifest: a check that fires on everything is
-// useless. These are places the fixtures are deliberately clean.
-func TestCleanDataProducesNoFindings(t *testing.T) {
+// The defects no check proposes are the agentic tier's whole reason for
+// existing, so a deterministic run must miss them. If one starts being caught
+// by a check, that is good news and the manifest has to say so — otherwise
+// `veritix eval` goes on crediting a model for restating what the checks
+// already found.
+func TestUncoveredDefectsAreNotCaughtByAnyCheck(t *testing.T) {
 	_, set := runChecks(t)
 
-	notExpected := []struct {
-		rule  string
-		where string
-		why   string
-	}{
-		{"column.type_violation", "orders.csv.order_id",
-			"every order_id is a whole number"},
-		{"column.case_variants", "customers.csv.customer_id",
-			"the ids differ by more than case"},
-		{"column.whitespace_padding", "customers.csv.email",
-			"the emails are not padded"},
-		{"table.duplicate_rows", "orders.csv",
-			"no two order rows are identical in every column"},
-		{"table.empty", "customers.csv",
-			"customers.csv has rows"},
-		{"column.empty", "customers.csv.name",
-			"every customer has a name"},
-		{"reference.orphan_values", "sales.xlsx#Reference.region_code",
-			"the reference sheet is the authority, not a referrer"},
+	m, err := eval.Load(fixtureDir)
+	if err != nil {
+		t.Fatalf("loading the manifest: %v", err)
+	}
+	score := eval.ScoreChecks(m, set.All())
+	if len(score.Uncovered) == 0 {
+		t.Fatal("the manifest lists nothing for the agent to find")
 	}
 
-	for _, n := range notExpected {
-		if at(set, n.rule, n.where) {
-			t.Errorf("false positive: %s fired at %s\n    (%s)", n.rule, n.where, n.why)
+	for _, d := range score.Uncovered {
+		if d.Agent == nil {
+			continue
+		}
+		for _, f := range set.All() {
+			if f.Origin == finding.OriginCheck && eval.MatchesTarget(f, d) {
+				t.Errorf("%s is marked caught_by: none, but %s already measures it at %s\n"+
+					"    (%s)\n"+
+					"    Name that rule in caught_by and drop the agent block, or the eval "+
+					"scores a model for work the checks now do.",
+					d.ID, f.Rule, d.Where, d.Why)
+			}
 		}
 	}
 }
