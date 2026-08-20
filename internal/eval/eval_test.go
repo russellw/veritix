@@ -1,8 +1,14 @@
 package eval
 
 import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
 	"testing"
 
+	"github.com/russellw/veritix/internal/agent"
+	"github.com/russellw/veritix/internal/agent/llm/llmtest"
 	"github.com/russellw/veritix/internal/audit"
 	"github.com/russellw/veritix/internal/config"
 	"github.com/russellw/veritix/internal/finding"
@@ -58,7 +64,12 @@ func TestAgentTargetCountsAreMeasurable(t *testing.T) {
 	}
 }
 
-// The deterministic pass is the baseline every agent score is measured
+// The fixture carries a known set of planted defects and the manifest beside it
+// is the list. This is the assertion that used to live in internal/checks as two
+// Go slices; it moved when the list stopped being about checks alone, since half
+// of it is defects source and ingest are responsible for.
+//
+// The deterministic pass is also the baseline every agent score is measured
 // against. It has to clear the manifest's deterministic half completely and
 // score zero on the agent half, or the two halves are not separable and the
 // eval is measuring the checks.
@@ -67,9 +78,19 @@ func TestTheDeterministicRunIsTheBaseline(t *testing.T) {
 	res := runFixture(t)
 
 	score := ScoreRun(m, res.Findings.All())
+	for _, d := range score.Checks.Missed {
+		t.Errorf("missed %s at %s\n    (%s)", d.CaughtBy, d.Where, d.Why)
+	}
+	// The other half of a defect manifest: a check that fires on everything is
+	// useless, and only the clean list catches one.
+	for _, c := range score.Checks.FalsePositives {
+		t.Errorf("false positive: %s fired at %s\n    (%s)", c.Rule, c.Where, c.Why)
+	}
 	if !score.Checks.Complete() {
-		t.Errorf("the deterministic pass did not clear the manifest: %d missed, %d false positives",
-			len(score.Checks.Missed), len(score.Checks.FalsePositives))
+		t.Logf("findings actually produced:\n%s", describe(res.Findings.All()))
+	}
+	if len(score.Checks.Found) == 0 {
+		t.Fatal("the manifest scored nothing; it is probably not being read")
 	}
 	if len(score.Detected) != 0 {
 		t.Errorf("a run with no model scored %v; agent targets must need an agent", score.Detected)
@@ -80,6 +101,45 @@ func TestTheDeterministicRunIsTheBaseline(t *testing.T) {
 	if len(score.Unclassified) != 0 {
 		t.Errorf("a run with no model produced agent claims: %v", score.Unclassified)
 	}
+}
+
+// The defects no check proposes are the agentic tier's whole reason for
+// existing, so a deterministic run must miss them. If one starts being caught
+// by a check that is good news and the manifest has to say so — otherwise the
+// eval goes on crediting a model for restating what the checks already found.
+func TestUncoveredDefectsAreNotCaughtByAnyCheck(t *testing.T) {
+	m := loadFixtureManifest(t)
+	res := runFixture(t)
+
+	score := ScoreChecks(m, res.Findings.All())
+	if len(score.Uncovered) == 0 {
+		t.Fatal("the manifest lists nothing for the agent to find")
+	}
+	for _, d := range score.Uncovered {
+		if d.Agent == nil {
+			continue
+		}
+		for _, f := range res.Findings.All() {
+			if f.Origin == finding.OriginCheck && MatchesTarget(f, d) {
+				t.Errorf("%s is marked caught_by: none, but %s already measures it at %s\n"+
+					"    (%s)\n"+
+					"    Name that rule in caught_by and drop the agent block, or the eval "+
+					"scores a model for work the checks now do.",
+					d.ID, f.Rule, d.Where, d.Why)
+			}
+		}
+	}
+}
+
+// describe lists what a run actually produced, for a failure that needs to show
+// its work.
+func describe(findings []finding.Finding) string {
+	lines := make([]string, 0, len(findings))
+	for _, f := range findings {
+		lines = append(lines, fmt.Sprintf("  %-32s %s", f.Rule, locationOf(f)))
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
 }
 
 // Credit needs both halves: the right place and the engine's number. A model
@@ -210,5 +270,152 @@ func TestValidateRefusesAManifestThatWouldScoreNothing(t *testing.T) {
 				t.Error("Validate accepted it")
 			}
 		})
+	}
+}
+
+// A scripted model that finds one target on the first run and the other on the
+// second is the case the whole harness exists to distinguish. It is also what
+// gpt-oss-120b actually did on this fixture, three times, and the reason a
+// single run was never evidence of anything.
+func TestRepeatedRunsSeparateAModelThatAlternates(t *testing.T) {
+	m := loadFixtureManifest(t)
+	targets := m.AgentTargets()
+
+	record := func(table, column string, count int64, query string) llmtest.Turn {
+		return llmtest.Turn{Calls: []llmtest.Call{{
+			ID:   "call-" + table,
+			Name: "record_finding",
+			Input: map[string]any{
+				"rule":           "orphaned_reference",
+				"severity":       "error",
+				"table":          table,
+				"column":         column,
+				"title":          "region codes that resolve against nothing",
+				"detail":         "joining on region silently drops these rows",
+				"count_query":    query,
+				"affected_count": count,
+			},
+		}}}
+	}
+	done := llmtest.Turn{Text: "Nothing further."}
+
+	provider := llmtest.New(
+		// Run 1 finds the customers orphans and stops.
+		record("customers_csv", "region", targets[0].Agent.Count, targets[0].Agent.Query),
+		done,
+		// Run 2 finds the Q1 orphans instead.
+		record("sales_xlsx_q1", "region", targets[1].Agent.Count, targets[1].Agent.Query),
+		done,
+	)
+
+	score, err := Run(t.Context(), Options{
+		Paths:    []string{fixtureDir},
+		Manifest: m,
+		Engine:   config.Default().Engine,
+		Agent:    &agent.Options{Provider: provider, MaxSteps: 4},
+		Runs:     2,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(score.Runs) != 2 {
+		t.Fatalf("scored %d runs, want 2", len(score.Runs))
+	}
+	if got := score.MeanRecall(); got != 0.5 {
+		t.Errorf("MeanRecall = %v, want 0.5: each run found one of two", got)
+	}
+	if got := score.Coverage(); got != 1 {
+		t.Errorf("Coverage = %v, want 1: between them the runs found both", got)
+	}
+	for _, target := range score.Targets {
+		if target.Hits != 1 {
+			t.Errorf("%s was found by %d of %d runs, want 1",
+				target.Defect.ID, target.Hits, target.Runs)
+		}
+	}
+	// The deterministic half must be unaffected by the model, and identical
+	// both times.
+	if !score.Checks.Complete() || score.ChecksUnstable {
+		t.Errorf("the deterministic pass did not hold steady under the agent: %+v", score.Checks)
+	}
+}
+
+// A finding the model records that is true but not planted is reported without
+// being scored. It is not a false positive — the engine measured it — and it is
+// not a hit either.
+func TestAnUnplannedFindingIsReportedNotScored(t *testing.T) {
+	m := loadFixtureManifest(t)
+
+	provider := llmtest.New(
+		llmtest.Turn{Calls: []llmtest.Call{{
+			ID:   "call-1",
+			Name: "record_finding",
+			Input: map[string]any{
+				"rule":           "lowercase_currency",
+				"severity":       "warning",
+				"table":          "orders_csv",
+				"column":         "currency",
+				"title":          "one currency code is lowercased",
+				"detail":         "a case-sensitive join on currency will miss it",
+				"count_query":    `SELECT count(*) FROM orders_csv WHERE currency = 'gbp'`,
+				"affected_count": 1,
+			},
+		}}},
+		llmtest.Turn{Text: "Nothing further."},
+	)
+
+	score, err := Run(t.Context(), Options{
+		Paths:    []string{fixtureDir},
+		Manifest: m,
+		Engine:   config.Default().Engine,
+		Agent:    &agent.Options{Provider: provider, MaxSteps: 4},
+		Runs:     1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if score.MeanRecall() != 0 {
+		t.Errorf("MeanRecall = %v; an unplanned finding is not a target", score.MeanRecall())
+	}
+	claims := score.UnclassifiedClaims()
+	if len(claims) != 1 || claims[0].Rule != "agent.lowercase_currency" {
+		t.Fatalf("unclassified claims = %v, want the one recorded finding", claims)
+	}
+	if claims[0].Where != "orders.csv.currency" || claims[0].Count != 1 {
+		t.Errorf("claim = %+v, want orders.csv.currency measuring 1", claims[0])
+	}
+}
+
+// The scorecard renders without a model, which is the configuration CI runs.
+func TestScorecardRendersForADeterministicRun(t *testing.T) {
+	m := loadFixtureManifest(t)
+	res := runFixture(t)
+	score := Aggregate(m, []RunScore{ScoreRun(m, res.Findings.All())})
+
+	var text, jsonOut strings.Builder
+	if err := WriteText(&text, score); err != nil {
+		t.Fatalf("WriteText: %v", err)
+	}
+	if err := WriteJSON(&jsonOut, score); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+
+	for _, want := range []string{"dirty-retail", "Deterministic checks", "customers.region_orphans"} {
+		if !strings.Contains(text.String(), want) {
+			t.Errorf("the scorecard does not mention %q:\n%s", want, text.String())
+		}
+	}
+
+	var back doc
+	if err := json.Unmarshal([]byte(jsonOut.String()), &back); err != nil {
+		t.Fatalf("the JSON scorecard does not parse: %v", err)
+	}
+	if back.Checks.Found != back.Checks.Total || back.Checks.Total == 0 {
+		t.Errorf("checks = %d/%d, want everything found", back.Checks.Found, back.Checks.Total)
+	}
+	if back.Agent.Coverage != 0 || len(back.Agent.Targets) == 0 {
+		t.Errorf("agent = %+v, want targets listed and none found", back.Agent)
 	}
 }

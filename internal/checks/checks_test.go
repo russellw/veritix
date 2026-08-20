@@ -1,14 +1,10 @@
 package checks
 
 import (
-	"fmt"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/russellw/veritix/internal/config"
 	"github.com/russellw/veritix/internal/engine"
-	"github.com/russellw/veritix/internal/eval"
 	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/ingest"
 	"github.com/russellw/veritix/internal/profile"
@@ -46,82 +42,11 @@ func runChecks(t *testing.T) (*engine.Engine, *finding.Set) {
 	return e, set
 }
 
-func describe(set *finding.Set) string {
-	var lines []string
-	for _, f := range set.All() {
-		loc := f.Location.Display
-		if f.Location.Column != "" {
-			loc += "." + f.Location.Column
-		}
-		lines = append(lines, fmt.Sprintf("  %-32s %s", f.Rule, loc))
-	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n")
-}
-
-// The fixtures carry a known set of planted defects, and the manifest beside
-// them is the list. It is read rather than repeated here: `veritix eval` scores
-// a model against the same file, and two copies of a defect list would
-// eventually disagree — at which point a passing test would mean nothing.
-func TestPlantedDefectsAreAllFound(t *testing.T) {
-	_, set := runChecks(t)
-
-	m, err := eval.Load(fixtureDir)
-	if err != nil {
-		t.Fatalf("loading the manifest: %v", err)
-	}
-	score := eval.ScoreChecks(m, set.All())
-
-	for _, d := range score.Missed {
-		t.Errorf("missed %s at %s\n    (%s)", d.CaughtBy, d.Where, d.Why)
-	}
-
-	// The other half of a defect manifest: a check that fires on everything is
-	// useless, and only the clean list catches one.
-	for _, c := range score.FalsePositives {
-		t.Errorf("false positive: %s fired at %s\n    (%s)", c.Rule, c.Where, c.Why)
-	}
-
-	if !score.Complete() {
-		t.Logf("findings actually produced:\n%s", describe(set))
-	}
-	if len(score.Found) == 0 {
-		t.Fatal("the manifest scored nothing; it is probably not being read")
-	}
-}
-
-// The defects no check proposes are the agentic tier's whole reason for
-// existing, so a deterministic run must miss them. If one starts being caught
-// by a check, that is good news and the manifest has to say so — otherwise
-// `veritix eval` goes on crediting a model for restating what the checks
-// already found.
-func TestUncoveredDefectsAreNotCaughtByAnyCheck(t *testing.T) {
-	_, set := runChecks(t)
-
-	m, err := eval.Load(fixtureDir)
-	if err != nil {
-		t.Fatalf("loading the manifest: %v", err)
-	}
-	score := eval.ScoreChecks(m, set.All())
-	if len(score.Uncovered) == 0 {
-		t.Fatal("the manifest lists nothing for the agent to find")
-	}
-
-	for _, d := range score.Uncovered {
-		if d.Agent == nil {
-			continue
-		}
-		for _, f := range set.All() {
-			if f.Origin == finding.OriginCheck && eval.MatchesTarget(f, d) {
-				t.Errorf("%s is marked caught_by: none, but %s already measures it at %s\n"+
-					"    (%s)\n"+
-					"    Name that rule in caught_by and drop the agent block, or the eval "+
-					"scores a model for work the checks now do.",
-					d.ID, f.Rule, d.Where, d.Why)
-			}
-		}
-	}
-}
+// The planted-defect manifest is scored in internal/eval, against
+// testdata/dirty-retail/veritix-manifest.yaml. It moved there when it stopped
+// being a list of things checks catches: half of it is defects that source and
+// ingest are responsible for, and the same file now also scores what a model
+// finds. Its home is the package that drives the whole pipeline.
 
 // Every finding must be reproducible from its own evidence. This is the
 // property that will let agent-proposed findings into the same report as

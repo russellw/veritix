@@ -62,6 +62,11 @@ type Claim struct {
 	Rule  string
 	Where string
 	Count int64
+	// Covers names the deterministic rule already responsible for this
+	// location, when one is. A model spending its budget restating what the
+	// checks found is not wrong, but it is not doing the job the agentic tier
+	// was added for, and averaging that into "unclassified" would hide it.
+	Covers string
 }
 
 // RunScore is one audit scored against the manifest.
@@ -123,11 +128,14 @@ func ScoreRun(m *Manifest, findings []finding.Finding) RunScore {
 		if f.Origin != finding.OriginAgent || claimed[i] {
 			continue
 		}
-		r.Unclassified = append(r.Unclassified, Claim{
-			Rule:  f.Rule,
-			Where: locationOf(f),
-			Count: f.Count,
-		})
+		claim := Claim{Rule: f.Rule, Where: locationOf(f), Count: f.Count}
+		for _, d := range m.Defects {
+			if d.Deterministic() && covers(f, d.Where) {
+				claim.Covers = d.CaughtBy
+				break
+			}
+		}
+		r.Unclassified = append(r.Unclassified, claim)
 	}
 	return r
 }
@@ -161,6 +169,14 @@ type Score struct {
 	Model    string
 	Runs     []RunScore
 	Targets  []TargetScore
+	// Checks is the deterministic result, taken from the first run that
+	// completed. It is reported once because it is supposed to be the same
+	// every time.
+	Checks ChecksScore
+	// ChecksUnstable is set when it was not. That is a defect in Veritix
+	// rather than a score for the model, and it invalidates the run it appears
+	// in, so it is surfaced rather than averaged away.
+	ChecksUnstable bool
 }
 
 // MeanRecall is the average fraction of targets found per run.
@@ -194,12 +210,19 @@ func Aggregate(m *Manifest, runs []RunScore) Score {
 	s := Score{Dataset: m.Name(), Runs: runs}
 
 	counted := 0
+	first := true
 	for _, r := range runs {
-		if r.Err == "" {
-			counted++
-		}
 		if r.Trace != nil && s.Model == "" {
 			s.Provider, s.Model = r.Trace.Provider, r.Trace.Model
+		}
+		if r.Err != "" {
+			continue
+		}
+		counted++
+		if first {
+			s.Checks, first = r.Checks, false
+		} else if !sameChecks(s.Checks, r.Checks) {
+			s.ChecksUnstable = true
 		}
 	}
 
@@ -219,6 +242,25 @@ func Aggregate(m *Manifest, runs []RunScore) Score {
 		s.Targets = append(s.Targets, t)
 	}
 	return s
+}
+
+// anyRunFailed reports whether a run did not complete. A failure is always
+// worth printing, whatever else the scorecard is showing.
+func (s Score) anyRunFailed() bool {
+	for _, r := range s.Runs {
+		if r.Err != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// sameChecks reports whether two deterministic passes agreed. They are the
+// same pipeline over the same bytes, so anything but agreement is a bug.
+func sameChecks(a, b ChecksScore) bool {
+	return len(a.Found) == len(b.Found) &&
+		len(a.Missed) == len(b.Missed) &&
+		len(a.FalsePositives) == len(b.FalsePositives)
 }
 
 // UnclassifiedClaims collects every claim across runs, most frequent first.

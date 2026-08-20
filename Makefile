@@ -50,6 +50,15 @@ test:
 test-race:
 	go test -race ./...
 
+# Score the deterministic auditor against the fixture's own defect manifest.
+# It is a make target rather than a script because it takes a second and needs
+# no model: with llm.provider unset this measures the checks, which is a thing
+# CI can do on every commit. Scoring a model is the same command with --llm and
+# --runs, and that is minutes to hours — see docs/eval.md.
+.PHONY: eval
+eval: build
+	./$(BUILD_DIR)/$(BINARY) eval testdata/dirty-retail --log-level warn
+
 .PHONY: cover
 cover:
 	go test -coverprofile=coverage.out -covermode=atomic ./...

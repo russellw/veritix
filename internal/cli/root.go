@@ -75,6 +75,7 @@ func Execute(ctx context.Context) error {
 
 	root.AddCommand(
 		newAuditCmd(&e),
+		newEvalCmd(&e),
 		newServeCmd(&e),
 		newMCPCmd(&e),
 		newVersionCmd(),

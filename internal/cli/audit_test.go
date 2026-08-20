@@ -66,7 +66,10 @@ func runCmd(t *testing.T, args ...string) (string, error) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&errBuf)
 	cmd.SetArgs(args)
-	return out.String(), cmd.ExecuteContext(context.Background())
+	// Not a one-line return: Go evaluates return operands left to right, so
+	// out.String() would be read before the command had written anything.
+	err := cmd.ExecuteContext(context.Background())
+	return out.String(), err
 }
 
 // Both refusals happen before the audit does, because an audit is minutes of
