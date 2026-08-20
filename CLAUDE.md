@@ -429,6 +429,15 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   or a check firing on clean data exits non-zero unasked, because the manifest
   is not an opinion. `--min-recall` is opt-in, because a build that fails when a
   model has a bad afternoon is a build people learn to ignore.
+- **Measured, on `dirty-retail` with `qwen3:4b-instruct-2507`:** mean recall
+  17%, coverage 50% over three 14-step runs. The two figures come apart exactly
+  as designed — one run of that model reports 0% or 50% depending which one you
+  take. What separated the run that scored from the two that did not was six
+  tool calls spent on `describe_table` instead of `check_referential_integrity`;
+  one of the failures ended its budget one corrected call short of the finding
+  the success recorded. `docs/local-model.md` has the traces. A 24-step attempt
+  on the same machine could not finish a run at all, which is the opposite of
+  the lesson the 120b taught.
 - **Two fixtures measuring different things.** `dirty-retail`'s targets are both
   unresolved references, so it measures whether a model will use a tool surface
   it was not asked to use. `dirty-logistics`'s four are invisible to every check

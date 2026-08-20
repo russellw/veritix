@@ -1045,6 +1045,88 @@ RAM, a SATA SSD, and a 63GB model streaming off it. That is worth an overnight
 run. It is not worth an iteration loop, and nothing here changes the conclusion
 below.
 
+## Scored: three runs of the 4B, and why one run was never evidence
+
+Everything above is a trace read by hand. `veritix eval` scores the same runs
+against `testdata/dirty-retail/veritix-manifest.yaml` instead — see
+[eval.md](eval.md). This is the first measurement taken with it.
+
+```sh
+VERITIX_LLM_REQUEST_TIMEOUT=30m ./bin/veritix eval testdata/dirty-retail \
+    --llm openai-compatible --llm-base-url http://127.0.0.1:11434/v1 \
+    --llm-model qwen3:4b-instruct-2507-q4_K_M \
+    --llm-max-steps 14 --runs 3
+```
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| stopped | `step_budget` | `finished` | `step_budget` |
+| tool calls | 14 | 13 | 14 |
+| recorded | 0 | 1 | 0 |
+| tokens | 139,511 | 122,100 | 139,531 |
+| wall clock | 24m43s | 28m02s | 24m38s |
+| targets found | 0 of 2 | 1 of 2 | 0 of 2 |
+
+**Mean recall 17%, coverage 50%.** The deterministic half was 22 of 22 with no
+false positives, identical in all three.
+
+A single run of this model reports 0% or 50% depending on which one you took.
+Both numbers have a story attached and neither is true.
+
+### What separated run 2 from runs 1 and 3
+
+The tool histograms are the whole explanation.
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| `describe_table` | 6 | 3 | 6 |
+| `check_referential_integrity` | 2 | 6 | 3 |
+| `profile_column` | 3 | 0 | 2 |
+| `record_finding` | 0 | 1 | 0 |
+
+Runs 1 and 3 spent six of fourteen calls orienting. Run 2 spent six
+investigating. That is the same observation the 12-step runs above produced, now
+with a number on it.
+
+Three things are visible in the traces and none of them is a capability limit:
+
+- **Every run opened with two referential checks on pairs already covered** —
+  `orders_csv.customer_id → customers_csv.customer_id` and
+  `sales_xlsx_q1.order_id → orders_csv.order_id`. Both came back with the note
+  saying the deterministic pass already reports them. The note is doing its job,
+  but only after the step is spent, and the brief had already listed both.
+- **`regions_csv.region` does not exist; the column is `region_code`.** All
+  three runs guessed the wrong name and spent a call on the error. Run 2
+  corrected it and got `orphans: 2` with "no deterministic finding covers this".
+  Run 3 made the same guess and its budget ended there — *one corrected call*
+  short of the finding run 2 recorded.
+- **Run 2 then re-ran the identical check** before recording, spending a
+  fourteenth call to learn what it already knew.
+
+Run 3 is the argument for repetition in one run. It differed from a success by
+a single step, and read alone it would have been filed as a model that cannot
+do the job.
+
+### The run that measured the machine
+
+The first attempt used the script's 24-step default and is not in the table
+above, because it is not a measurement of the model. It ran 23 steps in
+**1h28m54s**, recorded nothing, and died when step 24's call passed the
+30-minute request timeout: the transcript that is re-sent every step had reached
+roughly 20k tokens, and prefilling that on four cores costs more than the
+timeout allows.
+
+The scorecard originally averaged that in as 0% recall, which measures the CPU.
+`RunScore.Scorable` now excludes runs that ended on `provider_error` or
+`canceled` from the averages — they are still printed, with their stop reason
+and their cost — while a run stopped by its own step budget still counts,
+because not rationing a budget is the model's doing.
+
+The lesson for the budget is the opposite of the one the 120b taught. There,
+more steps were needed to reach a finding. Here, **fewer steps were needed to
+reach the end of a run at all**: 14 steps completed in 25 minutes where 24
+steps could not complete at all.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,

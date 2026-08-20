@@ -114,30 +114,42 @@ excepting things from it.
 
 ## What the scorecard says
 
+This is a real run: `qwen3:4b-instruct-2507-q4_K_M` under Ollama, on a
+four-core i5-7300U with no GPU.
+
 ```
 Dataset: dirty-retail
 
 Deterministic checks
-  21 of 21 planted defects found, 0 false positives
+  22 of 22 planted defects found, 0 false positives
   2 defect(s) no check proposes; those are the agent's to find
 
-Agent  gpt-oss-120b via openai-compatible, 5 runs
-  mean recall     50%   what one audit finds
-  coverage       100%   what 5 runs find between them
-   3/5   customers.region_orphans     customers.csv.region
-   2/5   sales.region_orphans         sales.xlsx#Q1.region
-
-  Also recorded, where a check had already found it:
-    agent.negative_order_amount      orders.csv.amount     column.unexpected_negative
-
-  Recorded and not on the manifest, measured by the engine:
-    agent.lowercase_currency         orders.csv.currency   1 row(s)
+Agent  qwen3:4b-instruct-2507-q4_K_M via openai-compatible, 3 runs, 14 steps max
+  mean recall     17%   what one audit finds
+  coverage        50%   what 3 runs find between them
+   0/3   customers.region_orphans     customers.csv.region
+         four customer region codes do not appear in regions.csv: APAC,
+         the placeholders 'N/A' and '-', and 'emea' lowercased. Joining
+         customers to regions silently drops those customers from any
+         regional total.
+   1/3   sales.region_orphans         sales.xlsx#Q1.region
+         APAC and LATAM appear in the Q1 sheet's region column and in
+         neither case in regions.csv. ...
 
 Runs
-   1  1 of 2 found, 18 steps, 24 tool calls, 2 recorded, 1 refused, 257k tokens, 59m
+   1  0 of 2 found, 14 steps, 14 tool calls, 0 recorded, 139511 tokens, 24m43s (step_budget)
+   2  1 of 2 found, 14 steps, 13 tool calls, 1 recorded, 122100 tokens, 28m2s
+   3  0 of 2 found, 14 steps, 14 tool calls, 0 recorded, 139531 tokens, 24m38s (step_budget)
 ```
 
-The two lists at the bottom are the ones worth reading rather than scoring.
+**17% and 50% are the point.** A single run of this model reports either 0% or
+50% depending on which run you happened to take, and both readings would have
+been quoted as "the model finds the defect the deterministic auditor cannot" or
+"the model finds nothing". Neither is the answer. The answer is that it finds
+one of the two about a third of the time and the other one never.
+
+A scorecard can also carry two lists that are reported and not scored. This run
+produced neither; they are worth reading rather than scoring when they appear.
 
 **Already found by a check** is not a mistake and is not the job either. The
 check tools tell the model when a defect is already covered, and this line is
