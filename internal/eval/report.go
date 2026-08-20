@@ -58,7 +58,8 @@ func writeAgentText(p *printer, s Score) {
 	if s.Model == "" {
 		p.printf("\nAgent  none configured, so nothing below was in reach of this run\n")
 	} else {
-		p.printf("\nAgent  %s via %s, %s\n", s.Model, s.Provider, plural(len(s.Runs), "run"))
+		p.printf("\nAgent  %s via %s, %s%s\n",
+			s.Model, s.Provider, plural(len(s.Runs), "run"), budgets(s))
 		p.printf("  mean recall  %5.0f%%   what one audit finds\n", 100*s.MeanRecall())
 		p.printf("  coverage     %5.0f%%   what %s find between them\n",
 			100*s.Coverage(), plural(len(s.Runs), "run"))
@@ -266,6 +267,25 @@ func (p *printer) printf(format string, args ...any) {
 		return
 	}
 	_, p.err = fmt.Fprintf(p.w, format, args...)
+}
+
+// budgets names what bounded the runs.
+//
+// A score is not reproducible without it: "0.5 recall" means one thing at 24
+// steps and another at 60, and a scorecard read six months later has only what
+// it printed.
+func budgets(s Score) string {
+	for _, r := range s.Runs {
+		if r.Trace == nil {
+			continue
+		}
+		out := fmt.Sprintf(", %s max", plural(r.Trace.MaxSteps, "step"))
+		if r.Trace.TokenBudget > 0 {
+			out += fmt.Sprintf(", %d token budget", r.Trace.TokenBudget)
+		}
+		return out
+	}
+	return ""
 }
 
 // plural renders a count with its noun, because "1 runs" in a scorecard reads

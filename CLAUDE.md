@@ -626,8 +626,10 @@ loop rather than to the auditing.
   flags and `--ubatch-size` are what make the model usable. **`--llm-effort none` is silently ignored by gpt-oss**:
   harmony knows `low`/`medium`/`high` and quietly defaults anything else, at 317
   output tokens against 132, which reads as a slow model rather than a setting
-  that did not take. Size `--llm-request-timeout` above the *first* step, which
-  is nearly half the wall clock.
+  that did not take. Size the request timeout above the
+  *first* step, which is nearly half the wall clock. There is no flag for it:
+  it is `llm.request_timeout` in the config, or `VERITIX_LLM_REQUEST_TIMEOUT`,
+  which is what `scripts/local-model.sh` sets from `TIMEOUT`.
 - **Parameter count does not predict whether a model can do this job.**
   `qwen3:4b-instruct-2507` uses the check tools and records the finding
   `relate.go` misses; `qwen3.5:35b-a3b` is eight times the size and answered

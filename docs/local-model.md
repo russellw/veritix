@@ -964,8 +964,9 @@ and the same lesson: on this dialect, an effort setting that is not honored is
 indistinguishable from one that is, except in the token count.
 
 Sized wrong, this fails without recording anything. The first step is nearly
-half the wall clock, so `--llm-request-timeout` has to clear it; at the product
-default of 10 minutes, or even at 45, the run ends on `provider_error` with zero
+half the wall clock, so the request timeout has to clear it —
+`VERITIX_LLM_REQUEST_TIMEOUT`, or `llm.request_timeout` in the config, since
+there is no flag for it. At the product default of 10 minutes, or even at 45, the run ends on `provider_error` with zero
 findings while the deterministic 36 come through untouched.
 
 ### The two orphaned references are alternatives, not a set
