@@ -41,6 +41,10 @@ type Manifest struct {
 	// Clean are places a check must stay quiet. A check that fires on
 	// everything is useless, and only this half of the manifest catches one.
 	Clean []Clean `yaml:"clean"`
+	// Noise are true observations that are not defects, so the scorecard can
+	// say so instead of asking a reader to adjudicate the same claim again
+	// every run.
+	Noise []Noise `yaml:"noise"`
 }
 
 // Defect is one problem placed on purpose.
@@ -103,6 +107,34 @@ type Clean struct {
 	Where string `yaml:"where"`
 	// Why explains why this location is clean.
 	Why string `yaml:"why"`
+}
+
+// Noise is something a model can truthfully report that nobody should act on.
+//
+// Clean entries police the checks, whose rule names Veritix chose. They cannot
+// police an agent claim: the rule slug is model-authored prose, and two runs
+// word the same observation two ways -- gpt-oss-120b called the same thing
+// inconsistent_status_length once and mixed_status_format the next time. So a
+// noise entry is keyed the way a target is keyed, on the engine's number at a
+// location, which is the one part of a claim the model does not write.
+//
+// It labels, and deliberately does not penalize. Scoring a model down for
+// noticing something true would be grading its judgment through its wording,
+// which is the thing MatchesTarget exists to avoid. A claim that matches a
+// noise entry has already failed to match every target, so this can never
+// absolve a real hit.
+type Noise struct {
+	// Where is the location, in the same form as Defect.Where.
+	Where string `yaml:"where"`
+	// Count is the figure the engine returns for it.
+	Count int64 `yaml:"count"`
+	// Why explains why this is not a defect.
+	Why string `yaml:"why"`
+}
+
+// Explains reports whether a claim is this known non-defect.
+func (n Noise) Explains(where string, count int64) bool {
+	return n.Where == where && n.Count == count
 }
 
 // Measures reports whether a figure is a true measurement of this defect.
@@ -216,6 +248,36 @@ func (m *Manifest) Validate() error {
 		}
 		if c.Why == "" {
 			return fmt.Errorf("%s does not say why that location is clean", where)
+		}
+	}
+
+	for i, n := range m.Noise {
+		where := fmt.Sprintf("noise entry %d", i+1)
+		if n.Where == "" {
+			return fmt.Errorf("%s needs a where", where)
+		}
+		// A claim measuring nothing does not exist: record_finding refuses a
+		// count of zero. An entry keyed on one would match nothing forever.
+		if n.Count <= 0 {
+			return fmt.Errorf(
+				"%s needs the count the engine returns for it, which is what identifies a "+
+					"claim whose rule name the model wrote", where)
+		}
+		if n.Why == "" {
+			return fmt.Errorf("%s does not say why that is not a defect", where)
+		}
+		// A noise entry keyed the same way a target is keyed can be written to
+		// describe the target, and then the fixture contains a line saying its
+		// own planted defect is nothing to worry about. A target is matched
+		// first and so would still be credited, which is worse: the manifest
+		// would be wrong and nothing would fail. This is the same collision
+		// `equivalent:` produced the first time it was reached for.
+		for _, d := range m.Defects {
+			if d.Agent != nil && d.Where == n.Where && d.Agent.Measures(n.Count) {
+				return fmt.Errorf(
+					"%s says %d rows at %s are not a defect, which is exactly what target %s "+
+						"measures there", where, n.Count, n.Where, d.ID)
+			}
 		}
 	}
 	return nil

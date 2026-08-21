@@ -87,11 +87,14 @@ func writeAgentText(p *printer, s Score) {
 		p.printf("         %s\n", wrap(t.Defect.Why, 9))
 	}
 
-	var restated, novel []Claim
+	var restated, known, novel []Claim
 	for _, c := range s.UnclassifiedClaims() {
-		if c.Covers != "" {
+		switch {
+		case c.Covers != "":
 			restated = append(restated, c)
-		} else {
+		case c.Known != "":
+			known = append(known, c)
+		default:
 			novel = append(novel, c)
 		}
 	}
@@ -102,6 +105,16 @@ func writeAgentText(p *printer, s Score) {
 		p.printf("\n  Also recorded, where a check had already found it:\n")
 		for _, c := range restated {
 			p.printf("    %-32s %-28s %s\n", c.Rule, c.Where, c.Covers)
+		}
+	}
+	if len(known) > 0 {
+		// Somebody has already read this one and written the answer into the
+		// manifest, so it is here rather than in the list below, which is the
+		// list that still wants a person.
+		p.printf("\n  Recorded, and known not to be a defect:\n")
+		for _, c := range known {
+			p.printf("    %-32s %-28s %d row(s)\n", c.Rule, c.Where, c.Count)
+			p.printf("      %s\n", wrap(c.Known, 6))
 		}
 	}
 	if len(novel) > 0 {
@@ -212,6 +225,7 @@ type docClaim struct {
 	Where     string `json:"where"`
 	Count     int64  `json:"count,omitempty"`
 	CoveredBy string `json:"covered_by,omitempty"`
+	Known     string `json:"known_not_a_defect,omitempty"`
 }
 
 type docRun struct {
@@ -266,7 +280,8 @@ func document(s Score) doc {
 		}
 		for _, c := range r.Unclassified {
 			run.Unclassified = append(run.Unclassified,
-				docClaim{Rule: c.Rule, Where: c.Where, Count: c.Count, CoveredBy: c.Covers})
+				docClaim{Rule: c.Rule, Where: c.Where, Count: c.Count,
+					CoveredBy: c.Covers, Known: c.Known})
 		}
 		d.Runs = append(d.Runs, run)
 	}

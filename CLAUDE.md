@@ -445,6 +445,25 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   a kilogram column, a currency column contradicting the name of the amount
   column beside it, and a contradiction that only exists across a join. A model
   can score full marks on the first with four tool calls and zero on the second.
+- **Measured, on `dirty-logistics` with `gpt-oss-120b`:** mean recall 42%,
+  coverage 75% over three runs, checks 9 of 9 with no false positives. The four
+  targets land at four different rates (3/3, 1/3, 1/3, 0/3), which is what a
+  fixture with more than one target in reach at once buys. **No run was stopped
+  by a budget** — all three finished voluntarily at 10-12 steps of 24 — so on
+  this model the ceiling is the stop decision, not the step count, which is the
+  opposite of every earlier local measurement here. What separated the 3/4 run
+  from the two 1/4 runs was one tool call: both losers opened with
+  `sample_values` on an enum column, read the differing shape lengths as a
+  formatting defect, and spent three steps proving something true that is not a
+  defect. `docs/local-model.md` has the call sequences.
+- **`noise:` is the manifest's answer to a claim somebody has already
+  adjudicated.** `clean:` polices the checks, whose rule names Veritix chose; it
+  cannot police an agent claim, because the rule slug is the half the model
+  writes and two runs worded the same observation two ways. A noise entry is
+  keyed the way a target is keyed — the engine's number at a location — and it
+  labels rather than penalizes: marking a model down for noticing something true
+  would grade its judgment through its wording. `Validate` refuses one that
+  measures a target's count at a target's location.
 
 ## Conventions
 
@@ -709,9 +728,10 @@ loop rather than to the auditing.
 
 `testdata/dirty-retail/` and `testdata/dirty-logistics/` carry deliberately
 broken files, and each one's `veritix-manifest.yaml` is the list: every planted
-defect with the check that must catch it, and a companion list of places the
-data is clean that must stay quiet — a check that fires on everything is
-useless. The manifest is one file, read by `internal/eval`'s tests and by
+defect with the check that must catch it, a companion list of places the data is
+clean that must stay quiet — a check that fires on everything is useless — and a
+`noise:` list of true observations that are not defects, so a claim a person has
+already ruled on is labeled rather than re-adjudicated every run. The manifest is one file, read by `internal/eval`'s tests and by
 `veritix eval` alike; a second copy of a defect list disagrees with the first
 eventually, and then a passing test means nothing. Add to both halves when
 adding a check, and add a new fixture to `scoredFixtures` in `eval_test.go`,

@@ -1127,6 +1127,107 @@ more steps were needed to reach a finding. Here, **fewer steps were needed to
 reach the end of a run at all**: 14 steps completed in 25 minutes where 24
 steps could not complete at all.
 
+## Scored: three runs of the 120b on the second fixture
+
+`dirty-logistics` was built for the case `dirty-retail` cannot measure — four
+targets that no check tool can reach, each needing a hypothesis about what two
+columns are supposed to mean to each other. Until now its difficulty was
+asserted rather than measured. This is the measurement, and it is the first
+score taken on the model that does the interesting half of the job.
+
+```sh
+VERITIX_LLM_REQUEST_TIMEOUT=60m ./bin/veritix eval testdata/dirty-logistics \
+    --llm openai-compatible --llm-base-url http://127.0.0.1:11500/v1 \
+    --llm-model gpt-oss-120b --llm-effort low --llm-max-steps 24 --runs 3
+```
+
+**Mean recall 42%, coverage 75%**, over 3h38m. The deterministic half was 9 of
+9 with no false positives, identical in all three.
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| stopped | `finished` | `finished` | `finished` |
+| steps | 12 of 24 | 10 of 24 | 10 of 24 |
+| recorded | 2 | 3 | 2 |
+| tokens | 140,161 | 110,995 | 113,996 |
+| wall clock | 1h28m | 1h08m | 1h02m |
+| targets found | 1 of 4 | 3 of 4 | 1 of 4 |
+
+| target | hits |
+|---|---|
+| `shipments.weight_in_grams` | 3/3 |
+| `shipments.delivered_before_dispatch` | 1/3 |
+| `invoices.currency_contradicts_column` | 1/3 |
+| `invoices.issued_before_dispatch` | 0/3 |
+
+Two things are worth more than the headline.
+
+**No run was stopped by anything.** All three ended on `finished`, at 10 to 12
+steps of a 24-step budget, with the request timeout never approached. Every
+earlier local-model measurement here was bounded — by steps, by the timeout, by
+the machine. This one was bounded by the model deciding it was done, twice while
+sitting on three quarters of a fixture it had the tools for. The budget is not
+the lever on this model; the stop decision is.
+
+**The four targets came apart into four different rates**, which is what a
+fixture with more than one target in reach at once buys you. `dirty-retail` has
+one reachable target per column and could never separate "found the defects"
+from "found *a* defect and stopped".
+
+### What separated run 2, and it is one tool call
+
+The call sequences are almost the same for six steps and then fork completely.
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| `check_referential_integrity` | 3 | 2 | 2 |
+| `sample_values` | 3 | 0 | 1 |
+| `run_sql` | 3 | 4 | 4 |
+| `record_finding` | 2 | 3 | 2 |
+
+Every run opens the same way: two referential checks on `carrier_code` and
+`origin_site`, both of which the manifest lists as *clean* and neither of which
+is an agent target. Run 1 spent a third on `dest_site`, which is a planted
+defect the deterministic pass already reports. That is the same opening the 4B
+made on `dirty-retail` — the checks the brief has already answered — and the
+note on the tool result still arrives only after the step is spent.
+
+Then:
+
+- **Runs 1 and 3 called `sample_values` on `shipments.status`.** Under the
+  default policy that returns *shapes*, and an enum of `delivered`,
+  `in_transit` and `returned` comes back as shapes of three different lengths.
+  Both runs read that as a formatting defect and spent their next two or three
+  calls proving it: `WHERE status LIKE '%\_%'`, `WHERE length(status) != 9`.
+  Both recorded it. It is true and it is not a defect.
+- **Run 2 never called `sample_values` at all.** It went straight from the
+  profile in the brief to hypotheses about what the columns mean to each other
+  — "find invoices not in USD" at step 3, recorded at step 4; "delivered before
+  dispatched" at step 6 — and got three of the four.
+
+That is a new failure mode and the sharpest one yet: **a shaped sample of an
+enum column looks exactly like a formatting problem**. The existing gotcha is
+that models read shapes as contents; this is a model reading a shape
+*distribution* as a defect. Nothing is wrong with the tool result — the delimited
+shapes did their job — but for a low-cardinality text column, what the shapes
+show is the vocabulary, not a fault in it.
+
+The manifest now says so, in a `noise:` entry keyed on the engine's count rather
+than on the model's rule name, since the two runs worded the same observation as
+`inconsistent_status_length` and `mixed_status_format`. See
+[eval.md](eval.md). The scorecard labels the claim instead of asking a reader to
+adjudicate it again on every run, and does not score the model down for it:
+noticing something true is not a mistake.
+
+### The one nothing found
+
+`invoices.issued_before_dispatch` is 0 for 3, and no run attempted it. Run 2 ran
+"delivered before dispatched" *within* `shipments`, which is the same shape of
+reasoning one join short. The defect only exists across `invoices` joined to
+`shipments`, and no run wrote a join at all in thirty-one tool calls. Whatever
+prompts a model to compare two columns of one row does not extend to comparing
+two tables.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,

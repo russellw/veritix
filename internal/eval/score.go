@@ -67,6 +67,9 @@ type Claim struct {
 	// checks found is not wrong, but it is not doing the job the agentic tier
 	// was added for, and averaging that into "unclassified" would hide it.
 	Covers string
+	// Known is a manifest noise entry's reason, when the claim is one somebody
+	// has already adjudicated. It explains the claim; it does not grade it.
+	Known string
 }
 
 // RunScore is one audit scored against the manifest.
@@ -157,6 +160,12 @@ func ScoreRun(m *Manifest, findings []finding.Finding) RunScore {
 		for _, d := range m.Defects {
 			if d.Deterministic() && covers(f, d.Where) {
 				claim.Covers = d.CaughtBy
+				break
+			}
+		}
+		for _, n := range m.Noise {
+			if n.Explains(claim.Where, claim.Count) {
+				claim.Known = n.Why
 				break
 			}
 		}

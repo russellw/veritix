@@ -320,6 +320,16 @@ func TestValidateRefusesAManifestThatWouldScoreNothing(t *testing.T) {
 		{"a clean entry with no reason", Manifest{Version: 1,
 			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "r"}},
 			Clean:   []Clean{{Rule: "r", Where: "t.csv"}}}},
+		{"a noise entry with no count", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "r"}},
+			Noise:   []Noise{{Where: "t.csv", Why: "the enum"}}}},
+		{"a noise entry with no reason", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "r"}},
+			Noise:   []Noise{{Where: "t.csv", Count: 4}}}},
+		{"a noise entry describing a target", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "none",
+				Agent: &AgentTarget{Count: 4, Query: "SELECT 4"}}},
+			Noise: []Noise{{Where: "t.csv", Count: 4, Why: "nothing to see here"}}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -442,6 +452,61 @@ func TestAnUnplannedFindingIsReportedNotScored(t *testing.T) {
 	}
 	if claims[0].Where != "orders.csv.currency" || claims[0].Count != 1 {
 		t.Errorf("claim = %+v, want orders.csv.currency measuring 1", claims[0])
+	}
+}
+
+// A claim somebody has already adjudicated is labeled with the answer instead
+// of appearing, run after run, as something still to look into. It is keyed on
+// the engine's count rather than on the rule name, because the rule name is the
+// part the model wrote: gpt-oss-120b reported the same observation about
+// dirty-logistics as inconsistent_status_length and then as mixed_status_format.
+func TestAKnownNonDefectIsLabeledAndNotGraded(t *testing.T) {
+	m := &Manifest{
+		Version: 1,
+		Dataset: "synthetic",
+		Defects: []Defect{
+			{ID: "a", Where: "t.csv.x", Why: "x", CaughtBy: "none",
+				Agent: &AgentTarget{Count: 3, Query: "SELECT 3"}},
+		},
+		Noise: []Noise{{Where: "t.csv", Count: 4, Why: "the status enum, not a defect"}},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	claim := func(rule string) finding.Finding {
+		return finding.Finding{
+			Rule: rule, Origin: finding.OriginAgent, Count: 4,
+			Location: finding.Location{Display: "t.csv"},
+		}
+	}
+	// The two wordings the model actually used, which must land the same way.
+	for _, rule := range []string{"agent.inconsistent_status_length", "agent.mixed_status_format"} {
+		t.Run(rule, func(t *testing.T) {
+			score := ScoreRun(m, []finding.Finding{claim(rule)})
+			if len(score.Unclassified) != 1 {
+				t.Fatalf("unclassified = %v, want the one claim", score.Unclassified)
+			}
+			if got := score.Unclassified[0].Known; got != m.Noise[0].Why {
+				t.Errorf("Known = %q, want the manifest's reason", got)
+			}
+			// Labeling is not grading: the model is not paid for it and not
+			// charged for it either.
+			if score.Recall() != 0 {
+				t.Errorf("Recall = %v; a known non-defect is not a target", score.Recall())
+			}
+			if len(score.Missed) != 1 {
+				t.Errorf("missed = %v; the real target is still missed", score.Missed)
+			}
+		})
+	}
+
+	// The same wording measuring something else is still an open question.
+	other := claim("agent.mixed_status_format")
+	other.Count = 7
+	score := ScoreRun(m, []finding.Finding{other})
+	if score.Unclassified[0].Known != "" {
+		t.Errorf("a different measurement was absolved by the noise entry: %+v", score.Unclassified[0])
 	}
 }
 

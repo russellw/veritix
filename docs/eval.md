@@ -162,6 +162,34 @@ are real statements about the data; nobody planted them. Whether that makes one
 a defect the manifest should gain or a model calling something trivial a
 problem is a judgment, so the scorecard shows them and declines to grade them.
 
+**Known not to be a defect** is that judgment, once somebody has made it,
+written into the manifest so it does not have to be made again on every run:
+
+```yaml
+noise:
+  - where: shipments.csv
+    count: 4
+    why: >-
+      status mixes in_transit with delivered and returned, so four rows differ
+      in length and shape from the rest. That is the enum, not a formatting
+      defect.
+```
+
+A `noise` entry is keyed the way a target is keyed — the engine's number at a
+location — and for the same reason. It cannot be keyed on the rule name,
+because that is the half of a claim the model writes: `gpt-oss-120b` reported
+this one as `inconsistent_status_length` on one run and `mixed_status_format`
+on another, and a `clean` entry naming either would have matched one run and
+missed the other. `clean` polices the *checks*, whose rule names Veritix chose,
+and cannot be stretched to cover an agent claim.
+
+It labels and does not penalize. Marking a model down for noticing something
+true would be grading its judgment through its wording, which is what credit by
+location-and-count exists to avoid. It also cannot absolve a real hit: a claim
+only reaches this list after failing to match every target, and `Validate`
+refuses a noise entry that measures a target's count at a target's location —
+the same collision `equivalent:` produced the first time it was reached for.
+
 ## The gate
 
 A missed planted defect or a check firing on clean data exits non-zero without
@@ -210,6 +238,17 @@ Each needs the model to read the profile, form a hypothesis about what the
 columns are supposed to mean to each other, and write the SQL that would settle
 it. A model can score full marks on `dirty-retail` with four tool calls and
 score zero here.
+
+Measured, three runs of `gpt-oss-120b`: **mean recall 42%, coverage 75%**, with
+the four targets landing at four different rates — `weight_in_grams` 3/3,
+`delivered_before_dispatch` and `currency_contradicts_column` 1/3 each, and
+`issued_before_dispatch`, the one that only exists across a join, 0/3. That
+spread is what more than one target in reach at once buys: `dirty-retail` has
+one reachable target per column, so it can report a fraction but never say which
+kind of reasoning a model has and which it lacks. No run was stopped by a
+budget — all three finished voluntarily at 10 to 12 steps of 24 — so on this
+model the ceiling is the stop decision, not the step count.
+`docs/local-model.md` has the call sequences.
 
 Its deterministic half is worth having too. `relate.go` proposes
 `shipments.dest_site → sites.site_code` on its own, from a naming convention

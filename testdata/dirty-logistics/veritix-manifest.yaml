@@ -174,3 +174,16 @@ clean:
   - rule: table.unreadable_rows
     where: invoices.csv
     why: every row has the right number of fields
+
+# True observations that are not defects. A model reporting one of these has
+# not made a mistake and is not scored down for it; the entry is here so that
+# the same claim does not have to be adjudicated again on every run.
+noise:
+  - where: shipments.csv
+    count: 4
+    why: >-
+      status mixes in_transit with delivered and returned, so four rows differ
+      in length and shape from the rest. That is the enum, not a formatting
+      defect. Two of three gpt-oss-120b runs recorded it, wording it two
+      different ways, which is why this is keyed on the engine's count rather
+      than on a rule name.
