@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/russellw/veritix/internal/config"
 	"github.com/russellw/veritix/internal/engine"
 	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/rules"
 )
 
 const fixtureDir = "../../testdata/dirty-retail"
@@ -600,4 +602,80 @@ func TestARunThatSpentItsStepBudgetIsScored(t *testing.T) {
 	if s.MeanRecall() != 0 {
 		t.Errorf("MeanRecall = %v, want 0", s.MeanRecall())
 	}
+}
+
+// TestAnAcceptedRuleConvertsAnAgentTarget is the rule-proposal loop measured
+// rather than asserted.
+//
+// dirty-logistics has four targets no check tool can measure, and gpt-oss-120b
+// scored 42% mean recall against 75% coverage on them: the whole of that gap is
+// defects found on one run of three. The claim propose_rule makes is that one
+// accepted rule closes the gap for its own target permanently, and the eval is
+// the instrument that has to be able to read that — otherwise the milestone is
+// a story about a number nothing measures.
+//
+// So: audit with no model at all, with the rule a reviewer would have accepted
+// for shipments.delivered_before_dispatch, and require the scorecard to say
+// that target is now covered without one.
+func TestAnAcceptedRuleConvertsAnAgentTarget(t *testing.T) {
+	const dir = "../../testdata/dirty-logistics"
+	const target = "shipments.delivered_before_dispatch"
+
+	m := loadManifest(t, dir)
+
+	// Exactly what propose_rule produces for a contradiction between two
+	// columns: expect: sql, with the WHERE clause that selects the wrong rows.
+	accepted := &rules.File{Version: 1, Rules: []rules.Rule{{
+		ID:          "delivered_after_dispatch",
+		Description: "a shipment cannot be delivered before it was dispatched",
+		Table:       "shipments_csv",
+		Expect:      rules.ExpectSQL,
+		Where:       "TRY_CAST(delivered_at AS DATE) < TRY_CAST(dispatched_at AS DATE)",
+	}}}
+
+	// No agent. That is the point: the defect was the model's to find, and
+	// from here on it is not.
+	res, err := audit.Run(t.Context(), audit.Options{
+		Paths:  []string{dir},
+		Engine: config.Default().Engine,
+		Rules:  accepted,
+	}, nil)
+	if err != nil {
+		t.Fatalf("auditing with the accepted rule: %v", err)
+	}
+	defer res.Close() //nolint:errcheck // nothing is written back
+
+	score := ScoreChecks(m, res.Findings.All())
+
+	if !slices.Contains(score.Converted, target) {
+		t.Errorf("%s is not reported as converted; converted = %v, uncovered = %v",
+			target, score.Converted, ids(score.Uncovered))
+	}
+	for _, d := range score.Uncovered {
+		if d.ID == target {
+			t.Errorf("%s is still listed as the agent's to find after the rule was accepted", target)
+		}
+	}
+
+	// The other three stay the agent's. A rule that converted targets it does
+	// not measure would be the scorecard flattering itself.
+	if len(score.Uncovered) != len(m.AgentTargets())-1 {
+		t.Errorf("accepting one rule converted %d targets, want 1",
+			len(m.AgentTargets())-len(score.Uncovered))
+	}
+
+	// And the run without that rule must not report it converted, or the test
+	// above passes for a reason that has nothing to do with the rule.
+	bare := ScoreChecks(m, runFixture(t, dir).Findings.All())
+	if len(bare.Converted) != 0 {
+		t.Errorf("with no rules loaded, %v is reported as converted", bare.Converted)
+	}
+}
+
+func ids(ds []Defect) []string {
+	out := make([]string, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, d.ID)
+	}
+	return out
 }

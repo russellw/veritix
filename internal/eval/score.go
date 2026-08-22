@@ -20,6 +20,17 @@ type ChecksScore struct {
 	// counted: they are not failures of the deterministic pass, they are the
 	// reason the agentic tier exists.
 	Uncovered []Defect
+	// Converted are agent targets an accepted rule now measures, so the
+	// deterministic pass finds them and no model is needed.
+	//
+	// They are kept apart from Found, which credits a built-in check named in
+	// the manifest, and apart from the model's recall, which stays
+	// agent-origin only. Folding either way would lose the fact worth
+	// reporting: a target here was the agent's to find and is not any more,
+	// because somebody accepted a rule. That is the whole return on paying a
+	// model to audit data — once per class of defect rather than once per
+	// audit — and it is invisible in every other number on the scorecard.
+	Converted []string
 }
 
 // Complete reports whether the checks did everything the manifest asks of them.
@@ -33,6 +44,15 @@ func ScoreChecks(m *Manifest, findings []finding.Finding) ChecksScore {
 	var s ChecksScore
 	for _, d := range m.Defects {
 		if !d.Deterministic() {
+			// A rule the customer accepted may now measure what no built-in
+			// check proposes. MatchesTarget is the same definition of "found
+			// it" the model is scored on, deliberately: a rule that lands at
+			// the target's location with the engine's number has done the
+			// job, whatever it happens to be called.
+			if hasOriginAt(findings, finding.OriginRule, d) {
+				s.Converted = append(s.Converted, d.ID)
+				continue
+			}
 			s.Uncovered = append(s.Uncovered, d)
 			continue
 		}
@@ -341,6 +361,16 @@ func (s Score) UnclassifiedClaims() []Claim {
 		return out[i].Rule < out[j].Rule
 	})
 	return out
+}
+
+// hasOriginAt reports whether a finding from one origin measures this target.
+func hasOriginAt(findings []finding.Finding, origin finding.Origin, d Defect) bool {
+	for _, f := range findings {
+		if f.Origin == origin && MatchesTarget(f, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // MatchesTarget reports whether a finding measures a manifest target,

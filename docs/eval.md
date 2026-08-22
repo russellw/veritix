@@ -45,6 +45,46 @@ Half and half is a model that finds some defects and misses others. Half and
 all is a model that finds a different one each time. They are different
 products and they share a mean.
 
+## Measuring what an accepted rule bought
+
+The two numbers above are the argument for `propose_rule`, and until M6b
+nothing could check that the argument paid off. `--rules` is that check:
+
+```sh
+./bin/veritix eval testdata/dirty-logistics --rules accepted.yaml
+```
+
+```
+Deterministic checks
+  9 of 9 planted defects found, 0 false positives
+  3 defect(s) no check proposes; those are the agent's to find
+  1 of those now caught by an accepted rule, with no model: shipments.delivered_before_dispatch
+```
+
+That line is the only figure on the scorecard that shows the return on paying
+a model to audit data. A target listed there was the agent's to find on every
+run, at the price of a model each time, and now is not — once per class of
+defect rather than once per audit.
+
+**It is reported apart from recall, and that separation is the point.** Mean
+recall stays agent-origin only: it is a measurement of the model, and folding
+in a rule somebody accepted last month would make a model look better every
+time a human did some work. `MatchesTarget` is the same definition of "found
+it" either way — the engine's number at the manifest's location — because a
+rule that lands there has done the job whatever it is called.
+
+The target also stays in the agent's list, marked. It is still scored against
+the model, because the model's number has to keep meaning what it means; it is
+no longer a hole in the product, and a list that did not say so would read as
+one.
+
+`TestAnAcceptedRuleConvertsAnAgentTarget` pins the whole of it against
+`dirty-logistics`: no model at all, the rule a reviewer would have accepted for
+`delivered_before_dispatch`, and the scorecard reporting exactly that one
+target converted and the other three still open.
+
+[rules-proposal.md](rules-proposal.md) is the loop this measures.
+
 ## The manifest
 
 Ground truth lives beside the data, as `veritix-manifest.yaml` in the dataset

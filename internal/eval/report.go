@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,6 +49,14 @@ func writeChecksText(p *printer, s Score) {
 		p.printf("  %d defect(s) no check proposes; those are the agent's to find\n",
 			len(c.Uncovered))
 	}
+	// Reported here rather than among the agent's numbers, and reported at
+	// all because it is the only figure that shows what accepting a proposal
+	// bought. A target listed here was the agent's to find on every run, at
+	// the price of a model each time, and now is not.
+	if len(c.Converted) > 0 {
+		p.printf("  %d of those now caught by an accepted rule, with no model: %s\n",
+			len(c.Converted), strings.Join(c.Converted, ", "))
+	}
 }
 
 func writeAgentText(p *printer, s Score) {
@@ -83,7 +92,15 @@ func writeAgentText(p *printer, s Score) {
 		if s.Model != "" {
 			hits = fmt.Sprintf("%2d/%-2d ", t.Hits, t.Runs)
 		}
-		p.printf("  %s %-28s %s\n", hits, t.Defect.ID, t.Defect.Where)
+		// A target an accepted rule now measures is still scored against the
+		// model — the model's recall has to stay a measurement of the model —
+		// but it is not still a hole in the product, and a list that did not
+		// say so would read as one.
+		note := ""
+		if slices.Contains(s.Checks.Converted, t.Defect.ID) {
+			note = "   (a rule covers this now)"
+		}
+		p.printf("  %s %-28s %s%s\n", hits, t.Defect.ID, t.Defect.Where, note)
 		p.printf("         %s\n", wrap(t.Defect.Why, 9))
 	}
 
@@ -200,6 +217,7 @@ type docChecks struct {
 	Missed         []string   `json:"missed"`
 	FalsePositives []docClaim `json:"false_positives"`
 	Uncovered      int        `json:"uncovered"`
+	Converted      []string   `json:"converted_by_rules,omitempty"`
 	Unstable       bool       `json:"unstable,omitempty"`
 }
 
@@ -245,6 +263,7 @@ func document(s Score) doc {
 		Found:     len(s.Checks.Found),
 		Total:     len(s.Checks.Found) + len(s.Checks.Missed),
 		Uncovered: len(s.Checks.Uncovered),
+		Converted: s.Checks.Converted,
 		Unstable:  s.ChecksUnstable,
 		Missed:    make([]string, 0, len(s.Checks.Missed)),
 	}

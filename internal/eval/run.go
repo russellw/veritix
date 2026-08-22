@@ -10,6 +10,7 @@ import (
 	"github.com/russellw/veritix/internal/audit"
 	"github.com/russellw/veritix/internal/config"
 	"github.com/russellw/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/rules"
 )
 
 // Options controls an evaluation.
@@ -22,6 +23,16 @@ type Options struct {
 	Engine config.Engine
 	// Profile controls the depth of profiling.
 	Profile profile.Options
+	// Rules are expectations to apply before scoring — in practice, rules
+	// accepted from an earlier run's proposals.
+	//
+	// This is what makes the rule-proposal loop measurable rather than merely
+	// plausible. A model finds a defect on one run in three; a rule accepted
+	// from that run finds it on every run, with no model. Scoring an audit
+	// with those rules loaded is the only way to see the conversion, and the
+	// scorecard reports it separately from what the model found so that an
+	// accepted rule can never be mistaken for the model earning its keep.
+	Rules *rules.File
 	// Agent is the model under evaluation. Nil scores the deterministic
 	// auditor alone, which is a useful thing to measure and the only thing CI
 	// can measure without a model.
@@ -105,6 +116,7 @@ func evalOnce(ctx context.Context, opts Options, log *slog.Logger) RunScore {
 		Paths:   opts.Paths,
 		Engine:  opts.Engine,
 		Profile: opts.Profile,
+		Rules:   opts.Rules,
 		Agent:   opts.Agent,
 	}, log)
 	if err != nil {

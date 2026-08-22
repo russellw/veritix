@@ -9,11 +9,13 @@ import (
 	"github.com/russellw/veritix/internal/agent"
 	"github.com/russellw/veritix/internal/eval"
 	"github.com/russellw/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/rules"
 )
 
 // evalOptions holds the flags for `veritix eval`.
 type evalOptions struct {
 	manifest  string
+	rulesPath string
 	runs      int
 	format    string
 	output    string
@@ -42,7 +44,10 @@ func newEvalCmd(e *env) *cobra.Command {
 			"Two numbers come out and they are not the same number. Mean recall is\n" +
 			"what one audit finds. Coverage is what the runs find between them. A\n" +
 			"model scoring half and half is finding some defects and missing\n" +
-			"others; one scoring half and all is finding a different one each time.",
+			"others; one scoring half and all is finding a different one each time.\n\n" +
+			"--rules is how the other half is measured: load the rules accepted\n" +
+			"from an earlier run's proposals and the scorecard reports which of the\n" +
+			"agent's targets the deterministic pass now catches on its own.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEval(cmd, e, opts, args)
@@ -50,6 +55,8 @@ func newEvalCmd(e *env) *cobra.Command {
 	}
 
 	f := cmd.Flags()
+	f.StringVar(&opts.rulesPath, "rules", "",
+		"apply these rules before scoring, to measure what accepting a proposal bought")
 	f.StringVar(&opts.manifest, "manifest", "",
 		"the defect manifest to score against (default: "+eval.FileName+" in the dataset directory)")
 	f.IntVar(&opts.runs, "runs", 1, "how many times to audit the dataset")
@@ -130,11 +137,19 @@ func runEval(cmd *cobra.Command, e *env, opts evalOptions, paths []string) error
 	}
 	defer closeOut()
 
+	var ruleFile *rules.File
+	if opts.rulesPath != "" {
+		if ruleFile, err = rules.Load(opts.rulesPath); err != nil {
+			return err
+		}
+	}
+
 	score, err := eval.Run(cmd.Context(), eval.Options{
 		Paths:    paths,
 		Manifest: manifest,
 		Engine:   e.cfg.Engine,
 		Profile:  profile.Options{TopValues: 10},
+		Rules:    ruleFile,
 		Agent:    agentOpts,
 		Runs:     opts.runs,
 	}, e.log)

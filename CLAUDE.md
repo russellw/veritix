@@ -54,6 +54,7 @@ make audit          # typecheck, pnpm audit, go mod verify, govulncheck
 
 make eval                                    # score the checks against the manifest
 ./bin/veritix eval testdata/dirty-logistics --llm anthropic --runs 5
+./bin/veritix eval testdata/dirty-logistics --rules accepted.yaml  # what a rule bought
 
 ./bin/veritix audit testdata/dirty-retail --llm anthropic
 ./bin/veritix audit testdata/dirty-retail \
@@ -617,6 +618,18 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   `sample_values` on an enum column, read the differing shape lengths as a
   formatting defect, and spent three steps proving something true that is not a
   defect. `docs/local-model.md` has the call sequences.
+- **`--rules` is how the rule-proposal loop is measured rather than asserted.**
+  `propose_rule` exists to convert coverage into recall, and until M6b the
+  instrument built to read exactly that could not see it: `ScoreRun` credits
+  only agent-origin findings, so an accepted rule catching a target scored
+  zero. `ChecksScore.Converted` is that target moved out of `Uncovered` — the
+  one figure on the scorecard that shows the return on paying a model, once per
+  class of defect rather than once per audit. It is reported apart from recall
+  on purpose: mean recall stays agent-origin only, because folding in a rule a
+  person accepted last month would make a model look better every time a human
+  did some work. `MatchesTarget` is still the only definition of "found it".
+  `TestAnAcceptedRuleConvertsAnAgentTarget` pins it on `dirty-logistics` with
+  no model configured at all.
 - **`noise:` is the manifest's answer to a claim somebody has already
   adjudicated.** `clean:` polices the checks, whose rule names Veritix chose; it
   cannot police an agent claim, because the rule slug is the half the model
