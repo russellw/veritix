@@ -210,10 +210,17 @@ func (f *File) Validate() error {
 			return fmt.Errorf("%s does not say what to expect", where)
 		}
 
+		// Every message from here on has to say what to change, not only what
+		// is wrong. A person is reading their own file and can see the shape
+		// of it; a model is handed this back as a tool error with nothing else
+		// to go on, and gpt-oss-120b spent two consecutive steps re-sending an
+		// identical one_of proposal because "names none" told it there was a
+		// problem and not what the fix was.
 		needsColumn := r.Expect != ExpectSQL
 		if needsColumn && r.Column == "" {
-			return fmt.Errorf("%s expects %s, which applies to a column, but names none",
-				where, r.Expect)
+			return fmt.Errorf("%s expects %s, which applies to a column: set column to the "+
+				"column it constrains, or use expect: sql with a where clause for a rule "+
+				"about a whole row", where, r.Expect)
 		}
 
 		if r.ValuesFrom != "" {
