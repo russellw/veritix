@@ -1,0 +1,34 @@
+# What the image build does not need, and must not pick up.
+#
+# The two that matter are node_modules and web/dist. Both are built inside the
+# image from the lockfile, and copying a developer's copies in would produce an
+# image whose interface came from whatever was on their machine — the one thing
+# a reproducible build has to rule out.
+
+.git
+.github
+
+# Built here, from the lockfile, in the web stage.
+node_modules
+web/node_modules
+web/dist
+e2e/node_modules
+
+# Playwright and its browser never ship, and never enter the shipped
+# interface's dependency tree. See docs/frontend-stack.md §8.
+e2e
+
+# Local build output and experiment artifacts.
+bin/
+local-runs/
+coverage.*
+*.out
+
+# Fixtures are for tests, not for an image. They are mounted read-only when CI
+# audits one inside the container.
+testdata
+
+# Nothing in the image reads these.
+docs
+deploy/kubernetes
+*.md

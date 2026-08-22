@@ -112,6 +112,37 @@ jobs:
           path: e2e/playwright-report/
           retention-days: 7
 
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # An image that has stopped building is a deployment story that rots
+      # quietly: nobody notices until somebody needs to deploy. This also runs
+      # the Dockerfile's own assertion, which is the only thing that catches an
+      # image whose web interface silently did not make it in.
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: false
+          load: true
+          tags: veritix:ci
+
+      # A smoke test in the shipped artifact rather than in the build tree: the
+      # binary that runs here is the one a customer would run, with the
+      # interface embedded and nothing else installed alongside it.
+      - name: Check what shipped
+        run: |
+          docker run --rm veritix:ci version --json | tee /dev/stderr | grep -q '"web": true'
+
+      - name: Audit a fixture inside the image
+        run: |
+          docker run --rm -v "$PWD/testdata:/testdata:ro" veritix:ci \
+            audit /testdata/dirty-retail --format json | jq -e '.finding_summary'
+
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest

@@ -17,7 +17,11 @@ RUN corepack enable
 # The lockfile is the source of truth, as go.sum is. --frozen-lockfile means an
 # install that would rewrite it fails instead of resolving something new inside
 # a build nobody is watching.
-COPY web/package.json web/pnpm-lock.yaml web/.npmrc ./
+# pnpm-workspace.yaml is not optional here: it carries the 7-day
+# minimumReleaseAge and the empty onlyBuiltDependencies list, which are the two
+# hardening knobs that matter most. An install that silently ran without them
+# would be a weaker build that looks identical.
+COPY web/package.json web/pnpm-lock.yaml web/.npmrc web/pnpm-workspace.yaml ./
 RUN corepack pnpm install --frozen-lockfile
 
 COPY web/ ./
