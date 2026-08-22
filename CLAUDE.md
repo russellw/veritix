@@ -30,7 +30,7 @@ Everything is on `main`. M0 through M3 are done.
 | M3b | React web interface, embedded and served behind a CSP | done |
 | M4 | Agentic LLM auditor with the egress guard | done |
 | M5a | MCP server: `veritix mcp` on stdio | done |
-| M5b | MCP client: the agent pulls the customer's own context | |
+| M5b | MCP client: the agent pulls the customer's own context | fixture done |
 | M6a | The eval harness: defect manifests, `veritix eval`, a second fixture | done |
 | M6b | Rule proposal, OpenTelemetry, deployment, docs | done |
 
@@ -57,6 +57,7 @@ go run ./scripts/gen-dataset -out /var/tmp/vx-big -scale 1   # 2 GB and a manife
 ./bin/veritix eval /var/tmp/vx-big           # the same score, at that size
 ./bin/veritix eval testdata/dirty-logistics --llm anthropic --runs 5
 ./bin/veritix eval testdata/dirty-logistics --rules accepted.yaml  # what a rule bought
+./bin/veritix eval testdata/dirty-meters                     # the context fixture
 
 ./bin/veritix audit testdata/dirty-retail --llm anthropic
 ./bin/veritix audit testdata/dirty-retail \
@@ -181,6 +182,9 @@ internal/
 web/                   React + TS + Vite → dist, //go:embed-ed; embed.go
 testdata/dirty-retail/    fixtures with a known defect manifest
 testdata/dirty-logistics/ a second one, whose defects need reasoning not a tool
+testdata/dirty-meters/    a third, four of whose defects are not in the data at
+                          all: they need the customer's own documents, which
+                          sit in context/ where discovery cannot see them
 deploy/Dockerfile      three stages: the interface, the binary, distroless
 deploy/kubernetes/     a kustomize base; one replica, and egress denied
 docs/frontend-stack.md the front end's dependency and supply-chain policy
@@ -642,13 +646,55 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   the success recorded. `docs/local-model.md` has the traces. A 24-step attempt
   on the same machine could not finish a run at all, which is the opposite of
   the lesson the 120b taught.
-- **Two fixtures measuring different things.** `dirty-retail`'s targets are both
-  unresolved references, so it measures whether a model will use a tool surface
-  it was not asked to use. `dirty-logistics`'s four are invisible to every check
-  tool — a row whose two dates contradict each other, three weights in grams in
-  a kilogram column, a currency column contradicting the name of the amount
-  column beside it, and a contradiction that only exists across a join. A model
-  can score full marks on the first with four tool calls and zero on the second.
+- **Three fixtures measuring different things.** `dirty-retail`'s targets are
+  both unresolved references, so it measures whether a model will use a tool
+  surface it was not asked to use. `dirty-logistics`'s four are invisible to
+  every check tool — a row whose two dates contradict each other, three weights
+  in grams in a kilogram column, a currency column contradicting the name of the
+  amount column beside it, and a contradiction that only exists across a join. A
+  model can score full marks on the first with four tool calls and zero on the
+  second.
+- **`dirty-meters` is the instrument M5b is built against, and it exists before
+  M5b does.** Four of its six agent targets are invisible in the export and
+  become visible only when the customer's own documents are read: a status
+  vocabulary, a tariff lifecycle date, what `register_value` *means* (a
+  cumulative register, so it cannot fall), and how `site_ref` joins to `upn`
+  (the same number with a `UPN-` prefix, so the names differ, the shapes differ,
+  and `relate.go` never compares them). The documents live in
+  `testdata/dirty-meters/context/` as Markdown, which `source.Discover` does not
+  recognize, so an audit ingests four CSVs and never sees them — what reaches a
+  model is whatever fetches them.
+
+  `context:` lists the documents, `needs_context:` on a defect names the ones it
+  depends on, and the scorecard splits recall into **with context** and
+  **unaided**. The split is the whole point. The aided half alone can only go
+  up — with the documents a model may find them, without them it cannot — so it
+  answers whether fetching the context worked and says nothing about what it
+  cost. The other two targets need no document and are the control, on the same
+  runs of the same dataset: a run scoring worse on *those* with the context
+  loaded has found a regression, and without the second number that would read
+  as the aided half looking good. `TestAFixtureWithContextAlsoCarriesAControl`
+  is why a fixture with context has to have both halves. Three more rules hold
+  the fixture together: a document states the rule and never the violation, a
+  defect `caught_by` a check may not claim to need context (a check reads the
+  export and nothing else), and a document has to mention the column its target
+  names — `TestAnAidedTargetsDocumentsMentionItsColumn`, because a rewritten
+  dictionary that drops the load-bearing sentence makes every later run score
+  zero in a way that is indistinguishable from a model that did not look.
+  `ticket-4482.md` is a document no target needs, about a column that is fine,
+  so the fixture measures reading the documents against the data rather than
+  reciting them.
+
+  **Nothing has scored it yet**: 8 of 8 deterministic defects with no false
+  positives, and the aided half stays at zero until there is an MCP client.
+  That is the baseline, not a result.
+- **No two targets in one table may share a count.** `MatchesTarget` lets a
+  table-scoped finding cover any column in that table, deliberately. The price
+  is that three targets in one table all measuring 2 would credit a table-scoped
+  finding about any of them to whichever the manifest listed first, and the
+  per-target rates — the reason for repeating runs at all —  would start
+  attributing hits to the wrong defect. Found while building `dirty-meters`;
+  `dirty-logistics` predates the rule and has two targets at 2 in one table.
 - **Measured, on `dirty-logistics` with `gpt-oss-120b`:** mean recall 42%,
   coverage 75% over three runs, checks 9 of 9 with no false positives. The four
   targets land at four different rates (3/3, 1/3, 1/3, 0/3), which is what a
@@ -1058,16 +1104,19 @@ loop rather than to the auditing.
 
 ## Testing
 
-`testdata/dirty-retail/` and `testdata/dirty-logistics/` carry deliberately
-broken files, and each one's `veritix-manifest.yaml` is the list: every planted
-defect with the check that must catch it, a companion list of places the data is
-clean that must stay quiet — a check that fires on everything is useless — and a
-`noise:` list of true observations that are not defects, so a claim a person has
-already ruled on is labeled rather than re-adjudicated every run. The manifest is one file, read by `internal/eval`'s tests and by
-`veritix eval` alike; a second copy of a defect list disagrees with the first
-eventually, and then a passing test means nothing. Add to both halves when
-adding a check, and add a new fixture to `scoredFixtures` in `eval_test.go`,
-which is the only wiring a dataset needs.
+`testdata/dirty-retail/`, `testdata/dirty-logistics/` and
+`testdata/dirty-meters/` carry deliberately broken files, and each one's
+`veritix-manifest.yaml` is the list: every planted defect with the check that
+must catch it, a companion list of places the data is clean that must stay
+quiet — a check that fires on everything is useless — a `noise:` list of true
+observations that are not defects, so a claim a person has already ruled on is
+labeled rather than re-adjudicated every run, and, where a fixture has them, the
+`context:` documents some of its defects cannot be seen without. The manifest is
+one file, read by `internal/eval`'s tests and by `veritix eval` alike; a second
+copy of a defect list disagrees with the first eventually, and then a passing
+test means nothing. Add to both halves when adding a check, and add a new
+fixture to `scoredFixtures` in `eval_test.go`, which is the only wiring a
+dataset needs.
 
 `sales.xlsx` is a committed binary fixture (title rows, a hidden row, merged
 cells, `#REF!`/`#DIV/0!`, a stacked TOTAL table, a hidden sheet). It was

@@ -26,6 +26,7 @@ const fixtureDir = "../../testdata/dirty-retail"
 var scoredFixtures = []string{
 	"../../testdata/dirty-retail",
 	"../../testdata/dirty-logistics",
+	"../../testdata/dirty-meters",
 }
 
 // runFixture audits a fixture with no model configured: exactly the auditor a
@@ -332,6 +333,28 @@ func TestValidateRefusesAManifestThatWouldScoreNothing(t *testing.T) {
 			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "none",
 				Agent: &AgentTarget{Count: 4, Query: "SELECT 4"}}},
 			Noise: []Noise{{Where: "t.csv", Count: 4, Why: "nothing to see here"}}}},
+		{"a context document with no id", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "r"}},
+			Context: []Context{{File: "context/d.md", Why: "the dictionary"}}}},
+		{"a context document listed twice", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "r"}},
+			Context: []Context{
+				{ID: "d", File: "context/d.md", Why: "the dictionary"},
+				{ID: "d", File: "context/e.md", Why: "the other one"}}}},
+		{"a context document with no reason", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "r"}},
+			Context: []Context{{ID: "d", File: "context/d.md"}}}},
+		{"a context document outside the dataset", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "r"}},
+			Context: []Context{{ID: "d", File: "../../../etc/passwd", Why: "not this"}}}},
+		{"a target needing a document nothing lists", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "none",
+				NeedsContext: []string{"dictionary"},
+				Agent:        &AgentTarget{Count: 1, Query: "SELECT 1"}}}}},
+		{"a check-caught defect claiming to need context", Manifest{Version: 1,
+			Defects: []Defect{{ID: "a", Where: "t.csv", Why: "w", CaughtBy: "column.empty",
+				NeedsContext: []string{"d"}}},
+			Context: []Context{{ID: "d", File: "context/d.md", Why: "the dictionary"}}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -685,4 +708,154 @@ func ids(ds []Defect) []string {
 		out = append(out, d.ID)
 	}
 	return out
+}
+
+// A context document has to be about the column its target names.
+//
+// The failure this catches is the fixture drifting apart: a target says it is
+// invisible without the dictionary, somebody rewrites the dictionary, and the
+// sentence that made the defect visible is gone. Nothing else would notice.
+// Every run would simply score zero on that target, which is indistinguishable
+// from a model that did not look — and this whole fixture exists to tell those
+// two apart.
+func TestAnAidedTargetsDocumentsMentionItsColumn(t *testing.T) {
+	for _, dir := range scoredFixtures {
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			m := loadManifest(t, dir)
+			for _, d := range m.AgentTargets() {
+				if !d.Aided() {
+					continue
+				}
+				column := d.Where[strings.LastIndex(d.Where, ".")+1:]
+				var found bool
+				for _, id := range d.NeedsContext {
+					text, err := m.ReadContext(id)
+					if err != nil {
+						t.Errorf("%s: %v", d.ID, err)
+						continue
+					}
+					if strings.TrimSpace(text) == "" {
+						t.Errorf("%s: context document %q is empty", d.ID, id)
+					}
+					if strings.Contains(text, column) {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("%s says it needs %v, and no one of those mentions %s.\n"+
+						"    A document that does not talk about the column cannot be what\n"+
+						"    makes the defect visible, so the target would score zero for a\n"+
+						"    reason that has nothing to do with the model.",
+						d.ID, d.NeedsContext, column)
+				}
+			}
+		})
+	}
+}
+
+// A fixture that carries context has to carry a control as well.
+//
+// Recall over the aided targets alone can only go up: with the documents
+// loaded a model may find them, without the documents it cannot. That measures
+// whether fetching the context worked and says nothing about what it cost, and
+// the cost is the real risk — a transcript filling with documents is how a
+// model stops doing the work it was already doing. The unaided targets are the
+// control, and they are only a control if they are on the same fixture and the
+// same runs.
+func TestAFixtureWithContextAlsoCarriesAControl(t *testing.T) {
+	for _, dir := range scoredFixtures {
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			m := loadManifest(t, dir)
+			if len(m.Context) == 0 {
+				t.Skip("this fixture has no context documents")
+			}
+			var aided, unaided int
+			for _, d := range m.AgentTargets() {
+				if d.Aided() {
+					aided++
+				} else {
+					unaided++
+				}
+			}
+			if aided == 0 {
+				t.Error("context documents are listed and no target needs one")
+			}
+			if unaided == 0 {
+				t.Error("every agent target needs a document, so nothing measures what " +
+					"loading them costs")
+			}
+		})
+	}
+}
+
+// The split has to be computed from the same runs the overall figure is, and
+// has to come apart from it. A model that answers everything the documents
+// unlock and nothing else scores 100% aided, 0% unaided, and 50% overall --
+// and the middle number on its own would look like a model doing half the job
+// evenly.
+func TestTheContextSplitSeparatesWhatADocumentBought(t *testing.T) {
+	m := loadManifest(t, "../../testdata/dirty-meters")
+
+	var aided, unaided []string
+	for _, d := range m.AgentTargets() {
+		if d.Aided() {
+			aided = append(aided, d.ID)
+		} else {
+			unaided = append(unaided, d.ID)
+		}
+	}
+	if len(aided) == 0 || len(unaided) == 0 {
+		t.Fatalf("this test needs both halves; got %d aided and %d unaided",
+			len(aided), len(unaided))
+	}
+
+	s := Aggregate(m, []RunScore{{Detected: aided, Missed: unaided}})
+
+	if got := s.MeanRecallOf(s.Aided()); got != 1 {
+		t.Errorf("aided recall = %v, want 1", got)
+	}
+	if got := s.MeanRecallOf(s.Unaided()); got != 0 {
+		t.Errorf("unaided recall = %v, want 0", got)
+	}
+	if got, want := len(s.Aided()), len(aided); got != want {
+		t.Errorf("Aided() returned %d targets, want %d", got, want)
+	}
+	if got, want := len(s.Unaided()), len(unaided); got != want {
+		t.Errorf("Unaided() returned %d targets, want %d", got, want)
+	}
+	// The overall figure is the blend, and is exactly what would hide the two.
+	want := float64(len(aided)) / float64(len(aided)+len(unaided))
+	if got := s.MeanRecall(); got != want {
+		t.Errorf("MeanRecall = %v, want %v", got, want)
+	}
+
+	var buf strings.Builder
+	s.Model, s.Provider = "scripted", "test"
+	if err := WriteText(&buf, s); err != nil {
+		t.Fatalf("WriteText: %v", err)
+	}
+	for _, want := range []string{"with context", "unaided"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("the scorecard does not mention %q:\n%s", want, buf.String())
+		}
+	}
+}
+
+// The documents are not data. A fixture whose context leaked into the export
+// would be scoring a model on a defect it can see in a column, which is the
+// one thing these targets are supposed not to be.
+func TestContextDocumentsAreNotIngested(t *testing.T) {
+	dir := "../../testdata/dirty-meters"
+	m := loadManifest(t, dir)
+	if len(m.Context) == 0 {
+		t.Fatal("this fixture is supposed to carry context documents")
+	}
+	res := runFixture(t, dir)
+	for _, table := range res.Profile.Tables {
+		for _, c := range m.Context {
+			if strings.Contains(table.Display, filepath.Base(c.File)) {
+				t.Errorf("context document %s was ingested as table %s", c.File, table.Display)
+			}
+		}
+	}
 }

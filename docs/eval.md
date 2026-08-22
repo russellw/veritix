@@ -132,6 +132,52 @@ defect a model can score on.
 everything catches every planted defect, and only a list of places the data is
 correct will notice.
 
+### Defects that are not in the data
+
+Some defects are invisible in the export and obvious the moment somebody reads
+the customer's own documentation. `context` lists those documents and
+`needs_context` says which targets depend on them:
+
+```yaml
+context:
+  - id: data-dictionary
+    file: context/data-dictionary.md
+    why: the column definitions the customer maintains
+
+defects:
+  - id: meters.undocumented_status
+    where: meters.csv.status
+    why: >-
+      three meters are in states the dictionary does not permit. Nothing in the
+      data marks them out: they are ordinary words in a column of ordinary
+      words, and none is a case variant of a permitted value.
+    caught_by: none
+    needs_context: [data-dictionary]
+    agent:
+      count: 3
+      query: >-
+        SELECT count(*) FROM meters_csv
+        WHERE status NOT IN ('active', 'inactive', 'removed')
+```
+
+The documents live in a subdirectory of the dataset, in a form file discovery
+does not recognize, so an audit ingests the CSVs and never sees them. What
+reaches a model is whatever fetches them — which, once M5b lands, is Veritix's
+MCP client pulling from the customer's own systems.
+
+Three rules hold them together:
+
+- **A document states the rule and never the violation.** One naming the
+  offending row would be handing over the answer, and the fixture would be
+  measuring whether a model can copy an identifier out of a paragraph.
+- **`needs_context` on a defect `caught_by` a check is refused.** A check reads
+  the export and nothing else, so a defect cannot be both.
+- **A document has to mention the column its target names.**
+  `TestAnAidedTargetsDocumentsMentionItsColumn` pins it. The failure it catches
+  is the fixture drifting: somebody rewrites the dictionary, the sentence that
+  made the defect visible goes, and from then on every run scores zero on that
+  target — which looks exactly like a model that did not look.
+
 ### Two things the manifest does on purpose
 
 **Credit needs the location *and* the engine's number.** A model's rule slug
@@ -253,7 +299,7 @@ One thing is forced rather than configured: **an eval never lifts the egress
 policy**, whatever `llm.allow_sample_values` says. A score obtained by showing
 the model cell values is not a score for the product anybody ships.
 
-## The two fixtures, and why there are two
+## The three fixtures, and why there are three
 
 They measure different things on purpose.
 
@@ -295,6 +341,56 @@ Its deterministic half is worth having too. `relate.go` proposes
 that shares no word with the parent key — which is evidence the relationship
 inference generalizes past the fixture it was written against.
 
+**`testdata/dirty-meters`** is the first fixture whose defects are not all in
+the data. Four of its six agent targets are invisible in the export and become
+visible only when the customer's own context is read:
+
+| target | what makes it visible | kind of context |
+|---|---|---|
+| `meters.undocumented_status` | three meters are in states the dictionary does not permit | a vocabulary |
+| `meters.retired_tariff` | two meters were commissioned onto tariffs already closed to new meters | a lifecycle date, and there are two of them |
+| `readings.register_went_backwards` | `register_value` is a cumulative register, so it cannot fall | what a column means |
+| `meters.site_ref_orphans` | `site_ref` is the premises `upn` with a `UPN-` prefix | how two columns join |
+
+None of the four has an internal signal. `dormant` is as plausible a status as
+`active`; `STD-A` is the most common tariff in the file and still a valid one,
+because the meters already on it are still billed on it; a falling register is
+only wrong once you know the column is an odometer rather than a trip meter;
+and nothing suggests `site_ref` and `upn` are the same thing written two ways —
+the names differ, the shapes differ, and `relate.go` never compares them.
+
+The other two targets are ordinary, and that is the point. A fixture where the
+context is the only way to score anything can show that fetching it helped and
+cannot show what it cost — and a transcript filling up with documents is
+exactly how a model stops doing the work it was already doing.
+`readings.read_before_install` and `readings.register_wider_than_meter` need no
+document, so they are the control, measured on the same runs of the same
+dataset. The scorecard prints the two recalls under the overall pair — this is
+the shape of the output, not a measurement:
+
+```
+  mean recall     ..%   what one audit finds
+  coverage        ..%   what 3 runs find between them
+    with context  ..%   over 4 targets needing a document
+    unaided       ..%   over 2 targets the export alone can answer
+```
+
+**No model has been run against this fixture yet**, because nothing can fetch
+the context until M5b lands. The deterministic half is measured: 8 of 8 planted
+defects, no false positives. The aided half is expected to score zero until
+there is an MCP client, which is the baseline worth having — a number to
+improve on rather than a claim.
+
+A run that scores worse unaided with the documents loaded than without them has
+found a regression, not a feature, and without the second number that would
+have shown up as the aided half looking good.
+`TestAFixtureWithContextAlsoCarriesAControl` is why every future fixture with
+context has to carry a control too.
+
+A third document, `context/ticket-4482.md`, is a closed ticket about a column
+that is fine. No target needs it. It is there so the fixture measures reading
+the documents *against the data* rather than reciting them.
+
 ## Adding a dataset
 
 A third dataset is worth more than a third model. What one needs to be worth
@@ -320,6 +416,18 @@ scoring:
   correct models is refused credit and it looks like the model's failure.
   `TestAgentTargetCountsDoNotDependOnPhrasing` checks it, and every target in
   `dirty-logistics` has row count equal to distinct count by construction.
+  Building `dirty-meters` it caught the first draft's retired-tariff target:
+  three meters on one closed code count 3 rows and 1 distinct value. The
+  fixture was the thing that changed — a second tariff was retired, so the
+  target became two meters on two codes.
+- **No two targets in one table sharing a count.** `MatchesTarget` lets a
+  finding scoped to a whole table cover any column in it, deliberately, because
+  scoring a model's prose strictly would measure phrasing. That concession has
+  a price: three targets in one table all measuring 2 means a table-scoped
+  finding about any of them is credited to whichever the manifest listed first,
+  and the per-target rates — the whole reason for repeating runs — start
+  attributing hits to the wrong defect. `dirty-meters` keeps the counts within
+  each table distinct.
 
   Where a target genuinely admits two true figures, `equivalent: [n]` lists the
   others. Use it sparingly: it widens what counts as a match, and the first

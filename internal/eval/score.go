@@ -266,17 +266,92 @@ func (s Score) Scored() int {
 func (s Score) Unscored() int { return len(s.Runs) - s.Scored() }
 
 // Coverage is the fraction of targets found by at least one run.
-func (s Score) Coverage() float64 {
-	if len(s.Targets) == 0 {
+func (s Score) Coverage() float64 { return CoverageOf(s.Targets) }
+
+// Aided is the targets that need one of the customer's own documents to be
+// visible at all, and Unaided the rest.
+//
+// The split is the instrument M5b is built against, and it only says anything
+// because both halves are measured on the same runs of the same fixture.
+// Recall over the aided half answers whether fetching the customer's context
+// bought anything. Recall over the unaided half is the control: those targets
+// were findable before any document was loaded, so a run that scores worse on
+// them with the context turned on has found a regression — a transcript full
+// of documents crowding out the work — and without the second number that
+// would show up as the aided half looking good.
+func (s Score) Aided() []TargetScore { return s.split(true) }
+
+// Unaided is the targets the export alone is enough to find.
+func (s Score) Unaided() []TargetScore { return s.split(false) }
+
+func (s Score) split(aided bool) []TargetScore {
+	var out []TargetScore
+	for _, t := range s.Targets {
+		if t.Defect.Aided() == aided {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// CoverageOf is the fraction of a subset of targets found by at least one run.
+func CoverageOf(targets []TargetScore) float64 {
+	if len(targets) == 0 {
 		return 0
 	}
 	var hit int
-	for _, t := range s.Targets {
+	for _, t := range targets {
 		if t.Hits > 0 {
 			hit++
 		}
 	}
-	return float64(hit) / float64(len(s.Targets))
+	return float64(hit) / float64(len(targets))
+}
+
+// MeanRecallOf averages per-run recall over a subset of targets.
+//
+// It is computed from the same per-run detections the overall figure is, not
+// from the target hit rates, because the two are not the same number: a rate
+// per target says how often each defect was found, and recall says how much of
+// the set one audit can be expected to find. Averaging rates would report the
+// first and label it the second.
+func (s Score) MeanRecallOf(targets []TargetScore) float64 {
+	if len(targets) == 0 {
+		return 0
+	}
+	want := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		want[t.Defect.ID] = true
+	}
+
+	var sum float64
+	var n int
+	for _, r := range s.Runs {
+		if !r.Scorable() {
+			continue
+		}
+		var found, total int
+		for _, id := range r.Detected {
+			if want[id] {
+				found++
+				total++
+			}
+		}
+		for _, id := range r.Missed {
+			if want[id] {
+				total++
+			}
+		}
+		if total == 0 {
+			continue
+		}
+		sum += float64(found) / float64(total)
+		n++
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / float64(n)
 }
 
 // Aggregate rolls a set of run scores into a scorecard.

@@ -83,6 +83,7 @@ func writeAgentText(p *printer, s Score) {
 		p.printf("  mean recall  %5.0f%%   what one audit finds\n", 100*s.MeanRecall())
 		p.printf("  coverage     %5.0f%%   what %s find between them\n",
 			100*s.Coverage(), plural(s.Scored(), "run"))
+		writeContextSplit(p, s)
 	}
 
 	for _, t := range s.Targets {
@@ -99,6 +100,12 @@ func writeAgentText(p *printer, s Score) {
 		note := ""
 		if slices.Contains(s.Checks.Converted, t.Defect.ID) {
 			note = "   (a rule covers this now)"
+		}
+		// Which document a target needs is the first thing to look at when it
+		// scores zero: a run that never fetched that document did not fail to
+		// find this defect, it never had it in reach.
+		if t.Defect.Aided() {
+			note += "   (needs " + strings.Join(t.Defect.NeedsContext, ", ") + ")"
 		}
 		p.printf("  %s %-28s %s%s\n", hits, t.Defect.ID, t.Defect.Where, note)
 		p.printf("         %s\n", wrap(t.Defect.Why, 9))
@@ -143,6 +150,26 @@ func writeAgentText(p *printer, s Score) {
 			p.printf("    %-32s %-28s %d row(s)\n", c.Rule, c.Where, c.Count)
 		}
 	}
+}
+
+// writeContextSplit reports recall over the targets that need one of the
+// customer's own documents against recall over the targets that do not.
+//
+// It prints only for a fixture that has both halves, because only then does it
+// say anything. The aided figure alone would answer "did fetching the context
+// help" and leave the more expensive question unasked: whether the documents
+// crowded out the work the model was already doing. The unaided figure is the
+// control, and it is on the same runs of the same dataset, so the comparison
+// costs nothing beyond printing it.
+func writeContextSplit(p *printer, s Score) {
+	aided, unaided := s.Aided(), s.Unaided()
+	if len(aided) == 0 || len(unaided) == 0 {
+		return
+	}
+	p.printf("    with context  %5.0f%%   over %s needing a document\n",
+		100*s.MeanRecallOf(aided), plural(len(aided), "target"))
+	p.printf("    unaided       %5.0f%%   over %s the export alone can answer\n",
+		100*s.MeanRecallOf(unaided), plural(len(unaided), "target"))
 }
 
 func writeRunsText(p *printer, s Score) {
@@ -222,20 +249,32 @@ type docChecks struct {
 }
 
 type docAgent struct {
-	MeanRecall float64     `json:"mean_recall"`
-	Coverage   float64     `json:"coverage"`
-	Scored     int         `json:"scored_runs"`
-	Unscored   int         `json:"unscored_runs"`
-	Targets    []docTarget `json:"targets"`
+	MeanRecall float64 `json:"mean_recall"`
+	Coverage   float64 `json:"coverage"`
+	Scored     int     `json:"scored_runs"`
+	Unscored   int     `json:"unscored_runs"`
+	// Aided and Unaided split the same runs by whether the target needs one of
+	// the customer's own documents. They are omitted for a fixture that has
+	// only one kind, where the split would restate mean_recall twice.
+	Aided   *docSplit   `json:"with_context,omitempty"`
+	Unaided *docSplit   `json:"unaided,omitempty"`
+	Targets []docTarget `json:"targets"`
+}
+
+type docSplit struct {
+	Targets    int     `json:"targets"`
+	MeanRecall float64 `json:"mean_recall"`
+	Coverage   float64 `json:"coverage"`
 }
 
 type docTarget struct {
-	ID    string  `json:"id"`
-	Where string  `json:"where"`
-	Why   string  `json:"why"`
-	Hits  int     `json:"hits"`
-	Runs  int     `json:"runs"`
-	Rate  float64 `json:"rate"`
+	ID           string   `json:"id"`
+	Where        string   `json:"where"`
+	Why          string   `json:"why"`
+	NeedsContext []string `json:"needs_context,omitempty"`
+	Hits         int      `json:"hits"`
+	Runs         int      `json:"runs"`
+	Rate         float64  `json:"rate"`
 }
 
 type docClaim struct {
@@ -283,10 +322,19 @@ func document(s Score) doc {
 		Unscored:   s.Unscored(),
 		Targets:    make([]docTarget, 0, len(s.Targets)),
 	}
+	if aided, unaided := s.Aided(), s.Unaided(); len(aided) > 0 && len(unaided) > 0 {
+		d.Agent.Aided = &docSplit{
+			Targets: len(aided), MeanRecall: s.MeanRecallOf(aided), Coverage: CoverageOf(aided),
+		}
+		d.Agent.Unaided = &docSplit{
+			Targets: len(unaided), MeanRecall: s.MeanRecallOf(unaided), Coverage: CoverageOf(unaided),
+		}
+	}
 	for _, t := range s.Targets {
 		d.Agent.Targets = append(d.Agent.Targets, docTarget{
 			ID: t.Defect.ID, Where: t.Defect.Where, Why: t.Defect.Why,
-			Hits: t.Hits, Runs: t.Runs, Rate: t.Rate(),
+			NeedsContext: t.Defect.NeedsContext,
+			Hits:         t.Hits, Runs: t.Runs, Rate: t.Rate(),
 		})
 	}
 

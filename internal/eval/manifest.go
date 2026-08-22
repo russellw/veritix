@@ -45,6 +45,37 @@ type Manifest struct {
 	// say so instead of asking a reader to adjudicate the same claim again
 	// every run.
 	Noise []Noise `yaml:"noise"`
+	// Context are the customer's own documents, for a fixture whose defects
+	// are not all in the data.
+	Context []Context `yaml:"context"`
+
+	// Dir is the directory the manifest was loaded from, so a context
+	// document's relative path can be resolved. It is not part of the
+	// document.
+	Dir string `yaml:"-"`
+}
+
+// Context is one document from a customer's own systems — a data dictionary
+// page, a warehouse catalog, a ticket.
+//
+// It is not data and it is not ingested: it lives beside the dataset in a form
+// file discovery does not recognize, and it reaches a model only when
+// something fetches it. That is the whole point of listing it here. A defect
+// that is invisible in the export and obvious once the dictionary is read is
+// the case Veritix's deterministic tier cannot reach by construction, and
+// until a fixture contained one there was no way to tell an agent that uses
+// the customer's context from one that ignores it.
+//
+// A document states the rule and never the violation. One that named the
+// offending row would be handing over the answer, and the fixture would
+// measure whether a model can copy an id out of a paragraph.
+type Context struct {
+	// ID names the document, and is what a target's NeedsContext refers to.
+	ID string `yaml:"id"`
+	// File is its path relative to the manifest's own directory.
+	File string `yaml:"file"`
+	// Why says what this document carries and which targets need it.
+	Why string `yaml:"why"`
 }
 
 // Defect is one problem placed on purpose.
@@ -60,7 +91,22 @@ type Defect struct {
 	CaughtBy string `yaml:"caught_by"`
 	// Agent is set when a model is expected to find this one.
 	Agent *AgentTarget `yaml:"agent"`
+	// NeedsContext names the context documents without which this defect is
+	// invisible. Empty means the export alone is enough to find it.
+	//
+	// It is on the defect rather than on the target because it is a claim
+	// about the dataset, not about the model: these rows are indistinguishable
+	// from correct ones until something outside the export says what the
+	// column is for. Splitting the scorecard on it is what turns "context
+	// helped" from an impression into a number, and — because a fixture also
+	// carries targets that need nothing — lets the same run show whether
+	// filling the transcript with documents cost the model the ones it could
+	// already find.
+	NeedsContext []string `yaml:"needs_context"`
 }
+
+// Aided reports whether this defect needs a context document to be visible.
+func (d Defect) Aided() bool { return len(d.NeedsContext) > 0 }
 
 // AgentTarget describes what a model has to produce to be credited with a
 // defect.
@@ -181,7 +227,43 @@ func Load(path string) (*Manifest, error) {
 	if err := m.Validate(); err != nil {
 		return nil, fmt.Errorf("manifest: %s: %w", filepath.Base(path), err)
 	}
+	m.Dir = filepath.Dir(path)
+	// A context document is resolved here rather than in Validate, which does
+	// not touch the filesystem. A named file that is not there scores nothing
+	// and says nothing about it, which is the failure Validate exists to
+	// refuse everywhere else.
+	for _, c := range m.Context {
+		if _, err := os.Stat(m.ContextPath(c)); err != nil {
+			return nil, fmt.Errorf("manifest: %s: context document %q: %w",
+				filepath.Base(path), c.ID, err)
+		}
+	}
 	return &m, nil
+}
+
+// ContextPath resolves a context document against the manifest's directory.
+func (m *Manifest) ContextPath(c Context) string {
+	return filepath.Join(m.Dir, filepath.FromSlash(c.File))
+}
+
+// ReadContext returns one context document's text.
+//
+// This is what a source of the customer's context reads in a test: the
+// documents are files here because a fixture has to be committed, and whatever
+// serves them in earnest — an MCP server on the customer's own network — hands
+// back the same bytes.
+func (m *Manifest) ReadContext(id string) (string, error) {
+	for _, c := range m.Context {
+		if c.ID != id {
+			continue
+		}
+		data, err := os.ReadFile(m.ContextPath(c)) //nolint:gosec // a path out of a manifest the operator chose
+		if err != nil {
+			return "", fmt.Errorf("manifest: context document %q: %w", id, err)
+		}
+		return string(data), nil
+	}
+	return "", fmt.Errorf("manifest: no context document is called %q", id)
 }
 
 // Validate refuses a manifest that could not score anything.
@@ -192,6 +274,34 @@ func Load(path string) (*Manifest, error) {
 func (m *Manifest) Validate() error {
 	if len(m.Defects) == 0 {
 		return fmt.Errorf("no defects are listed; a manifest with nothing in it scores everything as perfect")
+	}
+
+	docs := make(map[string]bool, len(m.Context))
+	for i, c := range m.Context {
+		where := fmt.Sprintf("context entry %d", i+1)
+		if c.ID != "" {
+			where = fmt.Sprintf("context document %q", c.ID)
+		}
+		if c.ID == "" {
+			return fmt.Errorf("%s has no id, which is what a target refers to it by", where)
+		}
+		if docs[c.ID] {
+			return fmt.Errorf("%s is listed more than once", where)
+		}
+		docs[c.ID] = true
+		if c.File == "" {
+			return fmt.Errorf("%s does not say which file it is", where)
+		}
+		if filepath.IsAbs(c.File) || strings.Contains(c.File, "..") {
+			// The path is joined to the manifest's directory and read. A
+			// fixture is a committed directory, so a document outside it is a
+			// mistake rather than a threat -- but one that would read a file
+			// nobody meant to publish to a model.
+			return fmt.Errorf("%s names %q, which is outside the dataset directory", where, c.File)
+		}
+		if c.Why == "" {
+			return fmt.Errorf("%s does not say what it carries", where)
+		}
 	}
 
 	seen := make(map[string]bool, len(m.Defects))
@@ -217,6 +327,23 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf(
 				"%s does not say what catches it: name a rule, or \"none\" if no check proposes it",
 				where)
+		}
+		for _, id := range d.NeedsContext {
+			if !docs[id] {
+				return fmt.Errorf(
+					"%s needs context document %q, which the manifest does not list: "+
+						"add it under context:, or the target is marked as needing "+
+						"something nothing can supply", where, id)
+			}
+		}
+		if d.Agent == nil && d.Aided() {
+			// A deterministic check reads the export and nothing else. A
+			// defect claiming both that a check catches it and that it is
+			// invisible without a document is a contradiction, and the
+			// scorecard would report the check finding it either way.
+			return fmt.Errorf(
+				"%s says it needs the customer's context but is not an agent target: "+
+					"a check reads the export alone, so it cannot be both", where)
 		}
 		if d.Agent != nil {
 			if d.Agent.Count <= 0 {

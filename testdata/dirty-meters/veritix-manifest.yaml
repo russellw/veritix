@@ -1,0 +1,310 @@
+version: 1
+dataset: dirty-meters
+description: >-
+  A third scored fixture, and the first whose defects are not all in the data.
+
+  dirty-retail measures whether a model will use a tool surface it was not
+  asked to use. dirty-logistics measures whether it will form a hypothesis
+  about what columns mean to each other and write the SQL that settles it.
+  Both are answerable from the export alone: everything needed to know that a
+  delivery predates its dispatch is in the two columns.
+
+  Four of the six agent targets here are not answerable from the export alone.
+  Nothing inside the data distinguishes the offending rows from the rest —
+  'dormant' is as plausible a status as 'active', STD-A is the most common
+  tariff in the file, a falling register is only wrong if the column is
+  cumulative, and nothing suggests site_ref and upn are the same thing written
+  two ways. Each one becomes visible only when the customer's own context says
+  what the column is for, which is what M5b exists to fetch.
+
+  The other two are ordinary agent targets, deliberately. A fixture where
+  context is the only way to score anything can show that context helped and
+  cannot show that it hurt — and a transcript filling with documents is exactly
+  how a model stops doing the job it could already do. The unaided pair is the
+  floor to watch: a run scoring worse on those with the documents loaded than
+  without them has found a regression, not a feature.
+
+  Each target's affected row count also equals its distinct-offender count, and
+  no two targets in the same table share a count. The first is the rule the
+  other fixtures follow, so a model that counts rows and one that counts
+  distinct offenders arrive at the same number. The second is this fixture's
+  own: three targets in one table measuring 2 would let a table-scoped finding
+  about any one of them be credited to whichever the manifest listed first, and
+  the per-target rates — the whole reason for scoring repeated runs — would be
+  attributing hits to the wrong defect.
+
+# The customer's own context, as their systems would return it.
+#
+# These are documents, not data: they live in a subdirectory the file
+# discovery does not recognize, so an audit of this fixture ingests four CSVs
+# and never sees them. What reaches a model is whatever M5b's MCP client pulls
+# in, which is the thing being measured.
+#
+# Two properties they have to keep. They state the rule and never the
+# violation: a document naming MTR-0009 would be handing over the answer
+# rather than the context. And ticket-4482 is a document about a column that
+# is fine, because a model that reports what the documents say without
+# checking it against the data should score nothing for it.
+context:
+  - id: data-dictionary
+    file: context/data-dictionary.md
+    why: >-
+      the column definitions the customer maintains, which is where the status
+      vocabulary, the cumulative meaning of register_value, and the UPN prefix
+      on site_ref are written down. Three of the four aided targets need only
+      this one.
+
+  - id: warehouse-catalog
+    file: context/warehouse-catalog.md
+    why: >-
+      the tariff lifecycle, which is deliberately not in the export: tariffs.csv
+      carries the rates and not the dates, so when STD-A closed to new meters
+      exists only here.
+
+  - id: ticket-4482
+    file: context/ticket-4482.md
+    why: >-
+      a closed ticket about the source column, which is correct. No target
+      needs it. It is here so that the fixture measures reading the documents
+      against the data rather than reciting them.
+
+defects:
+  # ── the deterministic half ───────────────────────────────────────────────
+  - id: readings.duplicate_rows
+    where: readings.csv
+    why: RDG-100025 was exported twice, identical in every column
+    caught_by: table.duplicate_rows
+
+  - id: readings.duplicate_key
+    where: readings.csv.reading_id
+    why: reading_id repeats, so it does not identify a read
+    caught_by: key.duplicate_values
+
+  - id: readings.no_candidate_key
+    where: readings.csv
+    why: with reading_id repeating, no single column identifies a row
+    caught_by: table.no_candidate_key
+
+  - id: readings.mixed_date_formats
+    where: readings.csv.read_on
+    why: RDG-100022 is dated 30/04/2025 where every other row is ISO
+    caught_by: column.mixed_date_formats
+
+  - id: readings.register_type_violation
+    where: readings.csv.register_value
+    why: RDG-100023 records 'faulty' where the column is otherwise whole numbers
+    caught_by: column.type_violation
+
+  - id: readings.meter_orphan
+    where: readings.csv.meter_id
+    why: RDG-100024 is a read against MTR-9998, which is not a meter
+    caught_by: reference.orphan_values
+
+  - id: readings.missing_source
+    where: readings.csv.source
+    why: two reads carry N/A where the column records how the read was obtained
+    caught_by: column.missing_values
+
+  - id: premises.region_case_variants
+    where: premises.csv.region
+    why: UPN-4477 is in 'SOUTH' where every other southern premises is in 'South'
+    caught_by: column.case_variants
+
+  # ── agent territory, unaided ─────────────────────────────────────────────
+  #
+  # No check proposes either of these and no context document mentions them.
+  # They are the floor: what the model could already do before M5b, measured on
+  # the same fixture so that turning the context on can be seen to cost
+  # nothing.
+
+  - id: readings.read_before_install
+    where: readings.csv.read_on
+    why: >-
+      two reads are dated before the meter they are against was commissioned.
+      Neither date is wrong beside the other values in its own column, and
+      both files pass every check on their own; only the join says so, and the
+      column names say the rest.
+    caught_by: none
+    agent:
+      count: 2
+      query: >-
+        SELECT count(*) FROM readings_csv r
+        JOIN meters_csv m ON r.meter_id = m.meter_id
+        WHERE TRY_CAST(r.read_on AS DATE) < TRY_CAST(m.installed_on AS DATE)
+
+  - id: readings.register_wider_than_meter
+    where: readings.csv.register_value
+    why: >-
+      three reads are wider than the register they were read off: 108450 and
+      102340 on five-digit registers, 1148200 on another. A mechanical register
+      cannot display more digits than it has, so each of these is a mis-keyed
+      digit that will be billed as hundreds of thousands of kWh. register_digits
+      is in the export and says so, which is why this needs no document — but
+      it needs the join and the arithmetic, so it is the harder of the two.
+    caught_by: none
+    agent:
+      count: 3
+      query: >-
+        SELECT count(*) FROM readings_csv r
+        JOIN meters_csv m ON r.meter_id = m.meter_id
+        WHERE TRY_CAST(r.register_value AS DOUBLE)
+              >= pow(10, TRY_CAST(m.register_digits AS INTEGER))
+
+  # ── agent territory, and only with the customer's context ────────────────
+  #
+  # Four different kinds of context on purpose: a vocabulary, a lifecycle date,
+  # the meaning of a column, and how two columns join. A model that has learned
+  # to read one data dictionary table and stop scores one of the four.
+
+  - id: meters.undocumented_status
+    where: meters.csv.status
+    why: >-
+      three meters are 'dormant', 'pending_install' and 'decommissioned', and
+      the dictionary permits exactly 'active', 'inactive' and 'removed'.
+      Nothing in the data marks these out — they are ordinary-looking words in
+      a column of ordinary-looking words, none is a case variant or a
+      misspelling of a permitted value, and a column with six categories
+      instead of three is not itself suspicious. 'decommissioned' is the one
+      that shows what this costs: it means what 'removed' means, so nobody
+      reading the file notices anything, and every report that filters this
+      column by name drops the meter from billing, from the asset register and
+      from the regulatory return without erroring.
+    caught_by: none
+    needs_context: [data-dictionary]
+    agent:
+      count: 3
+      query: >-
+        SELECT count(*) FROM meters_csv
+        WHERE status NOT IN ('active', 'inactive', 'removed')
+
+  - id: meters.retired_tariff
+    where: meters.csv.tariff_code
+    why: >-
+      two meters were commissioned onto a tariff that had already closed to new
+      meters: one onto STD-A after 2024-06-30 and one onto COM-1 after
+      2023-12-31. The export cannot show this. tariffs.csv carries the rates
+      and not the lifecycle, both codes are still valid tariffs because the
+      meters already on them are still billed on them, and STD-A is the most
+      common code in the file. The dates exist only in the warehouse catalog,
+      and there are two of them: a model that reads the catalog as one sentence
+      about STD-A measures 1 and is not credited, because the catalog is a
+      table and the rule is per code.
+    caught_by: none
+    needs_context: [warehouse-catalog]
+    agent:
+      count: 2
+      query: >-
+        SELECT count(*) FROM meters_csv
+        WHERE (tariff_code = 'STD-A' AND TRY_CAST(installed_on AS DATE) > DATE '2024-06-30')
+           OR (tariff_code = 'COM-1' AND TRY_CAST(installed_on AS DATE) > DATE '2023-12-31')
+
+  - id: readings.register_went_backwards
+    where: readings.csv.register_value
+    why: >-
+      four reads are lower than the previous read of the same meter. Whether
+      that is a defect depends entirely on what the column is: a period
+      consumption falls all the time, and a cumulative register cannot. The
+      dictionary says it is the odometer and not the trip, and consumption is
+      derived downstream by subtracting consecutive reads — so each of these
+      bills a negative quantity.
+
+      The window has to be ordered on the parsed date rather than on the text.
+      read_on is VARCHAR like every other column, and the one row in
+      30/04/2025 sorts before every ISO date as a string, which invents a fifth
+      offender out of a formatting defect that is already its own finding.
+    caught_by: none
+    needs_context: [data-dictionary]
+    agent:
+      count: 4
+      query: >-
+        SELECT count(*) FROM (
+          SELECT register_value,
+                 lag(register_value) OVER (
+                   PARTITION BY meter_id ORDER BY TRY_CAST(read_on AS DATE)) AS prev
+          FROM readings_csv)
+        WHERE TRY_CAST(register_value AS BIGINT) < TRY_CAST(prev AS BIGINT)
+
+  - id: meters.site_ref_orphans
+    where: meters.csv.site_ref
+    why: >-
+      four meters are sited at premises that do not exist. Nothing proposes
+      this pair: the columns are not named alike, and site_ref is 'UPN-4471'
+      where upn is '4471', so the shapes do not match either and relate.go
+      never compares them. Even the join is the dictionary's: the equality only
+      holds once the prefix is stripped.
+    caught_by: none
+    needs_context: [data-dictionary]
+    agent:
+      count: 4
+      query: >-
+        SELECT count(*) FROM meters_csv m
+        LEFT JOIN premises_csv p ON replace(m.site_ref, 'UPN-', '') = p.upn
+        WHERE p.upn IS NULL
+
+# Places the data is deliberately correct. Several are the immediate neighbor
+# of something that is wrong, which is the pair worth guarding.
+clean:
+  - rule: reference.orphan_values
+    where: meters.csv.tariff_code
+    why: >-
+      every tariff a meter is billed on is in tariffs.csv, STD-A included.
+      Closing a tariff does not remove it, and a check that treated the retired
+      code as a broken reference would report the right rows for the wrong
+      reason and take the target away from the model.
+
+  - rule: reference.orphan_values
+    where: meters.csv.site_ref
+    why: >-
+      no reference is proposed here at all, and none should be: compared
+      against premises.upn as written, every one of the fourteen values is an
+      orphan. This is the guard on meters.site_ref_orphans — a relate.go that
+      began pairing these columns would report 14 where the answer is 4.
+
+  - rule: key.duplicate_values
+    where: meters.csv.meter_id
+    why: no meter is recorded twice, unlike reading_id
+
+  - rule: table.duplicate_rows
+    where: meters.csv
+    why: no two meter rows are identical in every column
+
+  - rule: column.case_variants
+    where: meters.csv.status
+    why: >-
+      the two undocumented statuses are not misspellings or case variants of a
+      permitted one. There is nothing here for a string check to see, which is
+      why it is an agent target.
+
+  - rule: column.mixed_date_formats
+    where: meters.csv.installed_on
+    why: every commissioning date is ISO, unlike read_on in readings.csv
+
+  - rule: column.type_violation
+    where: meters.csv.register_digits
+    why: every register width is a whole number
+
+  - rule: column.missing_values
+    where: readings.csv.register_value
+    why: >-
+      'faulty' is a type violation and not a placeholder; the column has no
+      blanks and no sentinel. The two checks meet on this column and only one
+      of them should fire.
+
+  - rule: table.unreadable_rows
+    where: readings.csv
+    why: every row has the right number of fields
+
+  - rule: column.case_variants
+    where: premises.csv.address
+    why: the addresses are distinct free text, not a category with variants
+
+# True observations that are not defects.
+noise:
+  - where: readings.csv.register_value
+    count: 1
+    why: >-
+      MTR-0006 reads 7740 twice, five months apart. A cumulative register that
+      does not move means nothing was consumed, which is what an empty property
+      looks like — and it is the one thing the dictionary's "never lower than
+      the previous read" rule explicitly permits. A model reporting it has read
+      the document correctly and drawn the wrong conclusion from it.

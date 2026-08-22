@@ -1,0 +1,6 @@
+tariff_code,name,unit_rate,standing_charge
+STD-A,Standard Domestic A,0.2841,0.5320
+STD-B,Standard Domestic B,0.2967,0.5510
+ECO-7,Economy Seven,0.1902,0.4780
+COM-1,Commercial Single Rate,0.3115,0.9940
+COM-2,Commercial Single Rate 2024,0.3288,1.0410
