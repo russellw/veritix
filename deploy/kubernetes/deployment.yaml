@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: veritix
+spec:
+  # One replica, and this is a constraint rather than a starting point.
+  #
+  # A run's DuckDB file lives on this pod's volume so the offending rows can be
+  # shown afterwards, and the SQLite run store beside it is the audit trail. A
+  # second replica would serve a different history and a request for a run's
+  # rows would land on the pod that does not have them. Veritix scales by
+  # giving a team an instance, not by adding replicas to one.
+  #
+  # Recreate rather than RollingUpdate follows from the same fact: two pods
+  # cannot hold the ReadWriteOnce volume at once, and a rolling update would
+  # wait forever for the new one to attach it.
+  replicas: 1
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: veritix
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: veritix
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # The distroless nonroot uid. Named here as well as in the image so
+        # that a policy engine can see it without pulling the image.
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: veritix
+          image: ghcr.io/russellw/veritix:latest
+          args: ["serve"]
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            # serve refuses a non-loopback address without a token, so this is
+            # not optional and is deliberately not defaulted anywhere.
+            - name: VERITIX_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: veritix-auth
+                  key: auth-token
+            - name: VERITIX_CONFIG
+              value: /etc/veritix/config.yaml
+
+          # /health is the one unauthenticated endpoint — it carries the
+          # version and the AGPL source offer, which the interface's footer
+          # renders before anybody has a token. That is what makes it usable
+          # as a probe without giving the kubelet a credential.
+          startupProbe:
+            httpGet: { path: /api/v1/health, port: http }
+            periodSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            httpGet: { path: /api/v1/health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/v1/health, port: http }
+            periodSeconds: 30
+            # Generous: an audit is minutes of CPU-bound work in the same
+            # process, and a liveness probe that kills the pod under load is a
+            # way to lose runs rather than a way to recover from a hang.
+            timeoutSeconds: 10
+            failureThreshold: 6
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              # engine.memory_limit in the ConfigMap must stay below this.
+              # DuckDB spills to disk at its own limit and is OOMKilled at the
+              # cgroup's; the first costs time, the second costs the run.
+              cpu: "4"
+              memory: 3Gi
+
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/veritix
+              readOnly: true
+            # A read-only root filesystem is the reason these two exist: DuckDB
+            # spills large joins to disk, and Go writes nothing else.
+            - name: tmp
+              mountPath: /tmp
+
+          # An audit outlives the request that started it, and a run cut off
+          # mid-flight is recorded as interrupted rather than finished. Give
+          # the process room to finish what it is doing.
+          terminationMessagePolicy: FallbackToLogsOnError
+
+      terminationGracePeriodSeconds: 120
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: veritix-data
+        - name: config
+          configMap:
+            name: veritix-config
+        - name: tmp
+          emptyDir:
+            sizeLimit: 8Gi

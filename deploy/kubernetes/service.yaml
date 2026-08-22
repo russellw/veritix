@@ -1,0 +1,16 @@
+# ClusterIP, deliberately. Veritix holds the data whose whole point is that it
+# does not leave the customer's control, so reaching it from outside the
+# cluster is a decision somebody makes with an Ingress or a Gateway and TLS —
+# not a default of this manifest set.
+apiVersion: v1
+kind: Service
+metadata:
+  name: veritix
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: veritix
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

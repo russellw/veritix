@@ -447,19 +447,40 @@ if [ -s "$trace" ]; then
 fi
 
 # The egress check from docs/local-model.md, against a real model rather than
-# llmtest's scripted one. These are verbatim contents of the fixture, and the
-# same list internal/report's tests assert on; none of them may appear in a
-# payload that left the process.
-if [ -s "$trace" ] && [ "$DATASET" = "testdata/dirty-retail" ]; then
+# llmtest's scripted one. These are verbatim contents of the fixture; none of
+# them may appear in a payload that left the process.
+#
+# The list is per fixture and has to be, because a check that silently covers
+# only the dataset it was written for is indistinguishable from one that
+# passed. Prefer values a model could not have invented — names, not codes: a
+# model is free to guess `WHERE status = 'delivered'` and be shown its own
+# literal back by Guard.EngineError, which is correct and would read here as a
+# leak.
+raw_values=()
+case "$DATASET" in
+*dirty-retail)
+	raw_values=(
+		"CUS-000001" "CUS-000005" "CUS-999999"
+		"alice@example.com" "carol@example.com"
+		"Alice Smith" "Frank Green"
+		"Zürich" "München" "Montréal"
+		"Doohickey" "Widget"
+		"Quarterly Sales Report"
+	)
+	;;
+*dirty-logistics)
+	raw_values=(
+		"Aeroline Freight" "Baltic Haulage" "Corvex Logistics"
+		"London Bermondsey" "Manchester Trafford" "Dublin Docklands"
+		"Madrid Vallecas" "Frankfurt Ost"
+	)
+	;;
+esac
+
+if [ -s "$trace" ] && [ "${#raw_values[@]}" -gt 0 ]; then
 	say "Egress check"
 	leaked=0
-	for raw in \
-		"CUS-000001" "CUS-000005" "CUS-999999" \
-		"alice@example.com" "carol@example.com" \
-		"Alice Smith" "Frank Green" \
-		"Zürich" "München" "Montréal" \
-		"Doohickey" "Widget" \
-		"Quarterly Sales Report"; do
+	for raw in "${raw_values[@]}"; do
 		n=$(grep -Fco -- "$raw" "$trace" || true)
 		if [ "$n" -gt 0 ]; then
 			echo "LEAK: $raw appears $n time(s) in the trace" >&2
@@ -471,4 +492,7 @@ if [ -s "$trace" ] && [ "$DATASET" = "testdata/dirty-retail" ]; then
 		exit 1
 	fi
 	echo "no fixture cell value appears in anything sent to the model"
+elif [ -s "$trace" ]; then
+	warn "no egress value list for $DATASET, so nothing was checked"
+	echo "  add one to scripts/local-model.sh beside the other fixtures" >&2
 fi

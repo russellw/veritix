@@ -1,0 +1,17 @@
+# The run store, the uploaded datasets, and each run's DuckDB file.
+#
+# ReadWriteOnce and not ReadWriteMany on purpose. This is not a cache that can
+# be rebuilt: it is the audit trail — what was audited, when, by whom, and what
+# was found — which is the thing somebody wants six months later. It is also
+# why the Deployment runs one replica; see the comment there.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: veritix-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      # Datasets dominate. A run keeps its DuckDB file so that the offending
+      # rows can be shown afterwards, and it is deleted with its dataset.
+      storage: 20Gi

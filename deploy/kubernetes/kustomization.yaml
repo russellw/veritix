@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: veritix
+
+commonLabels:
+  app.kubernetes.io/name: veritix
+  app.kubernetes.io/component: auditor
+
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+
+configMapGenerator:
+  - name: veritix-config
+    files:
+      - config.yaml=veritix.yaml
+
+images:
+  - name: ghcr.io/russellw/veritix
+    newTag: latest

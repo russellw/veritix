@@ -141,7 +141,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("/", s.handleNotFound)
 	}
 
-	return s.recoverPanics(s.logRequests(mux))
+	return s.recoverPanics(s.traceRequests(s.logRequests(mux)))
 }
 
 // Close ends the event streams and stops any run still executing, waiting for

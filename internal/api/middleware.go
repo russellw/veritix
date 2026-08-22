@@ -6,6 +6,12 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
+	"github.com/russellw/veritix/internal/telemetry"
 )
 
 // requireAuth enforces the bearer token, when one is configured.
@@ -88,6 +94,38 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 			"bytes", rec.bytes,
 			"took", time.Since(start),
 		)
+	})
+}
+
+// traceRequests puts one span around each request.
+//
+// It names the span after the *route pattern* rather than the path, and that
+// is the whole of the care this needs. A path carries ids — a dataset's, a
+// run's, a finding's — and a span is an access log that leaves the machine, so
+// GET /api/v1/runs/{runId}/findings/{findingId}/rows is what is exported and
+// never which run somebody looked at. It also keeps span names to a fixed set
+// instead of one per request, which is what a collector wants anyway.
+//
+// The pattern is only known after routing, so the span is renamed on the way
+// out. An unmatched path has no pattern and keeps the method alone.
+func (s *Server) traceRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := telemetry.Tracer().Start(r.Context(), r.Method,
+			oteltrace.WithSpanKind(oteltrace.SpanKindServer),
+			oteltrace.WithAttributes(attribute.String("http.request.method", r.Method)))
+		defer span.End()
+
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r.WithContext(ctx))
+
+		if r.Pattern != "" {
+			span.SetName(r.Pattern)
+			span.SetAttributes(telemetry.AttrRoute.String(r.Pattern))
+		}
+		span.SetAttributes(attribute.Int("http.response.status_code", rec.status))
+		if rec.status >= 500 {
+			span.SetStatus(codes.Error, http.StatusText(rec.status))
+		}
 	})
 }
 

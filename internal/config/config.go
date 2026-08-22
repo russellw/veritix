@@ -28,6 +28,7 @@ type Config struct {
 	Server Server `yaml:"server"`
 	Engine Engine `yaml:"engine"`
 	LLM    LLM    `yaml:"llm"`
+	OTel   OTel   `yaml:"otel"`
 }
 
 // Log controls diagnostic output.
@@ -36,6 +37,35 @@ type Log struct {
 	Level string `yaml:"level"`
 	// Format is text (human-readable) or json (machine-readable).
 	Format string `yaml:"format"`
+}
+
+// OTel configures OpenTelemetry export.
+//
+// Off by default, for the reason llm.provider is "none" by default: an OTLP
+// endpoint is a network egress, and this process holds data the customer
+// declined to send to a vendor. A build that started exporting because an
+// ambient OTEL_EXPORTER_OTLP_ENDPOINT happened to be set would be Veritix
+// making that decision on their behalf.
+//
+// Once it is on, the standard OTEL_EXPORTER_OTLP_* variables are honored by
+// the exporters themselves, so an operator's existing collector configuration
+// works. Enabling is Veritix's switch; where to send is theirs.
+type OTel struct {
+	// Enabled turns the exporters on. Nothing is exported without it.
+	Enabled bool `yaml:"enabled"`
+	// Endpoint is the collector's OTLP/HTTP base URL, e.g.
+	// http://localhost:4318. Empty defers to OTEL_EXPORTER_OTLP_ENDPOINT.
+	Endpoint string `yaml:"endpoint"`
+	// ServiceName names this instance in the collector.
+	ServiceName string `yaml:"service_name"`
+	// SampleRatio is the fraction of traces recorded, 0 to 1. An audit is a
+	// minutes-long operation somebody asked for, so the useful default is all
+	// of them: sampling is for request floods and there is no flood here.
+	SampleRatio float64 `yaml:"sample_ratio"`
+	// ExportTimeout bounds one export attempt and the flush at shutdown, so
+	// that a collector that has gone away cannot turn a clean exit into a
+	// hang.
+	ExportTimeout time.Duration `yaml:"export_timeout"`
 }
 
 // Server configures the HTTP interface.
@@ -154,6 +184,12 @@ func Default() Config {
 			MaxSteps:       40,
 			RequestTimeout: 10 * time.Minute,
 		},
+		OTel: OTel{
+			Enabled:       false,
+			ServiceName:   "veritix",
+			SampleRatio:   1,
+			ExportTimeout: 10 * time.Second,
+		},
 	}
 }
 
@@ -172,6 +208,12 @@ func Load(path string) (Config, error) {
 	cfg := Default()
 
 	explicit := path != ""
+	if !explicit {
+		path, explicit = os.LookupEnv(ConfigEnv)
+		if path == "" {
+			explicit = false
+		}
+	}
 	if !explicit {
 		path = discoverFile()
 	}
@@ -194,6 +236,15 @@ func Load(path string) (Config, error) {
 	}
 	return cfg, nil
 }
+
+// ConfigEnv names a config file outright, which is what a container wants: the
+// file arrives on a mounted volume at a path the image did not choose, and
+// putting it in the environment keeps it out of the command line so that
+// overriding args does not silently lose it.
+//
+// A named file that does not exist is an error, exactly as --config is, because
+// somebody who names a config file expects it to be used.
+const ConfigEnv = EnvPrefix + "CONFIG"
 
 func discoverFile() string {
 	candidates := []string{"veritix.yaml", "veritix.yml"}
@@ -239,6 +290,11 @@ func applyEnv(cfg *Config) {
 	num(&cfg.LLM.MaxSteps, "LLM_MAX_STEPS")
 	num(&cfg.LLM.TokenBudget, "LLM_TOKEN_BUDGET")
 	dur(&cfg.LLM.RequestTimeout, "LLM_REQUEST_TIMEOUT")
+
+	boolean(&cfg.OTel.Enabled, "OTEL_ENABLED")
+	str(&cfg.OTel.Endpoint, "OTEL_ENDPOINT")
+	str(&cfg.OTel.ServiceName, "OTEL_SERVICE_NAME")
+	dur(&cfg.OTel.ExportTimeout, "OTEL_EXPORT_TIMEOUT")
 
 	// Fall back to each provider's conventional key variable so that a user
 	// who already exports ANTHROPIC_API_KEY does not have to restate it.
@@ -324,6 +380,16 @@ func (c Config) Validate() error {
 	}
 	if c.LLM.MaxSteps < 1 {
 		return fmt.Errorf("llm.max_steps: want a positive count, got %d", c.LLM.MaxSteps)
+	}
+	// A collector endpoint that is not http or https is a configuration
+	// mistake worth catching at startup, rather than an export failure ten
+	// minutes into a run that nobody is watching.
+	if u := c.OTel.Endpoint; u != "" &&
+		!strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+		return fmt.Errorf("otel.endpoint: want an http or https URL, got %q", u)
+	}
+	if r := c.OTel.SampleRatio; r < 0 || r > 1 {
+		return fmt.Errorf("otel.sample_ratio: want a fraction between 0 and 1, got %v", r)
 	}
 	return nil
 }

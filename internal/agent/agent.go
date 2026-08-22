@@ -22,6 +22,10 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
 	"github.com/russellw/veritix/internal/agent/llm"
 	"github.com/russellw/veritix/internal/agent/redact"
 	"github.com/russellw/veritix/internal/agent/tools"
@@ -29,6 +33,7 @@ import (
 	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/profile"
 	"github.com/russellw/veritix/internal/rules"
+	"github.com/russellw/veritix/internal/telemetry"
 )
 
 // Options configure a run of the agent.
@@ -179,8 +184,23 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 		}
 
 		stepStarted := time.Now()
+		// A span per step, so a trace shows where a fifty-minute audit went.
+		// It carries the step number, the model call's token counts and the
+		// tool names — Veritix's own vocabulary — and never the model's prose,
+		// its SQL or a tool result. Those are in the trace at
+		// /runs/{id}/trace, which is served to the customer rather than
+		// exported to a collector.
+		stepCtx, stepSpan := telemetry.Tracer().Start(ctx, "agent.step",
+			oteltrace.WithAttributes(
+				attribute.Int("veritix.agent.step", step),
+				telemetry.AttrProvider.String(trace.Provider),
+				telemetry.AttrModel.String(trace.Model),
+			))
+
 		res, err := complete(ctx, opts, req, log)
 		if err != nil {
+			stepSpan.SetStatus(codes.Error, "the model call failed")
+			stepSpan.End()
 			// The conversation cannot continue, but whatever was recorded
 			// before this point is still evidence-backed and still counts.
 			trace.Stopped = StoppedProviderError
@@ -188,6 +208,11 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 			log.Error("the agent's model call failed", "step", step, "error", err)
 			break
 		}
+
+		stepSpan.SetAttributes(
+			attribute.Int("veritix.agent.tokens.input", res.Usage.Input),
+			attribute.Int("veritix.agent.tokens.output", res.Usage.Output),
+		)
 
 		trace.Usage.Add(res.Usage)
 		entry := Step{
@@ -205,7 +230,9 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 		req.Messages = append(req.Messages, res.Message)
 
 		calls := res.Message.ToolCalls()
+		stepSpan.SetAttributes(attribute.Int("veritix.agent.tool_calls", len(calls)))
 		if len(calls) == 0 {
+			stepSpan.End()
 			entry.Duration = time.Since(stepStarted)
 
 			// A model that wrote its tool call out as prose has done the work
@@ -241,8 +268,21 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 		results := make([]llm.Part, 0, len(calls))
 		for _, call := range calls {
 			started := time.Now()
-			out := registry.Invoke(ctx, call.Name, call.Input)
+			// The tool name is safe to export: it is one of a fixed set
+			// Veritix defined. The arguments are not — they are the model's
+			// SQL, which quotes the customer's own identifiers.
+			callCtx, callSpan := telemetry.Tracer().Start(stepCtx, "agent.tool",
+				oteltrace.WithAttributes(telemetry.AttrTool.String(call.Name)))
+			out := registry.Invoke(callCtx, call.Name, call.Input)
 			took := time.Since(started)
+			if out.IsError {
+				// A refused tool call is the loop working, not a failure: the
+				// model is handed the error and corrects itself. It is
+				// recorded as an attribute rather than a span status so that a
+				// trace of a healthy run does not read as a broken one.
+				callSpan.SetAttributes(attribute.Bool("veritix.tool.refused", true))
+			}
+			callSpan.End()
 
 			entry.Calls = append(entry.Calls, TraceCall{
 				Tool: call.Name,
@@ -263,6 +303,7 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 			})
 		}
 
+		stepSpan.End()
 		entry.Duration = time.Since(stepStarted)
 		trace.Steps = append(trace.Steps, entry)
 		req.Messages = append(req.Messages, llm.Message{Role: llm.RoleUser, Parts: results})

@@ -1,0 +1,58 @@
+# Veritix's own configuration, mounted at /etc/veritix/config.yaml.
+#
+# Anything here can be overridden per-pod by a VERITIX_* environment variable;
+# the file is for what an operator wants written down and reviewable.
+
+log:
+  level: info
+  # json, because in a cluster these lines are going into a log pipeline rather
+  # than onto somebody's terminal.
+  format: json
+
+server:
+  # The container binds all interfaces because it is reached from outside the
+  # pod. serve refuses a non-loopback address without an auth token, which is
+  # why the Deployment supplies one from a Secret.
+  addr: 0.0.0.0:8080
+  data_dir: /data
+  max_upload_bytes: 2147483648
+
+  # AGPL section 13: whoever modified Veritix and serves it to other people
+  # owes those people that source. This is the offer the interface makes in its
+  # footer on every screen. Point it at your fork; empty removes the link, for
+  # a build shipped under commercial terms.
+  source_url: https://github.com/russellw/veritix
+
+engine:
+  # Keep this comfortably below the container's memory limit. DuckDB spills to
+  # disk when it reaches its own limit, and is OOMKilled when it reaches the
+  # cgroup's — the first is slow and the second loses the run, so the number
+  # that matters is this one being the smaller of the two.
+  memory_limit: 2GB
+  threads: 2
+  query_timeout: 2m
+  # A read-only root filesystem means the spill directory has to be a volume,
+  # and this is the emptyDir the Deployment mounts.
+  temp_dir: /tmp
+
+# A default install talks to nobody. Turning the agent on is a deliberate act,
+# and over HTTP it is per-run rather than server-wide: the checkbox on the run
+# screen, or "agent": true on POST /runs. Set the provider here and the option
+# is offered; leave it and Veritix is the deterministic auditor, which is a
+# complete product on its own.
+llm:
+  provider: none
+  # provider: anthropic          # api_key from VERITIX_LLM_API_KEY, in a Secret
+  # provider: openai-compatible  # base_url: http://llama.llm.svc.cluster.local:8080/v1
+  max_steps: 40
+  request_timeout: 10m
+
+# OpenTelemetry is off by default, for the same reason the model provider is:
+# an OTLP endpoint is a network egress, and this process holds data the
+# customer will not send to a vendor. Spans carry counts, stage names and
+# durations — never a table name, a column name or a cell value. See
+# docs/deployment.md.
+otel:
+  enabled: false
+  # endpoint: http://opentelemetry-collector.observability.svc.cluster.local:4318
+  service_name: veritix

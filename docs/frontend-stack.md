@@ -65,7 +65,7 @@ why the CSP is treated as a tested guarantee rather than a header.
 - **Delivery:** served by the Go binary behind a strict CSP with no
   `unsafe-inline` anywhere.
 - **Go modules:** not vendored; `go mod verify` and `govulncheck` in CI instead.
-- **Licenses:** permissive only, npm and Go alike — see §6.2.
+- **Licenses:** permissive only, npm and Go alike — see §6.3.
 
 ### 3.1 Why no other runtime dependencies
 
@@ -254,7 +254,43 @@ verified by nothing beyond a `go.sum` hash of the blob itself. That was accepted
 at M1 as the price of not writing a query engine, and it remains accepted — but
 it should be named rather than obscured by the care taken elsewhere.
 
-### 6.2 Licenses are an adoption criterion, on both sides of the build
+### 6.2 What M6b added: OpenTelemetry, measured the same way
+
+Seven direct modules and ten transitive, measured before adoption:
+
+```
+otel, otel/trace, otel/metric, otel/sdk, otel/sdk/metric,
+exporters/otlp/otlptrace, exporters/otlp/otlptrace/otlptracehttp,
+exporters/otlp/otlpmetric/otlpmetrichttp, auto/sdk, proto/otlp,
+go-logr/logr, go-logr/stdr, cenkalti/backoff, cespare/xxhash,
+grpc-ecosystem/grpc-gateway, genproto/googleapis/{api,rpc},
+google.golang.org/grpc, google.golang.org/protobuf
+```
+
+161 modules in the graph became 190, and the binary went from 87.0 MB to
+91.7 MB — 5%, on a binary that is mostly DuckDB.
+
+**The surprise worth writing down: the HTTP exporter still links gRPC.**
+`otlptracehttp` posts protobuf over `net/http` and touches no gRPC connection,
+but `go.opentelemetry.io/proto/otlp` carries the collector's gRPC *service*
+definition alongside the message types, so importing the messages imports the
+service. There is no smaller OTLP path; choosing the HTTP exporter over the
+gRPC one buys a simpler runtime, not a smaller dependency set.
+
+The alternative was the SDK with no exporter at all — six modules, 4.4 MB —
+which is honest about the cost and useless in a cluster, because there is
+nothing to consume. A metrics story an operator cannot wire into their existing
+collector is not a metrics story.
+
+All Apache-2.0 or BSD-3-Clause, so §6.3 is satisfied. `govulncheck` is clean
+across the addition.
+
+The offsetting decision is in `internal/telemetry`: none of this runs unless
+`otel.enabled` is set, and with it off no provider is installed at all — the
+OpenTelemetry global stays the delegating no-op it starts as. The modules are
+in the binary; the network egress is not in the default.
+
+### 6.3 Licenses are an adoption criterion, on both sides of the build
 
 Veritix is dual licensed — AGPL-3.0-or-later, or commercial terms for customers
 who cannot take the AGPL (`LICENSING.md`). A commercial license can only

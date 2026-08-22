@@ -101,6 +101,30 @@ veritix serve --addr 0.0.0.0:8080 --auth-token "$TOKEN"
 Configuration comes from `./veritix.yaml`, then `VERITIX_*` environment
 variables, then flags. See `internal/config/config.go` for every field.
 
+## Deploying it
+
+```sh
+make docker                          # a distroless image, interface included
+kubectl apply -k deploy/kubernetes    # one replica, egress denied by default
+```
+
+`docs/deployment.md` covers all three shapes — a binary on a desktop, a
+container, a cluster — and why the Kubernetes base runs one replica and denies
+egress. Nothing here reaches a network Veritix was not told about: the model
+provider is `none` until configured, and OpenTelemetry export is off until
+enabled.
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/deployment.md](docs/deployment.md) | running it: binary, container, cluster, CI, telemetry |
+| [docs/rules-proposal.md](docs/rules-proposal.md) | the model proposes a rule, a person accepts it, every later audit enforces it |
+| [docs/eval.md](docs/eval.md) | scoring an audit against known defects, and why one run is not a measurement |
+| [docs/mcp.md](docs/mcp.md) | wiring an assistant to `veritix mcp` |
+| [docs/local-model.md](docs/local-model.md) | running the agent against a model on your own hardware |
+| [docs/frontend-stack.md](docs/frontend-stack.md) | the dependency and supply-chain policy, both sides of the build |
+
 ## License
 
 Veritix is dual licensed: **AGPL-3.0-or-later** (the full text is in

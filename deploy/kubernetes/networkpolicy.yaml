@@ -1,0 +1,67 @@
+# Deny egress, then allow back exactly what is needed.
+#
+# This is the product's central promise written as a cluster object. Veritix
+# audits data the customer will not send to a vendor, and the strongest
+# statement available is not a design review — it is a pod that cannot reach
+# the internet. The egress guard bounds what Veritix *sends* to a model; this
+# bounds what the process can reach at all, and the two are worth having
+# together.
+#
+# It needs a CNI that enforces NetworkPolicy (Cilium, Calico, and most managed
+# clusters). Where nothing enforces it this object is accepted and does
+# nothing, which is worth knowing before treating it as a control.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: veritix
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: veritix
+  policyTypes: [Ingress, Egress]
+
+  ingress:
+    # Whatever fronts this — an ingress controller, a gateway, port-forward.
+    # Narrow it to that namespace once you know which one it is.
+    - ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS, and nothing else by default.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # A model endpoint, when the agent is turned on. Uncomment the one that
+    # applies. A local server in the cluster is the case this product is built
+    # for: it keeps the audit agentic and the data inside the cluster.
+    #
+    # - to:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: llm
+    #   ports:
+    #     - port: 8080
+    #       protocol: TCP
+    #
+    # Reaching a hosted model (api.anthropic.com) means opening egress to the
+    # internet, which is a different product decision and should be made
+    # explicitly, with the trace at /runs/{id}/trace as the record of what
+    # actually left.
+
+    # An OpenTelemetry collector, when telemetry is turned on.
+    #
+    # - to:
+    #     - namespaceSelector:
+    #         matchLabels:
+    #           kubernetes.io/metadata.name: observability
+    #   ports:
+    #     - port: 4318
+    #       protocol: TCP

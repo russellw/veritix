@@ -32,7 +32,7 @@ Everything is on `main`. M0 through M3 are done.
 | M5a | MCP server: `veritix mcp` on stdio | done |
 | M5b | MCP client: the agent pulls the customer's own context | |
 | M6a | The eval harness: defect manifests, `veritix eval`, a second fixture | done |
-| M6b | Rule proposal, OpenTelemetry, deployment, docs | **next** |
+| M6b | Rule proposal, OpenTelemetry, deployment, docs | done |
 
 M4 is off by default: `llm.provider: none` is the complete deterministic
 auditor, and over HTTP the agent is per-run (`"agent": true`) rather than a
@@ -68,6 +68,12 @@ VERITIX_LLM_PROVIDER=anthropic ./bin/veritix serve   # offers the agent in the U
 
 ./bin/veritix mcp                            # stdio; an assistant launches it
 claude mcp add veritix -- "$PWD/bin/veritix" mcp --data-dir ~/.veritix
+
+make docker                                  # the image, interface included
+kubectl apply -k deploy/kubernetes            # one replica, egress denied
+
+VERITIX_OTEL_ENABLED=true \
+  VERITIX_OTEL_ENDPOINT=http://127.0.0.1:4318 ./bin/veritix audit testdata/dirty-retail
 ```
 
 Driving the API by hand:
@@ -146,7 +152,8 @@ cmd/veritix            main
 internal/
   cli/                 cobra commands: audit, serve, version
   config/              defaults → YAML file → VERITIX_* env → flags
-  telemetry/           slog setup (stderr; stdout stays clean for reports)
+  telemetry/           slog setup, and OpenTelemetry: the exporters and the
+                       one rule about what a span may carry
   engine/              DuckDB wrapper: limits, timeouts, SQL quoting, ResultSet
   source/              file discovery, CSV dialect+encoding sniffing, Excel reader
   ingest/              loads discovered files into DuckDB as VARCHAR, captures rejects
@@ -171,9 +178,13 @@ internal/
 web/                   React + TS + Vite → dist, //go:embed-ed; embed.go
 testdata/dirty-retail/    fixtures with a known defect manifest
 testdata/dirty-logistics/ a second one, whose defects need reasoning not a tool
+deploy/Dockerfile      three stages: the interface, the binary, distroless
+deploy/kubernetes/     a kustomize base; one replica, and egress denied
 docs/frontend-stack.md the front end's dependency and supply-chain policy
 docs/eval.md           the defect manifest format and what a score means
 docs/mcp.md            wiring an assistant to `veritix mcp`, and what it may ask
+docs/rules-proposal.md propose, review, accept: coverage turned into recall
+docs/deployment.md     binary, container, cluster — and what each one promises
 LICENSING.md           the dual license: AGPL, or commercial terms
 CLA.md                 the contributor agreement that makes the second possible
 CONTRIBUTING.md        how to work on it, and the four things a patch must not do
@@ -400,6 +411,95 @@ The honest limit, stated in `redact`'s doc comment: the guard bounds what
 Veritix *sends*. It is not a defense against a model deliberately smuggling data
 out through carefully chosen aggregates. The guarantee is that ordinary
 operation discloses no cell values, and that everything sent is in the trace.
+
+## How telemetry is put together
+
+`internal/telemetry` owns slog and, since M6b, OpenTelemetry. `docs/deployment.md`
+is the operator's half; these are the decisions.
+
+- **Off by default, for the reason the model provider is.** An OTLP endpoint is
+  a network egress from a process holding data the customer declined to send to
+  a vendor. `otel.enabled` is `false`, and a build that started exporting
+  because an ambient `OTEL_EXPORTER_OTLP_ENDPOINT` happened to be set would be
+  Veritix making that call on their behalf. Once it is on, the standard
+  `OTEL_EXPORTER_OTLP_*` variables are honored by the exporters, so an
+  operator's existing collector configuration works: enabling is Veritix's
+  switch, where to send is theirs.
+- **A span carries counts, never names.** Stage names, tool names, severities,
+  origins, provider and model identifiers, token counts, durations, route
+  patterns. **Never** a table name, a column name, a file path, SQL text, model
+  prose, or a cell value. A span is an access log that leaves the machine, and
+  the schema of a customer's export is itself commercially sensitive — this is
+  `finding.Finding.ID`'s argument (ids end up in URLs and access logs) one step
+  further out. The half that is easy to lose is the schema half: nobody would
+  put a cell value in an attribute on purpose, and putting the table name in
+  one is the obvious, helpful, wrong thing to do.
+- **`TestNoSpanCarriesCustomerData` is what holds that**, not the comment. It
+  audits `dirty-retail` with a recording exporter installed and a scripted
+  model driving the real agent loop, then scans every exported span — name,
+  status, attributes, events, resource — for the fixture's cell values *and*
+  for its file and column names. Same shape as the report and MCP egress tests,
+  and for the same reason: the promise is about what left, so the test looks at
+  what left.
+- **The HTTP span is named after the route pattern, not the path.** A path
+  carries a dataset id, a run id, a finding id. `r.Pattern` is only known after
+  routing, so the span is renamed on the way out. It also keeps span names to a
+  fixed set, which is what a collector wants anyway.
+- **The providers are global, which is the one place this repo does not
+  inject.** OpenTelemetry's global is a delegating no-op until something sets
+  it, so an unconfigured build pays an interface call per span and `audit.Run`
+  does not grow a parameter that exists only for observability. Instruments are
+  built once against the global meter and delegate the same way. The test
+  installs its own provider exactly as `Start` does.
+- **`Shutdown` carries its own timeout.** It runs while the process is exiting,
+  often because somebody pressed Ctrl-C, so the caller's context is already
+  done. It is called from `Execute` after `ExecuteContext` returns rather than
+  from a cobra `PersistentPostRun`, because that hook does not run when a
+  command returns an error — and a failed audit is exactly the run whose
+  telemetry somebody wants.
+- **The endpoint is a base URL**, `http://collector:4318`, because that is what
+  `OTEL_EXPORTER_OTLP_ENDPOINT` means and what an operator will paste in.
+  `signalURL` appends `/v1/traces` and `/v1/metrics`; a URL that already names a
+  path is left alone. The exporter's own `WithEndpointURL` wants the full
+  signal URL and posts to `/` without this, which is a configuration that looks
+  right and sends nowhere — `TestEnablingActuallyExports` is there because that
+  failure survives every review.
+- **The cost, measured before adopting it:** 17 new modules and +4.7 MB on an
+  87 MB binary. OTLP-over-HTTP still links gRPC, because
+  `go.opentelemetry.io/proto/otlp` carries the collector's gRPC service
+  definition alongside the message types. All Apache-2.0 or BSD-3-Clause, so
+  nothing here is a term the commercial license could not deliver.
+
+## How it is deployed
+
+`deploy/` is the shipping half of M6b and `docs/deployment.md` is the argument.
+
+- **The image builds the interface or fails.** `deploy/Dockerfile` gained a
+  Node stage: plain `go build` produces a working API and a page saying the
+  interface is missing, which is right for a developer and wrong for an image
+  somebody deploys. `veritix version --json` reports `"web": true`, and the
+  build asserts on it rather than shipping a blank page.
+- **One replica, and it is a constraint rather than a starting point.** A run
+  keeps its DuckDB file on the pod's volume so the rows endpoint can reopen it,
+  and the SQLite store beside it is the audit trail. A second replica serves a
+  different history and answers a rows request from the pod that does not have
+  the file. Hence `replicas: 1`, `strategy: Recreate`, `ReadWriteOnce` — which
+  agrees with the licensing shape and the data-locality shape, so it is a
+  constraint that agrees with itself.
+- **Egress is denied by default, as a cluster object.** The egress guard bounds
+  what the *agent* sends and the trace records it; a NetworkPolicy bounds what
+  the process can reach at all. One is a design a reviewer has to read, the
+  other is a control an auditor can check, and the product's whole proposition
+  is worth stating both ways. A model endpoint inside the cluster and an OTLP
+  collector are the two commented exceptions.
+- **`VERITIX_CONFIG` names the config file**, because a container's config
+  arrives on a mounted volume at a path the image did not choose, and keeping
+  it out of the command line means overriding `args` does not silently lose it.
+  A named file that does not exist is an error, exactly as `--config` is.
+- **`engine.memory_limit` must stay below the container's limit.** DuckDB
+  spills to disk at its own limit and is OOMKilled at the cgroup's: the first
+  costs time, the second costs the run. The base ships 2GB against 3Gi.
+  `readOnlyRootFilesystem` is why `engine.temp_dir` points at an `emptyDir`.
 
 ## How the MCP server is put together
 
@@ -744,6 +844,21 @@ loop rather than to the auditing.
   longer run reaches the slow full-context steps that outrun the product's
   10-minute default and would otherwise end on `provider_error` — and with a
   paged model it is the *first* step that has to fit inside it.
+
+**OpenTelemetry**
+- **`resource.Merge` refuses two different semconv schema versions.** The
+  version imported has to be the one `resource.Default()` was built with, or
+  `Start` fails at startup with "conflicting Schema URL" — bump it with the
+  SDK. Caught by `TestEnablingActuallyExports`, which is the only thing that
+  would have caught it: the code reads correctly either way.
+- **`WithEndpointURL` wants the full signal URL, not the base.** Given
+  `http://collector:4318` it posts to `/`, and a collector answering 200 to
+  everything makes that look like it worked. `otel.endpoint` is a base, because
+  that is what `OTEL_EXPORTER_OTLP_ENDPOINT` means; `signalURL` appends
+  `/v1/traces` and `/v1/metrics`.
+- Cobra's `PersistentPostRun` **does not run when a command returns an error**,
+  so a flush hung on it loses the telemetry of exactly the runs somebody wants.
+  It is called from `Execute` after `ExecuteContext` returns instead.
 
 **MCP**
 - **Raw JSON-RPC piped in from the shell does not smoke-test it.** The pipe
