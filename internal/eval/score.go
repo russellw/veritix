@@ -49,7 +49,7 @@ func ScoreChecks(m *Manifest, findings []finding.Finding) ChecksScore {
 			// it" the model is scored on, deliberately: a rule that lands at
 			// the target's location with the engine's number has done the
 			// job, whatever it happens to be called.
-			if hasOriginAt(findings, finding.OriginRule, d) {
+			if convertedBy(findings, finding.OriginRule, d) {
 				s.Converted = append(s.Converted, d.ID)
 				continue
 			}
@@ -363,10 +363,32 @@ func (s Score) UnclassifiedClaims() []Claim {
 	return out
 }
 
-// hasOriginAt reports whether a finding from one origin measures this target.
-func hasOriginAt(findings []finding.Finding, origin finding.Origin, d Defect) bool {
+// convertedBy reports whether an accepted rule now measures this target.
+//
+// It asks for more than MatchesTarget does, and deliberately. MatchesTarget
+// lets a finding scoped to a whole table cover any column in it, because a
+// model writes prose and scoring it strictly would measure phrasing rather
+// than perception. A conversion is a different and much stronger claim — that
+// nobody needs a model for this defect again — so it is held to the location
+// the manifest names.
+//
+// The weakness this closes was found by a real proposal. gpt-oss-120b proposed
+// an expect: sql rule on shipments_csv, which names no column, catching 2 rows
+// of the 3 that are grams in a kilogram column. Scored loosely it credited
+// delivered_before_dispatch, a different defect in a different pair of columns
+// that also happens to affect 2 rows. Both halves of that were wrong and the
+// scorecard said the loop had worked.
+//
+// A rule that means to protect a column can say so: expect: sql takes an
+// optional column, and naming it is what turns "2 rows on this table" into
+// evidence about a defect. Refusing the credit is the safe direction; granting
+// it falsely is how an eval starts flattering the thing it exists to measure.
+func convertedBy(findings []finding.Finding, origin finding.Origin, d Defect) bool {
 	for _, f := range findings {
-		if f.Origin == origin && MatchesTarget(f, d) {
+		if f.Origin != origin || d.Agent == nil {
+			continue
+		}
+		if locationOf(f) == d.Where && d.Agent.Measures(f.Count) {
 			return true
 		}
 	}

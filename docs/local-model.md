@@ -1228,6 +1228,142 @@ reasoning one join short. The defect only exists across `invoices` joined to
 prompts a model to compare two columns of one row does not extend to comparing
 two tables.
 
+## The three-step loop, against a real model
+
+M6b's claim is that a defect a model finds once can be found on every later run
+without one. Two runs of `gpt-oss-120b` against `dirty-logistics` on 22 Aug
+2026 are what that claim is worth in practice. Both are worth reading, because
+the first one failed.
+
+### Run 1: five identical calls, and nothing proposed
+
+11 steps in, the model reached for `propose_rule` with a `one_of` on shipment
+status and no `column` on it. It was refused, correctly. It then sent the same
+call again. And again — **five identical attempts**, at roughly five minutes a
+step, a sixth of a 24-step budget, ending with zero proposals.
+
+The refusal was accurate and useless:
+
+```
+rule "shipment_status_domain" expects one_of, which applies to a column, but names none
+```
+
+That sentence is written for a person looking at their own YAML, who can see
+the file in front of them. A model gets the sentence and nothing else, and
+nothing in it distinguishes *you got this wrong* from *you got this wrong in
+exactly the same way you just did* — which is the distinction that argues for
+changing something rather than trying harder.
+
+Two fixes came out of it, and neither would have been found by reading the
+code:
+
+- Every message out of `rules.Validate` now says what to change, not only what
+  is wrong. A person hand-writing a rule wants that too.
+- `Registry.noteRepeat` keys each failed call on its canonicalized arguments
+  and appends the attempt number to the original refusal, along with the fact
+  that moving on is a legitimate answer. A note, not a stop: the budget is
+  still the backstop.
+
+The run was killed rather than left to spend 45 more minutes re-proving a known
+livelock. `local-runs/run1-livelocked.log` is the record.
+
+### Run 2: 74 minutes, 11 steps, one finding and one proposal
+
+Same model, same fixture, the fixed binary, and a server left warm — which took
+the first step from 26 minutes to 13, since the weights were already in page
+cache. It stopped **voluntarily** at 11 of 24 steps.
+
+```
+steps:        11 of 24
+tool calls:   10 (4 refused)
+findings:     1 recorded, 0 not reproduced
+stopped:      finished
+tokens:       72797 in, 1873 out
+withheld:     10 shaped, 0 masked, 0 truncated, over 9497 bytes sealed
+values sent:  false
+no fixture cell value appears in anything sent to the model
+```
+
+The four refusals are the whole argument for the design, because each one
+refused something different:
+
+| attempt | what it sent | why it was refused |
+|---|---|---|
+| 1 | `range` on `weight_kg`, no column | names no column — now says how to fix it |
+| 2 | same, with `column`, claims 3 violations | the rule breaks on **2**, not 3 |
+| 3 | drops `max`, claims 2 | with only `min: 0` it breaks on **0** |
+| 4 | `expect: sql`, `> 10000 OR < 0`, claims 2 | accepted |
+
+Attempts 2 and 3 are the count discipline working exactly as intended, and they
+show the failure it exists to catch: the model adjusted its bounds to match its
+own stated figure rather than restating the expectation and letting the count
+follow. Each time it was handed the real number instead.
+
+### What it proposed, and why a person still has to read it
+
+```yaml
+- id: weight_kg_unreasonable
+  description: Weight in kilograms should be realistic for shipments
+  table: shipments_csv
+  expect: sql
+  where: CAST(weight_kg AS DOUBLE) > 10000 OR CAST(weight_kg AS DOUBLE) < 0
+```
+
+This is a good proposal and it is quietly wrong, which is the most dangerous
+kind. Three things a reviewer has to catch:
+
+- **The threshold is 10000.** Every other weight in that column is between 3.2
+  and 48.5, and the planted values are 14200, 9800 and **23500**. A cut at
+  10000 catches two of the three and leaves 9800 looking fine forever. This is
+  the `Actve` of the `sql` case: accept it unread and you enforce a rule that
+  certifies the defect it was aimed at.
+- **`CAST`, not `TRY_CAST`.** Every column loads as text by design, and
+  `cost_usd` in the same file already contains `pending`. One non-numeric
+  weight and the rule errors instead of reporting.
+- **It names no column**, so it asserts "2 rows on this table" and nothing
+  about which defect it protects against.
+
+Scored as proposed, the eval credits **nothing** — correctly, twice over: the
+rule measures 2 where the manifest says 3, and it is scoped to a table with two
+different agent targets in it.
+
+### The measurement
+
+With the three edits a reviewer would make — name the column, `TRY_CAST`,
+threshold 1000:
+
+```sh
+./bin/veritix audit testdata/dirty-logistics --rules logistics-accepted.yaml
+  rule.weight_kg_unreasonable | shipments.csv.weight_kg | 3 rows
+
+./bin/veritix eval testdata/dirty-logistics --rules logistics-accepted.yaml
+  9 of 9 planted defects found, 0 false positives
+  3 defect(s) no check proposes; those are the agent's to find
+  1 of those now caught by an accepted rule, with no model: shipments.weight_in_grams
+```
+
+**74 minutes of a model, once, buys a defect found in half a second on every
+audit after it.** `shipments.weight_in_grams` was previously reachable only by
+a model, on one run in three; from here it is a deterministic check.
+
+That is the whole return, and it is also the whole shape of the risk: the model
+got the *idea* right and the *number* wrong, and a person had to be in the loop
+for it to be worth having. Nothing in the design lets the model close that gap
+itself, and nothing should.
+
+### One thing this run did not do
+
+Its single `record_finding` was `orphaned_destination_site` — three shipments
+referencing sites that do not exist. True, and already covered by
+`reference.orphan_values`: `relate.go` proposes that pair from the naming
+convention. So the model spent the run restating a deterministic finding and
+proposing one rule, and found **none** of the four targets that are actually
+its to find. Coverage of the agent targets on this run was zero.
+
+Both halves of that belong in the same paragraph. The rule-proposal loop paid
+for itself on a run where the model's *findings* were worth nothing, which is
+an argument for `propose_rule` and not for the model.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,

@@ -36,8 +36,23 @@ func Evaluate(ctx context.Context, e *engine.Engine, ds *profile.Dataset, f *Fil
 			}
 
 			if r.Expect == ExpectSQL {
+				// A sql rule runs once per table whatever it names, because
+				// its clause is about a row. But it may still say which column
+				// it protects, and if it does the finding belongs there:
+				// that is where a person looks for it in the report and in the
+				// interface, and it is what tells an eval which defect the rule
+				// covers. shipments.csv has two agent targets, and a rule
+				// scoped to the whole table is not evidence about either.
+				//
+				// A named column that matches nothing leaves applied at zero,
+				// so a typo surfaces as rule.never_applied exactly as it does
+				// for every other expectation.
+				col, ok := sqlColumn(r, t)
+				if !ok {
+					continue
+				}
 				applied++
-				found, err := evaluateOne(ctx, e, r, t, nil)
+				found, err := evaluateOne(ctx, e, r, t, col)
 				if err != nil {
 					return nil, err
 				}
@@ -77,6 +92,26 @@ func Evaluate(ctx context.Context, e *engine.Engine, ds *profile.Dataset, f *Fil
 		log.Debug("applied rule", "id", r.ID, "targets", applied)
 	}
 	return out, nil
+}
+
+// sqlColumn resolves the column a sql rule says it protects.
+//
+// Naming one is optional — a rule about a contradiction between two columns
+// may reasonably name neither — so no column named means the rule applies at
+// table scope, which is what it has always done.
+func sqlColumn(r *Rule, t *profile.Table) (*profile.Column, bool) {
+	if r.Column == "" {
+		return nil, true
+	}
+	for _, c := range t.Columns {
+		if matchGlob(r.Column, c.Name) || matchGlob(r.Column, c.Original) {
+			// The first match, not every match: the clause is evaluated once
+			// per table, so a glob reaching two columns must not report the
+			// same rows twice.
+			return c, true
+		}
+	}
+	return nil, false
 }
 
 // evaluateOne runs a rule against one table, or one column of one table.

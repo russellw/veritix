@@ -631,6 +631,17 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   `sample_values` on an enum column, read the differing shape lengths as a
   formatting defect, and spent three steps proving something true that is not a
   defect. `docs/local-model.md` has the call sequences.
+- **A conversion is a stronger claim than a recall credit, so it is held to a
+  stricter match.** `MatchesTarget` lets a table-scoped finding cover any column
+  in that table, because a model writes prose and scoring it strictly would
+  measure phrasing. `convertedBy` refuses that: it wants the manifest's exact
+  location. Found by a real proposal — gpt-oss-120b proposed an `expect: sql`
+  rule on `shipments_csv` catching 2 of the 3 grams-in-kilograms rows, and
+  scored loosely it credited `delivered_before_dispatch`, a different defect in
+  a different pair of columns that also affects 2 rows. Both halves wrong, and
+  the scorecard said the loop had worked. A rule that means to protect a column
+  can say so, and `rules.Evaluate` now carries an `sql` rule's `column` into its
+  finding's location — which is also where a person looks for it in the report.
 - **`--rules` is how the rule-proposal loop is measured rather than asserted.**
   `propose_rule` exists to convert coverage into recall, and until M6b the
   instrument built to read exactly that could not see it: `ScoreRun` credits

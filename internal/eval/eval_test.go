@@ -625,10 +625,17 @@ func TestAnAcceptedRuleConvertsAnAgentTarget(t *testing.T) {
 
 	// Exactly what propose_rule produces for a contradiction between two
 	// columns: expect: sql, with the WHERE clause that selects the wrong rows.
+	//
+	// It names a column, and has to. A rule scoped to a whole table is not
+	// evidence about any particular defect in it — shipments.csv has two agent
+	// targets, and a table-level rule measuring two rows was credited for the
+	// wrong one until convertedBy started asking for the exact location. The
+	// column is the reviewer saying what this rule protects.
 	accepted := &rules.File{Version: 1, Rules: []rules.Rule{{
 		ID:          "delivered_after_dispatch",
 		Description: "a shipment cannot be delivered before it was dispatched",
 		Table:       "shipments_csv",
+		Column:      "delivered_at",
 		Expect:      rules.ExpectSQL,
 		Where:       "TRY_CAST(delivered_at AS DATE) < TRY_CAST(dispatched_at AS DATE)",
 	}}}
