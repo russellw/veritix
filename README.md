@@ -121,6 +121,7 @@ enabled.
 | [docs/deployment.md](docs/deployment.md) | running it: binary, container, cluster, CI, telemetry |
 | [docs/rules-proposal.md](docs/rules-proposal.md) | the model proposes a rule, a person accepts it, every later audit enforces it |
 | [docs/eval.md](docs/eval.md) | scoring an audit against known defects, and why one run is not a measurement |
+| [docs/scale.md](docs/scale.md) | what a two-gigabyte dataset costs, and the four things it found |
 | [docs/mcp.md](docs/mcp.md) | wiring an assistant to `veritix mcp` |
 | [docs/local-model.md](docs/local-model.md) | running the agent against a model on your own hardware |
 | [docs/frontend-stack.md](docs/frontend-stack.md) | the dependency and supply-chain policy, both sides of the build |

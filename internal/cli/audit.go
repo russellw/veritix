@@ -125,7 +125,7 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 		return err
 	}
 	if agentOpts != nil {
-		agentOpts.MaxRows = e.cfg.Engine.MaxResultRows
+		agentOpts.UseEngineLimits(e.cfg.Engine)
 	}
 
 	// Both of these are settled before the audit runs, because an audit is

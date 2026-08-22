@@ -12,9 +12,11 @@ package profile
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -76,11 +78,30 @@ type Table struct {
 	Ingest *ingest.Table
 }
 
+// Unprofiled says why a column carries no measurements, in a fixed
+// vocabulary: UnprofiledTimeout or UnprofiledError, empty when it was
+// measured. It is deliberately not the engine's message — a DuckDB error
+// quotes the value that caused it, and a report omits cell values.
+type Unprofiled string
+
+// The reasons a column may carry no measurements.
+const (
+	UnprofiledTimeout Unprofiled = "timeout"
+	UnprofiledError   Unprofiled = "error"
+)
+
 // Column is the profile of one column.
 type Column struct {
 	Name     string
 	Original string
 	Ordinal  int
+
+	// Unprofiled is set when this column's measurements did not run, and is
+	// the only field that can be trusted when it is. Everything else is a
+	// zero value, which reads exactly like a clean column: no nulls, no
+	// placeholders, no type violations. A stub that says nothing is how an
+	// audit reports a table it never looked at as healthy.
+	Unprofiled Unprofiled
 
 	// DeclaredType is the type a conventional import would have inferred.
 	// Comparing it against Inferred is how Veritix reports that an import
@@ -184,6 +205,16 @@ type NumericStats struct {
 	P75      float64
 	Negative int64
 	Zero     int64
+	// MinReal and MaxReal are the extremes of the values that are not
+	// recognized magic numbers.
+	//
+	// They exist so a check can ask where a placeholder sits relative to
+	// everything real in the column, which is the other way a person
+	// recognizes -999 in a column of credit limits. Excluding the magic
+	// numbers from their own comparison is the whole point: Min is -999
+	// precisely because -999 is in the column.
+	MinReal float64
+	MaxReal float64
 	// Outliers is how many values lie more than OutlierSigma standard
 	// deviations from the mean.
 	Outliers int64
@@ -219,6 +250,17 @@ type FormatCount struct {
 	Format  string
 	Example string
 	Count   int64
+	// Exclusive is how many values this format parses that the column's
+	// leading format cannot. It is what separates a genuine second format
+	// from the same values being matched by two patterns: "05/06/2019" parses
+	// day-first and month-first alike, and a column written entirely
+	// day-first therefore reports a month-first format whose every value the
+	// leading one already reads. Zero here means the format explains nothing
+	// the column does not already say.
+	//
+	// It is zero for the leading format itself, which explains everything it
+	// parses by definition.
+	Exclusive int64
 }
 
 // Options controls a profiling run.
@@ -254,6 +296,7 @@ func Run(ctx context.Context, e *engine.Engine, loaded *ingest.Result, opts Opti
 	ds := &Dataset{Tables: make([]*Table, 0, len(loaded.Tables))}
 
 	for _, lt := range loaded.Tables {
+		tableStarted := time.Now()
 		t := &Table{
 			Name:     lt.Ref.Name,
 			Display:  lt.Ref.Display,
@@ -282,12 +325,17 @@ func Run(ctx context.Context, e *engine.Engine, loaded *ingest.Result, opts Opti
 					mu.Lock()
 					errs++
 					mu.Unlock()
+					reason := UnprofiledError
+					if errors.Is(err, context.DeadlineExceeded) {
+						reason = UnprofiledTimeout
+					}
 					col = &Column{
 						Name:         lc.Name,
 						Original:     lc.Original,
 						Ordinal:      lc.Ordinal,
 						DeclaredType: lc.SniffedType,
 						Total:        t.RowCount,
+						Unprofiled:   reason,
 					}
 				}
 				t.Columns[i] = col
@@ -298,8 +346,13 @@ func Run(ctx context.Context, e *engine.Engine, loaded *ingest.Result, opts Opti
 			return nil, err
 		}
 
-		log.Debug("profiled table",
-			"table", t.Display, "columns", len(t.Columns), "failed", errs)
+		// Info rather than Debug: profiling is the longest stage of an audit
+		// of anything large, a wide table can hold it for minutes on its own,
+		// and this is the only line that says which one. It is also what the
+		// browser's progress stream shows while it waits.
+		log.Info("profiled table",
+			"table", t.Display, "columns", len(t.Columns), "rows", t.RowCount,
+			"failed", errs, "duration", time.Since(tableStarted).Round(time.Millisecond))
 		ds.Tables = append(ds.Tables, t)
 	}
 

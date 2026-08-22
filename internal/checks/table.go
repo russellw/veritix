@@ -134,6 +134,15 @@ func checkNoCandidateKey(tc *tableContext) []finding.Finding {
 		return nil
 	}
 	for _, c := range tc.table.Columns {
+		if c.Unprofiled != "" {
+			// "No column identifies a row" is a claim about every column,
+			// and one of them was not measured. The unmeasured column is
+			// reported in its own right; saying this as well would be
+			// reporting the same gap as a defect in the data.
+			return nil
+		}
+	}
+	for _, c := range tc.table.Columns {
 		if c.Unique() {
 			return nil
 		}

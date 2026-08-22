@@ -11,6 +11,7 @@ package checks
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/russellw/veritix/internal/engine"
@@ -101,10 +102,133 @@ func checkEmptyColumn(tc *tableContext, c *profile.Column) []finding.Finding {
 	}}
 }
 
+// wrongSideOfZero reports whether a magic number is negative in a column where
+// nothing real is.
+//
+// This is the other half of how a person recognizes a placeholder, and it
+// catches what frequency does not: -999 among credit limits of 1000 and up is
+// obvious on sight however rarely it occurs, and a column with one popular
+// legitimate value — a default, a round number — hides it from the frequency
+// test entirely.
+//
+// Sign is the test rather than distance because sign is a boundary business
+// data respects: a credit limit, a quantity, a weight, a price is not
+// negative, so a negative one is announcing itself. Distance is not available
+// to a rule that has to hold at any size — "just past the maximum" is where
+// the largest value of a uniform column lives, and 999999 at the top of a
+// column of two hundred thousand random numbers is data, not a placeholder.
+// The magic numbers that are large and positive are left to standsOut and to
+// column.numeric_outliers, which is what a value far above the data trips.
+//
+// A column that already holds real negatives fails the test, and should: -999
+// among credits and debits is not obviously anything.
+func wrongSideOfZero(c *profile.Column, s profile.ValueCount) bool {
+	n := c.Numeric
+	if n == nil || n.Count == 0 || n.MinReal < 0 {
+		return false
+	}
+	v, err := strconv.ParseFloat(s.Value, 64)
+	if err != nil {
+		return false // not a number after all, so not this test's business
+	}
+	return v < 0
+}
+
+// standsOut reports whether a magic number is more repeated than any real
+// value in the column, which is the only thing that distinguishes -999 the
+// placeholder from -999 the measurement.
+//
+// A text placeholder needs no such test: "n/a" is never a quantity. A number
+// is, sometimes, and a rule that reported every column containing a 999 would
+// report every column of two million numbers. What a person actually reads is
+// the frequency: -999 occurring five hundred times in a column where no real
+// value occurs more than sixty is not a coincidence, and that holds at any
+// size, which a share of the column does not.
+//
+// TopValues is ordered by frequency and includes the sentinel itself, so a
+// sentinel that is not in it is by construction beaten by everything that is.
+func standsOut(c *profile.Column, s profile.ValueCount) bool {
+	for _, v := range c.TopValues {
+		if profile.IsNumericSentinel(strings.ToLower(strings.TrimSpace(v.Value))) {
+			continue
+		}
+		if v.Count >= s.Count {
+			// Not more repeated than a real value, and a column of unique
+			// values is the case that matters: every order_id occurs once,
+			// including the one that happens to be 999999.
+			return false
+		}
+	}
+	return true
+}
+
+// checkUnprofiled reports a column whose measurements did not run.
+//
+// This is not a defect in the data; it is the audit declining to make a claim,
+// and it has to appear in the report for the same reason rule.never_applied
+// does. Silence means either "this column is fine" or "nothing looked at it",
+// and the second is dangerous precisely where it happens: on the largest table
+// in the dataset, where a per-query timeout runs out and where nobody is going
+// to notice by eye that a column has no findings.
+//
+// It carries no CountQuery. There is no number to reproduce — the measurement
+// is what failed — and Set.Verify keeps a finding with no evidence for exactly
+// that case.
+func checkUnprofiled(tc *tableContext, c *profile.Column) []finding.Finding {
+	if c.Unprofiled == "" {
+		return nil
+	}
+
+	detail := "Nothing in this report says anything about this column: the checks that " +
+		"would have found placeholders, type violations, duplicates or broken " +
+		"references never ran, so their silence is not evidence that it is clean."
+	remedy := "Re-run the audit. If it happens again, the reason is on the audit's own " +
+		"log, at warning level."
+	if c.Unprofiled == profile.UnprofiledTimeout {
+		detail += " The measurement ran out of time, which on a table this size " +
+			"usually means the per-query timeout is set below what the column costs."
+		remedy = "Raise engine.query_timeout (VERITIX_ENGINE_QUERY_TIMEOUT) and re-run. " +
+			"A column of twenty million values takes minutes to measure, not seconds."
+	}
+
+	return []finding.Finding{{
+		Rule:     "column.not_profiled",
+		Severity: finding.Warning,
+		Origin:   finding.OriginCheck,
+		Title:    fmt.Sprintf("%s was not measured, so nothing here is a claim about it", c.Name),
+		Detail:   detail,
+		Remedy:   remedy,
+		Location: tc.location(c),
+		Total:    c.Total,
+	}}
+}
+
 // checkMissingValues reports a column with a substantial share of missing
 // values, counting placeholders as missing rather than as data.
 func checkMissingValues(tc *tableContext, c *profile.Column) []finding.Finding {
-	missing := c.Missing()
+	// The placeholders that count are the ones this finding will be held to.
+	// Every text placeholder counts; a magic number counts only where it
+	// stands out from the column around it. What is counted here is what the
+	// evidence query below matches, so the number in the title is the number
+	// the engine produces when Set.Verify re-runs it — profile.Column.Missing
+	// counts every sentinel, and a finding built on that figure and
+	// demonstrated by a query matching a subset of it is corrected to a
+	// number its own title contradicts.
+	var counted []string
+	var textTotal, numericTotal int64
+	for _, sv := range c.Sentinels {
+		switch {
+		case !profile.IsNumericSentinel(sv.Value):
+			counted = append(counted, sv.Value)
+			textTotal += sv.Count
+		case standsOut(c, sv) || wrongSideOfZero(c, sv):
+			counted = append(counted, sv.Value)
+			numericTotal += sv.Count
+		}
+	}
+	placeholders := textTotal + numericTotal
+
+	missing := c.Nulls + c.Blanks + placeholders
 	if c.Total == 0 || missing == 0 || missing == c.Total {
 		return nil // wholly empty is handled by checkEmptyColumn
 	}
@@ -114,34 +238,50 @@ func checkMissingValues(tc *tableContext, c *profile.Column) []finding.Finding {
 	switch {
 	case share >= 0.5:
 		severity = finding.Warning
-	case share < 0.05:
-		return nil // a few gaps in a large column is not news
+	case share < 0.05 && placeholders == 0:
+		// A few gaps in a large column is not news. A placeholder is,
+		// however few there are: "n/a" is not a rate, it is a value that
+		// defeats every null check downstream, and thirteen of them in two
+		// million rows do it exactly as thoroughly as two in nine. Anything
+		// proportional here goes blind on the datasets the product exists to
+		// audit — which is where nobody is going to notice by eye.
+		return nil
 	}
 
 	// The placeholder half of the count is the part people miss, so lead with
 	// it when there is one.
 	var sentinelNote string
-	var sentinelTotal int64
-	for _, s := range c.Sentinels {
-		sentinelTotal += s.Count
-	}
-	if sentinelTotal > 0 {
-		names := make([]string, 0, len(c.Sentinels))
-		for _, s := range c.Sentinels {
-			names = append(names, fmt.Sprintf("%q", s.Value))
+	if placeholders > 0 {
+		names := make([]string, 0, len(counted))
+		for _, v := range counted {
+			names = append(names, fmt.Sprintf("%q", v))
 		}
 		sentinelNote = fmt.Sprintf(
-			" Of those, %d are placeholder text (%s) rather than nulls, so a check for "+
+			" Of those, %d are placeholders (%s) rather than nulls, so a check for "+
 				"null values would report this column as complete.",
-			sentinelTotal, strings.Join(names, ", "))
+			placeholders, strings.Join(names, ", "))
+	}
+	if numericTotal > 0 {
+		sentinelNote += fmt.Sprintf(
+			" %d of the placeholders are numbers, which survive a numeric cast and are "+
+				"then averaged, summed and charted as if they were measurements.",
+			numericTotal)
 	}
 
-	pred := fmt.Sprintf("NOT %s OR %s", profile.SQLNonBlank(col(c)), profile.SQLIsSentinel(col(c)))
+	pred := "NOT " + profile.SQLNonBlank(col(c))
+	if len(counted) > 0 {
+		quoted := make([]string, len(counted))
+		for i, v := range counted {
+			quoted[i] = engine.Literal(v)
+		}
+		pred += fmt.Sprintf(" OR lower(trim(%s)) IN (%s)", col(c), strings.Join(quoted, ", "))
+	}
+
 	return []finding.Finding{{
 		Rule:     "column.missing_values",
 		Severity: severity,
 		Origin:   finding.OriginCheck,
-		Title: fmt.Sprintf("%s is missing a value in %d of %d rows (%.0f%%)",
+		Title: fmt.Sprintf("%s is missing a value in %d of %d rows (%.1f%%)",
 			c.Name, missing, c.Total, share*100),
 		Detail: fmt.Sprintf("%d rows have no usable value for this column.%s",
 			missing, sentinelNote),
@@ -245,11 +385,23 @@ func checkMixedDateFormats(tc *tableContext, c *profile.Column) []finding.Findin
 		return nil
 	}
 
-	// Formats that each account for a trivial number of values are usually one
-	// format being matched by two patterns rather than a genuine mixture.
+	// A format is a genuine second format when it reads values the leading one
+	// cannot. Counting each format over the whole column double-counts —
+	// "05/06/2019" is read day-first and month-first alike — and the share of
+	// the column a format accounts for does not separate that artifact from a
+	// real minority format. It only makes the artifact small, and small is
+	// what a real second format looks like in a file with two million rows:
+	// two thousand dates written the other way round is 0.1% of the column and
+	// every one of them is read as the wrong day.
 	var significant []profile.FormatCount
+	var leading profile.FormatCount
 	for _, f := range c.Temporal.Formats {
-		if float64(f.Count)/float64(max64(c.Temporal.Count, 1)) >= 0.02 {
+		if f.Count > leading.Count {
+			leading = f
+		}
+	}
+	for _, f := range c.Temporal.Formats {
+		if f.Format == leading.Format || f.Exclusive > 0 {
 			significant = append(significant, f)
 		}
 	}
@@ -262,15 +414,15 @@ func checkMixedDateFormats(tc *tableContext, c *profile.Column) []finding.Findin
 		descriptions = append(descriptions, fmt.Sprintf("%s ×%d", f.Example, f.Count))
 	}
 
-	// The minority format is the count that matters: those are the rows a
-	// single-format reader will get wrong or drop.
-	var largest int64
+	// The minority is the count that matters: those are the rows a
+	// single-format reader will get wrong or drop. It is the values the
+	// leading format cannot read, not the column minus its largest format,
+	// because the formats overlap and subtracting one from the total counts
+	// the overlap on both sides.
+	var minority int64
 	for _, f := range significant {
-		if f.Count > largest {
-			largest = f.Count
-		}
+		minority += f.Exclusive
 	}
-	minority := c.Temporal.Count - largest
 
 	iso := profile.SQLMatchesKind(profile.KindDate, col(c))
 	pred := fmt.Sprintf("%s AND TRY_CAST(%s AS DATE) IS NULL AND %s",
@@ -622,11 +774,4 @@ func looksScheduled(name string) bool {
 		}
 	}
 	return false
-}
-
-func max64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }

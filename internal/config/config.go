@@ -103,8 +103,24 @@ type Engine struct {
 	MemoryLimit string `yaml:"memory_limit"`
 	// Threads caps DuckDB's worker threads. Zero means one per core.
 	Threads int `yaml:"threads"`
-	// QueryTimeout bounds any single query.
+	// QueryTimeout bounds any single query, which for the deterministic
+	// pipeline means one measurement over a whole column.
+	//
+	// It has to be sized for the dataset the product exists to audit rather
+	// than for the fixtures: profiling one column of a twenty-million-row
+	// table takes minutes, and a limit below that does not fail the audit —
+	// it drops the column, leaves a stub that reads as clean, and reports the
+	// rest as if the table had been looked at. See column.not_profiled, which
+	// is the finding that makes that visible, and AgentQueryTimeout, which is
+	// the shorter bound the reason for a short one actually belongs to.
 	QueryTimeout time.Duration `yaml:"query_timeout"`
+	// AgentQueryTimeout bounds a single statement the model wrote.
+	//
+	// This is where "one runaway query must not exhaust the host" belongs. A
+	// measurement Veritix wrote costs what the data costs; a model's SQL is
+	// unreviewed, arrives up to forty times a run, and is the only SQL here
+	// nobody chose. Zero falls back to QueryTimeout.
+	AgentQueryTimeout time.Duration `yaml:"agent_query_timeout"`
 	// MaxResultRows caps rows returned to a caller from an ad-hoc query.
 	MaxResultRows int `yaml:"max_result_rows"`
 	// TempDir is where DuckDB spills to disk. Empty means the system temp dir.
@@ -176,8 +192,9 @@ func Default() Config {
 			ShutdownTimeout:   15 * time.Second,
 		},
 		Engine: Engine{
-			QueryTimeout:  2 * time.Minute,
-			MaxResultRows: 10_000,
+			QueryTimeout:      30 * time.Minute,
+			AgentQueryTimeout: 2 * time.Minute,
+			MaxResultRows:     10_000,
 		},
 		LLM: LLM{
 			Provider:       ProviderNone,
@@ -278,6 +295,7 @@ func applyEnv(cfg *Config) {
 	str(&cfg.Engine.MemoryLimit, "ENGINE_MEMORY_LIMIT")
 	num(&cfg.Engine.Threads, "ENGINE_THREADS")
 	dur(&cfg.Engine.QueryTimeout, "ENGINE_QUERY_TIMEOUT")
+	dur(&cfg.Engine.AgentQueryTimeout, "ENGINE_AGENT_QUERY_TIMEOUT")
 	num(&cfg.Engine.MaxResultRows, "ENGINE_MAX_RESULT_ROWS")
 	str(&cfg.Engine.TempDir, "ENGINE_TEMP_DIR")
 

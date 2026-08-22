@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/russellw/veritix/internal/agent/llm"
 	"github.com/russellw/veritix/internal/agent/redact"
@@ -56,7 +57,13 @@ type World struct {
 	Guard *redact.Guard
 	// MaxRows caps a query result. Zero uses the engine's own cap.
 	MaxRows int
-	Log     *slog.Logger
+	// QueryTimeout bounds one tool call, which is where a bound on
+	// model-written SQL belongs: the engine's own limit has to be sized for
+	// Veritix's measurements over the whole dataset, and a model's statement
+	// is the one piece of SQL in the process that nobody reviewed. Zero
+	// leaves the engine's limit in place.
+	QueryTimeout time.Duration
+	Log          *slog.Logger
 
 	mu               sync.Mutex
 	findings         []finding.Finding
@@ -258,6 +265,12 @@ func (r *Registry) Invoke(ctx context.Context, name string, args json.RawMessage
 	tool, ok := r.byName[name]
 	if !ok {
 		return Result{Payload: g.SealText("there is no tool called %q", name), IsError: true}
+	}
+
+	if r.world.QueryTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.world.QueryTimeout)
+		defer cancel()
 	}
 
 	start := len(args)

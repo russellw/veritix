@@ -125,7 +125,7 @@ func runEval(cmd *cobra.Command, e *env, opts evalOptions, paths []string) error
 		return err
 	}
 	if agentOpts != nil {
-		agentOpts.MaxRows = e.cfg.Engine.MaxResultRows
+		agentOpts.UseEngineLimits(e.cfg.Engine)
 	}
 
 	// Where the scorecard goes is settled before the runs start. An hour of a

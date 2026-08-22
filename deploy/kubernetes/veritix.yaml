@@ -28,9 +28,21 @@ engine:
   # disk when it reaches its own limit, and is OOMKilled when it reaches the
   # cgroup's — the first is slow and the second loses the run, so the number
   # that matters is this one being the smaller of the two.
+  #
+  # It bounds the working set, not the dataset: a run started over HTTP keeps
+  # its tables in a DuckDB file on the volume, so 2GB here does not mean two
+  # gigabytes of CSV is the ceiling. See docs/scale.md.
   memory_limit: 2GB
   threads: 2
-  query_timeout: 2m
+  # One measurement over one column of the largest table, not one request.
+  # Measured: a column of twenty million values takes about three minutes on
+  # four cores, and a limit below what the column costs does not fail the
+  # audit — it drops the column and reports the rest, which is why
+  # column.not_profiled exists. Raise it rather than lower it.
+  query_timeout: 30m
+  # A statement the model wrote, which is the SQL here nobody reviewed. This
+  # is where "one runaway query must not exhaust the host" belongs.
+  agent_query_timeout: 2m
   # A read-only root filesystem means the spill directory has to be a volume,
   # and this is the emptyDir the Deployment mounts.
   temp_dir: /tmp

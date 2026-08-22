@@ -81,6 +81,40 @@ func SQLNonBlank(quotedCol string) string { return nonBlank(quotedCol) }
 // SQLTextSentinelList renders the textual placeholder values as a SQL list.
 func SQLTextSentinelList() string { return quotedTextSentinels() }
 
+// SQLIsNumericSentinel is the predicate for one of the magic numbers, as
+// distinct from a textual placeholder. It is the SQL half of
+// IsNumericSentinel, and the two read the same list for the reason
+// profile exports its predicates at all: two definitions of "is this a
+// placeholder" would eventually disagree, and then a finding would contradict
+// the profile it came from.
+func SQLIsNumericSentinel(quotedCol string) string {
+	quoted := make([]string, len(numericSentinels))
+	for i, s := range numericSentinels {
+		quoted[i] = engine.Literal(s)
+	}
+	return fmt.Sprintf("lower(trim(%s)) IN (%s)", quotedCol, strings.Join(quoted, ", "))
+}
+
+// IsNumericSentinel reports whether a placeholder is one of the magic numbers
+// rather than a piece of text.
+//
+// The two are different kinds of evidence and the checks have to tell them
+// apart. "n/a" is never a measurement: whatever share of the column it takes,
+// it means the value is absent and a null check will say the column is
+// complete. -1 and 999 are magic numbers *conventionally* used that way and
+// are also, sometimes, real numbers — so they are evidence only when they
+// stand out from the column around them.
+//
+// The value is compared as readSentinels stores it: lowercased and trimmed.
+func IsNumericSentinel(v string) bool {
+	for _, s := range numericSentinels {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 // SQLIsSentinel is the predicate for a recognized "missing" placeholder.
 func SQLIsSentinel(quotedCol string) string {
 	return fmt.Sprintf("lower(trim(%s)) IN (%s)", quotedCol, quotedTextSentinels())
@@ -437,7 +471,8 @@ func (c *Column) readNumericDetail(ctx context.Context, e *engine.Engine, table 
 	// The subquery casts once; the outer aggregates then work on real numbers.
 	q := fmt.Sprintf(`
 		WITH v AS (
-			SELECT TRY_CAST(%[1]s AS DOUBLE) AS x FROM %[2]s WHERE %[3]s
+			SELECT TRY_CAST(%[1]s AS DOUBLE) AS x, NOT (%[4]s) AS measured
+			FROM %[2]s WHERE %[3]s
 		)
 		SELECT
 			count(x), coalesce(min(x), 0), coalesce(max(x), 0),
@@ -446,14 +481,17 @@ func (c *Column) readNumericDetail(ctx context.Context, e *engine.Engine, table 
 			coalesce(quantile_cont(x, 0.50), 0),
 			coalesce(quantile_cont(x, 0.75), 0),
 			sum(CASE WHEN x < 0 THEN 1 ELSE 0 END),
-			sum(CASE WHEN x = 0 THEN 1 ELSE 0 END)
+			sum(CASE WHEN x = 0 THEN 1 ELSE 0 END),
+			coalesce(min(CASE WHEN measured THEN x END), 0),
+			coalesce(max(CASE WHEN measured THEN x END), 0)
 		FROM v WHERE x IS NOT NULL`,
-		col, engine.Ident(table), nonBlank(col))
+		col, engine.Ident(table), nonBlank(col), SQLIsNumericSentinel(col))
 
 	n := c.Numeric
 	if err := e.ScanOne(ctx, q, []any{
 		&n.Count, &n.Min, &n.Max, &n.Mean, &n.StdDev,
 		&n.P25, &n.Median, &n.P75, &n.Negative, &n.Zero,
+		&n.MinReal, &n.MaxReal,
 	}); err != nil {
 		return err
 	}
@@ -507,6 +545,9 @@ func (c *Column) readTemporalDetail(ctx context.Context, e *engine.Engine, table
 			})
 		}
 	}
+	if err := c.readExclusiveFormats(ctx, e, table); err != nil {
+		return err
+	}
 
 	// A value that parses under both day-first and month-first readings, and
 	// means a different date under each, cannot be resolved from the value
@@ -547,6 +588,60 @@ func (c *Column) readTemporalDetail(ctx context.Context, e *engine.Engine, table
 		parsed, tbl, nb, implausibleBefore)
 
 	return e.ScanOne(ctx, rangeQ, []any{&tp.Min, &tp.Max, &tp.Future, &tp.Implausible})
+}
+
+// readExclusiveFormats measures, for each format the column matched, how many
+// values it parses that the leading format cannot.
+//
+// Counting each format over the whole column double-counts: every value a
+// day-first pattern reads with a day of 12 or less is read by the month-first
+// pattern too, so a column written in one format reports two. The share of the
+// column each format accounts for does not separate those cases — it only
+// makes the artifact small, which is indistinguishable from a real second
+// format that is rare. Rare is what a real second format looks like in a file
+// with two million rows, and it is the case worth reporting: those are the
+// rows a single-format reader silently gets wrong.
+func (c *Column) readExclusiveFormats(ctx context.Context, e *engine.Engine, table string) error {
+	tp := c.Temporal
+	if len(tp.Formats) < 2 {
+		return nil // nothing to be exclusive of
+	}
+
+	best := 0
+	for i, f := range tp.Formats {
+		if f.Count > tp.Formats[best].Count {
+			best = i
+		}
+	}
+
+	col := engine.Ident(c.Name)
+	probes := make([]string, 0, len(tp.Formats))
+	for _, f := range tp.Formats {
+		// The leading format's test comes first so that DuckDB's short
+		// circuit does the work: on a column that is 99.9% one format, the
+		// second probe is evaluated only on the handful of rows the leading
+		// format could not read, and the whole extra pass costs about one
+		// strptime per row rather than two per format per row.
+		probes = append(probes, fmt.Sprintf(
+			"sum(CASE WHEN try_strptime(trim(%[1]s), %[3]s) IS NULL "+
+				"AND try_strptime(trim(%[1]s), %[2]s) IS NOT NULL THEN 1 ELSE 0 END)",
+			col, engine.Literal(f.Format), engine.Literal(tp.Formats[best].Format)))
+	}
+	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s",
+		strings.Join(probes, ", "), engine.Ident(table), nonBlank(col))
+
+	exclusive := make([]int64, len(tp.Formats))
+	dest := make([]any, len(tp.Formats))
+	for i := range exclusive {
+		dest[i] = &exclusive[i]
+	}
+	if err := e.ScanOne(ctx, q, dest); err != nil {
+		return err
+	}
+	for i := range tp.Formats {
+		tp.Formats[i].Exclusive = exclusive[i]
+	}
+	return nil
 }
 
 // implausibleBefore is the date before which a business record is almost

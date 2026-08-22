@@ -54,6 +54,9 @@ type Options struct {
 	Effort string
 	// MaxRows caps the rows a tool query returns.
 	MaxRows int
+	// QueryTimeout bounds one tool call. Zero leaves the engine's own limit,
+	// which is sized for Veritix's measurements rather than for a model's SQL.
+	QueryTimeout time.Duration
 	// RequestTimeout bounds a single model call. Zero means the provider's own.
 	RequestTimeout time.Duration
 }
@@ -116,13 +119,14 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 
 	guard := redact.New(opts.Policy)
 	world := &tools.World{
-		Engine:  in.Engine,
-		Profile: in.Profile,
-		Known:   in.Known,
-		Rules:   in.Rules,
-		Guard:   guard,
-		MaxRows: opts.MaxRows,
-		Log:     log,
+		Engine:       in.Engine,
+		Profile:      in.Profile,
+		Known:        in.Known,
+		Rules:        in.Rules,
+		Guard:        guard,
+		MaxRows:      opts.MaxRows,
+		QueryTimeout: opts.QueryTimeout,
+		Log:          log,
 	}
 	registry := tools.New(world)
 

@@ -180,7 +180,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "the model is not configured correctly: %s", err)
 			return
 		}
-		agentOpts.MaxRows = s.cfg.Engine.MaxResultRows
+		agentOpts.UseEngineLimits(s.cfg.Engine)
 	}
 
 	run, err := s.store.CreateRun(r.Context(), ds.ID, s.version, "")

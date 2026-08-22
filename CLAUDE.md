@@ -53,6 +53,8 @@ make audit          # typecheck, pnpm audit, go mod verify, govulncheck
 ./bin/veritix audit testdata/dirty-retail --fail-on error   # exits 1
 
 make eval                                    # score the checks against the manifest
+go run ./scripts/gen-dataset -out /var/tmp/vx-big -scale 1   # 2 GB and a manifest
+./bin/veritix eval /var/tmp/vx-big           # the same score, at that size
 ./bin/veritix eval testdata/dirty-logistics --llm anthropic --runs 5
 ./bin/veritix eval testdata/dirty-logistics --rules accepted.yaml  # what a rule bought
 
@@ -183,6 +185,7 @@ deploy/Dockerfile      three stages: the interface, the binary, distroless
 deploy/kubernetes/     a kustomize base; one replica, and egress denied
 docs/frontend-stack.md the front end's dependency and supply-chain policy
 docs/eval.md           the defect manifest format and what a score means
+docs/scale.md          what happens on two gigabytes, and what it changed
 docs/mcp.md            wiring an assistant to `veritix mcp`, and what it may ask
 docs/rules-proposal.md propose, review, accept: coverage turned into recall
 docs/deployment.md     binary, container, cluster — and what each one promises
@@ -532,11 +535,14 @@ is the operator's half; these are the decisions.
   `/api/v1/runs` is 401; the interface is served behind its full CSP and a
   client-side route survives a reload; and `--read-only` works, which is
   `readOnlyRootFilesystem` validated for real.
-- **The `/tmp` volume is the one part of the manifest nothing has exercised.**
-  An audit runs fine under `--read-only` with no tmpfs at all, because DuckDB
-  only spills once it passes its memory limit and both fixtures are tens of
-  rows. The mount is right for a real dataset and it is untested — do not read
-  a passing container smoke test as covering it.
+- **The `/tmp` volume is no longer decorative, and its size limit is now load
+  bearing.** It used to be for DuckDB's spill alone, which neither fixture is
+  big enough to trigger; a run given no database path now puts its DuckDB file
+  there too, at roughly a third of the dataset's CSV size. The base's
+  `sizeLimit: 8Gi` therefore caps what a CLI audit *inside the container* can
+  load, on top of whatever the spill wants. A run started over HTTP or MCP is
+  unaffected — those put the file on `/data`, where it belongs, because the
+  rows endpoint reopens it. What is still untested is the spill itself.
 
 ## How the MCP server is put together
 
@@ -685,6 +691,96 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   labels rather than penalizes: marking a model down for noticing something true
   would grade its judgment through its wording. `Validate` refuses one that
   measures a target's count at a target's location.
+
+## How it behaves at size
+
+Both committed fixtures are tens of rows, which is where every threshold in
+`internal/checks` looks fine and where nothing about cost is visible.
+`scripts/gen-dataset` writes one that is not: 2 GB, 22M rows, 231 columns,
+seeded so a measurement can be repeated, and carrying a
+`veritix-manifest.yaml` written from the generator's own tallies so
+`veritix eval` scores the same run that is being timed. A scale test that only
+measures seconds cannot tell a fast auditor from one that quietly stopped
+looking. `docs/scale.md` has the numbers; these are the decisions.
+
+- **A defect is the same size and the file is not, so a check must not measure
+  a share.** `column.missing_values` ignored a column under 5% missing: `N/A`
+  in two of nine rows is 22% and fires, thirteen of two million is 0.0006% and
+  did not. A placeholder defeats every null check downstream whatever its
+  share, and the bigger the file the less likely anybody notices by eye. Text
+  placeholders now count at any rate; genuine blanks keep the 5% floor, because
+  a column that is 3% empty really is unremarkable. A *numeric* placeholder is
+  the hard half — `-1` and `999` are sometimes measurements — so it counts only
+  where it stands out from the column around it: more repeated than any real
+  value (`standsOut`), or negative where nothing real is (`wrongSideOfZero`,
+  against `NumericStats.MinReal`, which excludes the magic numbers from their
+  own comparison). Sign rather than distance, because "just past the maximum"
+  is where the largest value of every uniform column lives.
+- **`column.mixed_date_formats` had the right reason and the wrong test.** It
+  dismissed a format under 2% of the column as one format matched by two
+  patterns — `05/06/2019` parses day-first and month-first alike — which is
+  real, but 0.1% is also what a genuine second format looks like in a
+  two-million-row export. `FormatCount.Exclusive` measures it directly: how
+  many values a format reads that the *leading* format cannot. A format
+  explaining nothing new is not a second format at any size. The leading
+  format's probe goes first in the SQL so DuckDB's short circuit evaluates the
+  rest only on rows that failed it, which is what keeps the extra pass to about
+  one `strptime` per row.
+- **A measurement that did not run is a finding, not a log line.** At 20M rows
+  every column of the biggest table exceeded the old two-minute query timeout;
+  `profile.Run` logged a warning, substituted a stub, and the audit reported
+  13 of 17 planted defects with **zero false positives** — a confident report
+  on a table nothing had looked at, because a stub has no nulls, no
+  placeholders and no type violations. `column.not_profiled` says so, carrying
+  no evidence query (the measurement is what failed) and no engine error text
+  (a DuckDB error quotes the value that caused it). No other column check runs
+  on such a column, and `table.no_candidate_key` goes quiet when any column in
+  the table is unmeasured — "no column identifies a row" is a claim about every
+  column, and it reads as a defect in the data rather than a gap in the audit.
+- **Two query timeouts, because they bound two different things.**
+  `engine.query_timeout` is one of Veritix's own measurements over a whole
+  column and defaults to 30 minutes: it has to be sized for the dataset the
+  product exists to audit, and a limit below what a column costs does not fail
+  the audit, it drops the column. `engine.agent_query_timeout` defaults to two
+  minutes and bounds a statement the model wrote, which is where "one runaway
+  query must not exhaust the host" always belonged — that SQL is unreviewed,
+  arrives up to forty times a run, and is the only SQL in the process nobody
+  chose. `tools.Registry.Invoke` applies it once for every tool rather than
+  each tool applying it, and `agent.Options.UseEngineLimits` carries both from
+  config, because four entry points were each copying `MaxRows` by hand.
+- **A finding counts what its own evidence matches.** `column.missing_values`
+  counted every sentinel and demonstrated itself with a query matching only the
+  textual ones. `Set.Verify` trusts the engine and *silently corrects* a
+  disagreeing count, so the title kept one number while the finding carried
+  another — the exact failure `record_finding` refuses to allow the model, in a
+  deterministic check. Build the predicate from the values actually counted.
+- **Profiling is the cost and it is linear in cells, not rows.** Ingest is 7%
+  of a run: DuckDB reads 2 GB of CSV and writes its own storage in a minute.
+  A cell then costs about 5 µs — four to six full scans with regular
+  expressions and date parsing on every value — so 201 columns of 200k rows
+  cost three and a half times what 2M rows of twelve columns did, and were the
+  one table that got no faster when the tables moved into a file. Parallelism
+  is eight columns at a time and is not configurable. The whole 2 GB run is
+  14m 30s and 4.2 GiB resident.
+- **Every run holds its tables in a DuckDB file, and that is not a trade.**
+  The HTTP API and the MCP server always passed a `DatabasePath`, because the
+  rows endpoint reopens the file afterwards; the CLI held its tables in memory,
+  which reads like memory bought speed. Measured on 400 MB it bought neither:
+  DuckDB's persistent storage is compressed where its in-memory tables are not,
+  so the file is a third the size of the CSV and the scan that reads it
+  finishes sooner. `audit.Run` with no `DatabasePath` now takes a temporary
+  directory and `Result.Close` removes it — the flag still means "keep the
+  file", and nothing else changed. The cost is scratch space of about a third
+  of the dataset, in `engine.temp_dir` when one is set and the system temp
+  directory otherwise — which on many Linux boxes is a tmpfs, and those pages
+  are RAM. Measured at 400 MB that is the difference between 1.06 and 1.15 GiB
+  resident, so it costs the size of the file rather than the benefit; on
+  anything large, point the setting somewhere real.
+- **A stage now announces itself on entry and reports its duration on exit.**
+  Ten and a half minutes passed between "loaded dataset" and the next line,
+  and the browser's progress stream is those same log lines. `profile.Run`
+  logs each table as it finishes, which is also what makes the measurements
+  takeable.
 
 ## Conventions
 
@@ -976,6 +1072,15 @@ which is the only wiring a dataset needs.
 `sales.xlsx` is a committed binary fixture (title rows, a hidden row, merged
 cells, `#REF!`/`#DIV/0!`, a stacked TOTAL table, a hidden sheet). It was
 generated by a throwaway program; regenerate by hand if it ever needs changing.
+
+`internal/checks/scale_test.go` builds a single column two hundred thousand
+rows deep out of DuckDB's own `range()`, so it costs a few seconds per case
+rather than the minutes a file of that size would, and says what a
+two-million-row export would say. It exists because the committed fixtures
+cannot answer the question that matters for a threshold — a defect is the same
+size and the file is not — and it pins both directions: the rare placeholder
+that must still be found, and the incidental 999999 in a column of unique ids
+that must not be. `scripts/gen-dataset` is the same question at 2 GB, by hand.
 
 `internal/api`'s tests drive the real pipeline over a real `httptest` server
 against those same fixtures, rather than stubbing `audit.Run`. The API's whole

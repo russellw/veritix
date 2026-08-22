@@ -68,3 +68,15 @@ func newProvider(cfg config.LLM) (llm.Provider, error) {
 		return nil, fmt.Errorf("agent: unknown llm provider %q", cfg.Provider)
 	}
 }
+
+// UseEngineLimits applies the engine's limits to a configured agent.
+//
+// It is one call rather than a field assignment at each entry point because
+// there are four of them — the CLI's audit and eval, the HTTP API, and the MCP
+// server — and a limit that has to be copied in four places is a limit that
+// will be missing from one of them. Both of these bound what a model's SQL may
+// cost, which is a decision the operator takes and not the caller.
+func (o *Options) UseEngineLimits(e config.Engine) {
+	o.MaxRows = e.MaxResultRows
+	o.QueryTimeout = e.AgentQueryTimeout
+}

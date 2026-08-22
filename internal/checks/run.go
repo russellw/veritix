@@ -31,6 +31,14 @@ func Run(ctx context.Context, e *engine.Engine, ds *profile.Dataset, log *slog.L
 		set.AddAll(dupes)
 
 		for _, c := range t.Columns {
+			if f := checkUnprofiled(tc, c); f != nil {
+				// And nothing else. Every other column check reads
+				// measurements this column does not have, and a zero count
+				// reads exactly like a clean column — which is how an audit
+				// comes to report a table it never looked at as healthy.
+				set.AddAll(f)
+				continue
+			}
 			for _, check := range columnChecks {
 				set.AddAll(check(tc, c))
 			}

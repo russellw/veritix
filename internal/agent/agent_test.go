@@ -925,3 +925,25 @@ func TestAnIdenticalRefusedCallIsCalledOut(t *testing.T) {
 		t.Errorf("a refused proposal was recorded anyway: %d", res.Trace.Proposals)
 	}
 }
+
+// The engine's query timeout has to be sized for Veritix's own measurements —
+// profiling one column of a twenty-million-row table takes minutes, and a
+// limit below that silently drops the column. That leaves the model's SQL,
+// which is the one statement in the process nobody reviewed, needing a bound
+// of its own; World.QueryTimeout is it, applied to every tool call rather
+// than to each tool, so a tool added later cannot miss it.
+func TestAToolCallIsBoundedApartFromTheEngine(t *testing.T) {
+	in := fixture(t)
+	registry := tools.New(&tools.World{
+		Engine:       in.Engine,
+		Profile:      in.Profile,
+		Guard:        redact.New(redact.Policy{}),
+		QueryTimeout: time.Millisecond,
+	})
+
+	args := []byte(`{"sql":"SELECT count(*) FROM range(200000000) t(i) WHERE i::VARCHAR LIKE '%7%'"}`)
+	res := registry.Invoke(t.Context(), "run_sql", args)
+	if !res.IsError {
+		t.Fatalf("a query far beyond the tool's own timeout was allowed to finish")
+	}
+}

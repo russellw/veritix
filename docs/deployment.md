@@ -77,7 +77,9 @@ capabilities dropped, `runAsNonRoot`, `seccompProfile: RuntimeDefault`. The
 process writes in exactly two places, and both are volumes: `/data` for
 everything that has to survive, and an `emptyDir` at `/tmp` because DuckDB
 spills large joins to disk. `engine.temp_dir: /tmp` in the ConfigMap is what
-points it there.
+points it there, and it is also where a run that was not given a database path
+of its own puts one — so `/tmp` wants room for roughly a third of the largest
+dataset anybody audits from inside this container, on top of the spill.
 
 ### Memory: the limit that matters is the smaller one
 
@@ -87,6 +89,29 @@ cgroup has a limit too, and reaching *that* is an OOMKill.
 Keep `engine.memory_limit` comfortably below the container's `resources.limits.
 memory`. The base ships 2GB against 3Gi, which is the right shape: hitting the
 first costs time, hitting the second costs the run.
+
+It bounds the working set, not the dataset. Every run keeps its tables in a
+DuckDB file — on `/data` for a run started over HTTP or over MCP, which is
+where the per-finding rows endpoint reopens it, and in a scratch directory
+under `engine.temp_dir` for one started from the command line — so 2GB here is
+not a ceiling of two gigabytes of CSV. What it does require is room on those
+volumes: DuckDB's storage is compressed, and a dataset lands at roughly a third
+of its CSV size. [scale.md](scale.md) has what a 2 GB dataset actually costs.
+
+### Time: the limit that matters is the larger one
+
+`engine.query_timeout` bounds one of Veritix's own measurements over one
+column, and the base ships 30 minutes. It is deliberately generous, because the
+failure it produces when it is too small is not a failed audit: the column is
+dropped, a stub that reads as clean takes its place, and the rest of the
+dataset is reported as if the table had been looked at. Measured at 20M rows,
+every column of the largest table timed out against a two-minute limit and the
+audit reported a clean bill of health on it. `column.not_profiled` is the
+finding that makes that visible now, and `--fail-on warning` is what turns it
+into a non-zero exit.
+
+`engine.agent_query_timeout` is the short one, at two minutes, and it bounds a
+statement the model wrote. That is where a runaway query actually comes from.
 
 ### Egress denied by default
 

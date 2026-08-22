@@ -11,6 +11,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -38,9 +40,17 @@ type Options struct {
 	Engine config.Engine
 	// Profile controls the depth of profiling.
 	Profile profile.Options
-	// DatabasePath, when set, keeps the loaded dataset in a DuckDB file
-	// instead of memory, so a later run can query it without re-reading the
-	// source files.
+	// DatabasePath, when set, keeps the loaded dataset in a DuckDB file that
+	// outlives the run, so a later request can query it without re-reading the
+	// source files. That is what the HTTP API and the MCP server want, since
+	// the per-finding rows endpoint reopens it afterwards.
+	//
+	// Empty does not mean memory. A run with no path gets a DuckDB file in a
+	// temporary directory that Result.Close removes, because measurement is
+	// what an audit spends its time on and DuckDB's own storage is compressed
+	// where its in-memory tables are not. Measured on a 400 MB dataset: 185s
+	// and 1.07 GiB against 283s and 1.67 GiB — faster *and* smaller, so there
+	// is no trade to offer the caller. See docs/scale.md.
 	DatabasePath string
 	// Rules are the customer's own expectations, applied after the built-in
 	// checks.
@@ -72,6 +82,9 @@ type Result struct {
 	Duration  time.Duration
 
 	engine *engine.Engine
+	// scratch is the temporary directory holding this run's DuckDB file, when
+	// the caller did not name one of its own. Close removes it.
+	scratch string
 }
 
 // Engine exposes the engine the run used, so a caller can keep querying the
@@ -80,10 +93,22 @@ func (r *Result) Engine() *engine.Engine { return r.engine }
 
 // Close releases the engine.
 func (r *Result) Close() error {
-	if r == nil || r.engine == nil {
+	if r == nil {
 		return nil
 	}
-	return r.engine.Close()
+	var err error
+	if r.engine != nil {
+		err = r.engine.Close()
+	}
+	if r.scratch != "" {
+		// After the engine, never before: the file has to be flushed and
+		// released before the directory under it goes away.
+		if rmErr := os.RemoveAll(r.scratch); err == nil {
+			err = rmErr
+		}
+		r.scratch = ""
+	}
+	return err
 }
 
 // stage runs one step of the pipeline inside its own span.
@@ -92,21 +117,32 @@ func (r *Result) Close() error {
 // else: no table name, no column name, no path. See telemetry.Start for why
 // that line is where it is, and TestNoSpanCarriesCustomerData for what holds
 // it there.
-func stage[T any](ctx context.Context, name string, f func(context.Context) (T, error),
+func stage[T any](ctx context.Context, log *slog.Logger, name string, f func(context.Context) (T, error),
 	attrs func(T) []attribute.KeyValue,
 ) (T, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "audit."+name,
 		oteltrace.WithAttributes(telemetry.AttrStage.String(name)))
 	defer span.End()
 
+	// Announced before as well as after, because on a dataset worth auditing
+	// a stage is minutes long and everything downstream of these lines — the
+	// terminal, and the browser's progress stream, which is these same lines —
+	// otherwise shows nothing at all while it runs. The duration is the other
+	// half: an audit that takes an hour is a question about which stage took
+	// it, and a log that only says a stage finished cannot answer.
+	started := time.Now()
+	log.Info("stage starting", "stage", name)
+
 	out, err := f(ctx)
 	if err != nil {
+		log.Info("stage failed", "stage", name, "duration", time.Since(started).Round(time.Millisecond))
 		// The message is the stage that failed, not the error text: an engine
 		// error can carry a cell value, which is the whole reason
 		// redact.Guard.EngineError exists.
 		span.SetStatus(codes.Error, name+" failed")
 		return out, err
 	}
+	log.Info("stage complete", "stage", name, "duration", time.Since(started).Round(time.Millisecond))
 	if attrs != nil {
 		span.SetAttributes(attrs(out)...)
 	}
@@ -130,7 +166,7 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 	outcome := "error"
 	defer func() { recordRun(ctx, outcome, time.Since(started)) }()
 
-	ds, err := stage(ctx, "discover", func(context.Context) (*source.Dataset, error) {
+	ds, err := stage(ctx, log, "discover", func(context.Context) (*source.Dataset, error) {
 		return source.Discover(opts.Paths)
 	}, func(ds *source.Dataset) []attribute.KeyValue {
 		return []attribute.KeyValue{
@@ -145,16 +181,32 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 	log.Info("discovered dataset",
 		"root", ds.Root, "files", len(ds.Files), "skipped", len(ds.Skipped))
 
-	e, err := engine.Open(ctx, opts.DatabasePath, opts.Engine, log)
+	dbPath, scratch := opts.DatabasePath, ""
+	if dbPath == "" {
+		// Failing to get one is not a reason to fail the audit: in-memory is
+		// what this did until it was measured, and it still works.
+		if dir, err := os.MkdirTemp(opts.Engine.TempDir, "veritix-run-"); err == nil {
+			scratch = dir
+			dbPath = filepath.Join(dir, "dataset.duckdb")
+		} else {
+			log.Warn("could not make a scratch directory, so the dataset will be held "+
+				"in memory", "error", err)
+		}
+	}
+
+	e, err := engine.Open(ctx, dbPath, opts.Engine, log)
 	if err != nil {
+		if scratch != "" {
+			_ = os.RemoveAll(scratch)
+		}
 		span.SetStatus(codes.Error, "the engine would not open")
 		return nil, err
 	}
 
 	// From here on the engine has to be released on every path out.
-	res := &Result{Dataset: ds, StartedAt: started, engine: e}
+	res := &Result{Dataset: ds, StartedAt: started, engine: e, scratch: scratch}
 
-	loaded, err := stage(ctx, "ingest", func(ctx context.Context) (*ingest.Result, error) {
+	loaded, err := stage(ctx, log, "ingest", func(ctx context.Context) (*ingest.Result, error) {
 		return ingest.Load(ctx, e, ds, ingest.Options{}, log)
 	}, func(l *ingest.Result) []attribute.KeyValue {
 		var rows, rejected int64
@@ -181,7 +233,7 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 	}
 	log.Info("loaded dataset", "tables", len(loaded.Tables), "rows", rows)
 
-	prof, err := stage(ctx, "profile", func(ctx context.Context) (*profile.Dataset, error) {
+	prof, err := stage(ctx, log, "profile", func(ctx context.Context) (*profile.Dataset, error) {
 		return profile.Run(ctx, e, loaded, opts.Profile, log)
 	}, func(pr *profile.Dataset) []attribute.KeyValue {
 		cols := 0
@@ -197,7 +249,7 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 	}
 	res.Profile = prof
 
-	found, err := stage(ctx, "checks", func(ctx context.Context) (*finding.Set, error) {
+	found, err := stage(ctx, log, "checks", func(ctx context.Context) (*finding.Set, error) {
 		return checks.Run(ctx, e, prof, log)
 	}, func(f *finding.Set) []attribute.KeyValue {
 		return []attribute.KeyValue{attribute.Int("veritix.findings", len(f.All()))}
@@ -208,7 +260,7 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 		return nil, err
 	}
 
-	ruleFindings, err := stage(ctx, "rules", func(ctx context.Context) ([]finding.Finding, error) {
+	ruleFindings, err := stage(ctx, log, "rules", func(ctx context.Context) ([]finding.Finding, error) {
 		return rules.Evaluate(ctx, e, prof, opts.Rules, log)
 	}, func(fs []finding.Finding) []attribute.KeyValue {
 		return []attribute.KeyValue{attribute.Int("veritix.findings", len(fs))}
@@ -234,7 +286,7 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 			return nil, err
 		}
 
-		agentRes, err := stage(ctx, "agent", func(ctx context.Context) (*agent.Result, error) {
+		agentRes, err := stage(ctx, log, "agent", func(ctx context.Context) (*agent.Result, error) {
 			return agent.Run(ctx, agent.Input{
 				Engine:  e,
 				Profile: prof,
@@ -265,7 +317,7 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 	// switched on for the ones we already distrust: a check whose evidence
 	// stopped reproducing is as much a defect as a model that made something
 	// up, and neither should reach a customer's report.
-	dropped, err := stage(ctx, "verify", func(ctx context.Context) ([]finding.Finding, error) {
+	dropped, err := stage(ctx, log, "verify", func(ctx context.Context) ([]finding.Finding, error) {
 		return found.Verify(ctx, e)
 	}, func(d []finding.Finding) []attribute.KeyValue {
 		return []attribute.KeyValue{attribute.Int("veritix.findings.dropped", len(d))}

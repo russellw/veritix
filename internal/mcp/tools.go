@@ -420,7 +420,7 @@ func agentOptions(opts Options) (*agent.Options, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the model is not configured correctly: %w", err)
 	}
-	a.MaxRows = opts.Config.Engine.MaxResultRows
+	a.UseEngineLimits(opts.Config.Engine)
 	return a, nil
 }
 
