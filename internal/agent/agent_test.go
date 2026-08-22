@@ -859,3 +859,69 @@ func TestNoModelIsConfiguredByDefault(t *testing.T) {
 		t.Error("an unknown provider should be refused")
 	}
 }
+
+// TestAnIdenticalRefusedCallIsCalledOut is a livelock the loop could not see.
+//
+// On a dirty-logistics run, gpt-oss-120b sent the same propose_rule four times
+// running — a one_of rule naming no column — and got the same correct refusal
+// each time. At around five minutes a step against a budget of twenty-four,
+// that is a sixth of the run spent on one fixable mistake. Nothing in the
+// refusal distinguished "you got this wrong" from "you got this wrong in
+// exactly the same way you just did", which is the distinction that would have
+// made it change something.
+//
+// The fix is a note, not a stop: the budget is still the backstop, and what to
+// do next is still the model's decision. What the loop owes it is the fact that
+// it is repeating itself.
+func TestAnIdenticalRefusedCallIsCalledOut(t *testing.T) {
+	in := fixture(t)
+
+	bad := llmtest.Call{Name: "propose_rule", Input: map[string]any{
+		"rule": "status_domain", "description": "status is a fixed vocabulary",
+		"table": "customers_csv", "expect": "one_of", "violations_now": 0,
+	}}
+
+	script := llmtest.New(
+		llmtest.Turn{Calls: []llmtest.Call{bad}},
+		llmtest.Turn{Calls: []llmtest.Call{bad}},
+		llmtest.Turn{Calls: []llmtest.Call{bad}},
+		llmtest.Turn{Text: "I will leave that one."},
+	)
+
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 6}, nil)
+	if err != nil {
+		t.Fatalf("a repeated mistake must not fail the run: %v", err)
+	}
+
+	first := res.Trace.Steps[0].Calls[0]
+	if !first.IsError {
+		t.Fatal("a one_of rule naming no column should have been refused")
+	}
+	if strings.Contains(first.Result, "attempt 2") {
+		t.Error("the first attempt was described as a repeat")
+	}
+
+	// The second and third have to say so, and say what the options are.
+	for i, step := range res.Trace.Steps[1:3] {
+		got := step.Calls[0].Result
+		if !strings.Contains(got, fmt.Sprintf("attempt %d", i+2)) {
+			t.Errorf("repeat %d was not named as one: %s", i+2, got)
+		}
+		// A correction that reads as "you were supposed to succeed at this" is
+		// how a model burns a budget rather than spending it.
+		if !strings.Contains(got, "legitimate answer") {
+			t.Errorf("repeat %d does not say that moving on is allowed: %s", i+2, got)
+		}
+		// The original refusal has to survive, or the note replaces the only
+		// thing that says what is actually wrong.
+		if !strings.Contains(got, "applies to a column") {
+			t.Errorf("repeat %d lost the reason it was refused: %s", i+2, got)
+		}
+	}
+
+	// A different call is not a repeat, so nothing here should have leaked into
+	// the run's own accounting.
+	if res.Trace.Proposals != 0 {
+		t.Errorf("a refused proposal was recorded anyway: %d", res.Trace.Proposals)
+	}
+}

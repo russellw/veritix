@@ -407,6 +407,19 @@ what is true.**
 - **A model that misbehaves is not an error.** Bad arguments, refused SQL, a
   finding that does not reproduce — all come back to the model as tool errors so
   it can correct itself. A run ends when the model stops or a budget does.
+- **An identical refused call is named as one**, because a model will send it
+  again. gpt-oss-120b sent the same `propose_rule` four times running on
+  `dirty-logistics` — a `one_of` naming no column — and got the same correct
+  refusal each time; at five minutes a step against a budget of 24 that is a
+  sixth of the run. Nothing in the refusal distinguished "you got this wrong"
+  from "you got this wrong in exactly the same way you just did", which is the
+  distinction that would have made it change something. `Registry.noteRepeat`
+  counts each call by its canonicalized arguments and appends the attempt
+  number, what to change, and that moving on is legitimate — the same last
+  clause `writtenCallCorrection` carries, for the same reason. It is a note and
+  not a stop: the budget is still the backstop and what to do next is still the
+  model's. That run also produced the other half of the fix — every message out
+  of `rules.Validate` now says what to change rather than only what is wrong.
 
 The honest limit, stated in `redact`'s doc comment: the guard bounds what
 Veritix *sends*. It is not a defense against a model deliberately smuggling data

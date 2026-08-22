@@ -197,11 +197,14 @@ type Registry struct {
 	world  *World
 	order  []*Tool
 	byName map[string]*Tool
+	// failed counts how many times each exact call has been refused, so a
+	// repeat can be told apart from a first attempt. See noteRepeat.
+	failed map[string]int
 }
 
 // New assembles the standard tool set.
 func New(w *World) *Registry {
-	r := &Registry{world: w, byName: make(map[string]*Tool)}
+	r := &Registry{world: w, byName: make(map[string]*Tool), failed: make(map[string]int)}
 	r.add(listTables())
 	r.add(describeTable())
 	r.add(profileColumn())
@@ -261,7 +264,11 @@ func (r *Registry) Invoke(ctx context.Context, name string, args json.RawMessage
 	value, err := tool.invoke(ctx, r.world, args)
 	if err != nil {
 		r.world.log().Debug("tool call failed", "tool", name, "error", err)
-		return Result{Payload: g.SealText("%s", err.Error()), IsError: true}
+		msg := err.Error()
+		if n := r.noteRepeat(name, args); n > 1 {
+			msg += "\n\n" + repeatNote(name, n)
+		}
+		return Result{Payload: g.SealText("%s", msg), IsError: true}
 	}
 
 	sealed, err := g.Seal(value)
@@ -280,6 +287,56 @@ func (r *Registry) Invoke(ctx context.Context, name string, args json.RawMessage
 	r.world.log().Debug("tool call",
 		"tool", name, "args_bytes", start, "result_bytes", sealed.Len())
 	return Result{Payload: sealed}
+}
+
+// noteRepeat records that a call failed and returns how many times this exact
+// call has now failed.
+//
+// The arguments are canonicalized before hashing so that the same call reworded
+// by the serializer — a different key order, different spacing — is still the
+// same call. Anything that will not parse is compared as written, which is the
+// safe direction: two unparseable calls that differ only in whitespace are
+// still two attempts at the same thing.
+func (r *Registry) noteRepeat(name string, args json.RawMessage) int {
+	key := name + "\x00" + canonical(args)
+	r.failed[key]++
+	return r.failed[key]
+}
+
+func canonical(args json.RawMessage) string {
+	var v any
+	if err := json.Unmarshal(args, &v); err != nil {
+		return string(args)
+	}
+	// Go sorts map keys, so this is stable for any object the model sends.
+	out, err := json.Marshal(v)
+	if err != nil {
+		return string(args)
+	}
+	return string(out)
+}
+
+// repeatNote is what a model is told when it sends a call that has already been
+// refused, unchanged.
+//
+// It exists because one will. gpt-oss-120b spent four consecutive steps of a
+// dirty-logistics run re-sending an identical propose_rule with no column on
+// it, at five minutes a step, against a budget of twenty-four. The refusal it
+// got each time was correct and identical, and nothing in it distinguished
+// "you got this wrong" from "you got this wrong in exactly the same way again",
+// which is the distinction that would have made it change something.
+//
+// So: say the attempt was identical, say the refusal stands, and say that
+// moving on is a legitimate answer. That last clause is the same one
+// writtenCallCorrection carries, for the same reason — a correction that reads
+// as "you were supposed to succeed at this" is how a model burns a budget
+// rather than spending it.
+func repeatNote(name string, n int) string {
+	return fmt.Sprintf("This is attempt %d at that exact %s call: the arguments are "+
+		"unchanged from the one that was just refused, so the refusal is unchanged too. "+
+		"Sending it again will fail again. Change what the message above asks you to "+
+		"change, or leave this and do something else — moving on is a legitimate answer, "+
+		"and an audit does not have to contain every rule that could be proposed.", n, name)
 }
 
 // decode reads a tool's arguments, reporting a malformed call in terms the
