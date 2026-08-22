@@ -462,6 +462,143 @@ pre {
   margin-top: 0.75rem;
 }
 
+/* ── proposed rules ───────────────────────────────────────────────────── */
+
+/*
+A proposal is styled as a sibling of a finding rather than a variant of one:
+same shape on the page, different left edge, because they are different
+assertions. A finding says the data is wrong now; a proposal says an
+expectation should hold in future, and only one of the two is a defect.
+*/
+.proposal {
+  border-left: 3px solid var(--accent);
+  padding: 0.5rem 0 0.5rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.proposal.accepted {
+  border-left-style: double;
+  border-left-width: 5px;
+}
+
+.proposal-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.proposal-head h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.proposal .where {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.proposal .detail {
+  margin: 0.5rem 0;
+}
+
+.accept {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.75rem 1rem 1rem;
+}
+
+/*
+The permitted values, which are the customer's own cell values and the whole of
+the review. Laid out to be read down rather than across: somebody is looking for
+the one entry that is a mistake rather than a category.
+*/
+.values {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.25rem;
+}
+
+.values li {
+  min-width: 12rem;
+}
+
+.values label.check {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+.values li.struck label.check {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  margin-top: 1rem;
+}
+
+.fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.fields label.wide {
+  flex: 1 1 22rem;
+}
+
+.fields input,
+.fields select {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.accept details {
+  margin: 1rem 0;
+}
+
+.accept details summary {
+  cursor: pointer;
+}
+
+.rule-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.rule-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
 /* ── tables ───────────────────────────────────────────────────────────── */
 
 .scroll {

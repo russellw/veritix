@@ -147,6 +147,40 @@ export interface AgentInfo {
   duration_ms: number
 }
 
+/**
+ * ProposalInfo is one rule the model suggested, as everything that lists rules
+ * describes them: the shape of the expectation and never its contents.
+ *
+ * A one_of rule's permitted set is materialized from the customer's own column,
+ * so it is cell values, and it is absent here by design —
+ * `permitted_value_count` says how many there are and `getProposal` is the one
+ * call that fetches them. The same shape describes a rule already in force, so
+ * `GET /datasets/{id}/rules` returns these too.
+ */
+export interface ProposalInfo {
+  id: string
+  rule: string
+  description?: string
+  rationale?: string
+  target: string
+  table: string
+  column?: string
+  expect: string
+  severity: Severity
+  violations_now: number
+  permitted_value_count?: number
+  /** Present only where the caller has asked for one proposal by name. */
+  permitted_values?: string[]
+}
+
+/** ProposalDetail is one proposal, with the values it would permit. */
+export interface ProposalDetail {
+  proposal: ProposalInfo
+  /** The rule as it would be written in a rules file. */
+  yaml: string
+  values_note?: string
+}
+
 export interface Report {
   schema: string
   veritix_version?: string
@@ -161,6 +195,7 @@ export interface Report {
   }
   finding_summary: FindingCounts
   findings?: Finding[]
+  rule_proposals?: ProposalInfo[]
   tables?: Table[]
   skipped_files?: { file: string; reason: string }[]
   warnings?: Note[]
@@ -435,6 +470,66 @@ export function getFindingRows(
     `/runs/${encodeURIComponent(runId)}/findings/${encodeURIComponent(findingId)}/rows?limit=${limit}`,
     signal,
   )
+}
+
+/**
+ * getProposal fetches one proposed rule, including the values it would permit.
+ *
+ * This is the second of the two calls that return raw cell values, and it is
+ * gated the same way as the first: one named proposal at a time, only when a
+ * reviewer opens it. The values are the whole of the review — a vocabulary
+ * materialized from a column contains whatever the column contains, misspelling
+ * included, and accepting one unread would enforce the misspelling forever. See
+ * internal/api/proposals.go.
+ */
+export function getProposal(
+  runId: string,
+  proposalId: string,
+  signal?: AbortSignal,
+): Promise<ProposalDetail> {
+  return get<ProposalDetail>(
+    `/runs/${encodeURIComponent(runId)}/proposals/${encodeURIComponent(proposalId)}`,
+    signal,
+  )
+}
+
+export interface AcceptRequest {
+  run_id: string
+  proposal_id: string
+  /** Rename the rule. It has to be unique among the rules in force. */
+  id?: string
+  description?: string
+  severity?: Severity
+  /** The permitted set as the reviewer left it, for a one_of rule. */
+  values?: string[]
+}
+
+export interface Accepted {
+  rule: ProposalInfo
+  rules_in_force: number
+}
+
+/**
+ * acceptProposal writes a rule into the dataset's own rules file.
+ *
+ * From here on every audit of this dataset applies it, with no model involved,
+ * which is the point of proposing rules at all. Nothing is automatic and
+ * nothing is retroactive: this is a person deciding.
+ */
+export function acceptProposal(datasetId: string, req: AcceptRequest): Promise<Accepted> {
+  return send<Accepted>('POST', `/datasets/${encodeURIComponent(datasetId)}/rules`, req)
+}
+
+/** listDatasetRules is what has been accepted for a dataset so far. */
+export async function listDatasetRules(
+  datasetId: string,
+  signal?: AbortSignal,
+): Promise<ProposalInfo[]> {
+  const body = await get<{ rules: ProposalInfo[] }>(
+    `/datasets/${encodeURIComponent(datasetId)}/rules`,
+    signal,
+  )
+  return body.rules ?? []
 }
 
 /** reportDownloadURL is the self-contained HTML report, for a normal download. */

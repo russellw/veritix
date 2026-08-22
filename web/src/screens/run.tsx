@@ -4,11 +4,12 @@ import * as api from '../api'
 import type { Report, Run } from '../api'
 import { Findings } from '../components/findings'
 import { Profile } from '../components/profile'
+import { Proposals } from '../components/proposals'
 import { Trace } from '../components/trace'
 import { count, duration, when } from '../format'
 import { onLinkClick } from '../router'
 
-type Tab = 'findings' | 'tables' | 'trace'
+type Tab = 'findings' | 'proposals' | 'tables' | 'trace'
 
 export function RunScreen({ runId, findingId }: { runId: string; findingId?: string }) {
   const [run, setRun] = useState<Run | null>(null)
@@ -90,6 +91,7 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
   if (!run) return <p className="empty">Loading…</p>
 
   const active = run.status === 'pending' || run.status === 'running'
+  const proposals = report?.rule_proposals ?? []
 
   return (
     <>
@@ -180,6 +182,14 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
             >
               Findings ({report.finding_summary.total})
             </button>
+            {proposals.length > 0 && (
+              <button
+                className={tab === 'proposals' ? 'current' : ''}
+                onClick={() => setTab('proposals')}
+              >
+                Rules proposed ({proposals.length})
+              </button>
+            )}
             <button
               className={tab === 'tables' ? 'current' : ''}
               onClick={() => setTab('tables')}
@@ -198,6 +208,13 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
 
           {tab === 'findings' && (
             <Findings runId={runId} findings={report.findings ?? []} openId={findingId} />
+          )}
+          {tab === 'proposals' && (
+            <Proposals
+              runId={runId}
+              datasetId={run.dataset_id}
+              proposals={proposals}
+            />
           )}
           {tab === 'tables' && <Profile report={report} />}
           {tab === 'trace' && <Trace runId={runId} />}

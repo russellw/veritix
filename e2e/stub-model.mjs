@@ -29,6 +29,13 @@ it claims 400 rows, which is refused — that exchange is the mechanism the whol
 design rests on, and having it in the browser tests means the screens are
 exercised against a run where the model got something wrong, which is the
 normal case rather than the exceptional one.
+
+The proposal is real in the same way. customers.csv holds a small fixed
+vocabulary of statuses, one of them spelled "Actve", and a one_of rule is
+exactly how that becomes catchable on every future audit. The model cannot
+write the value list — it has never seen a cell value — so it proposes the
+shape and Veritix fills the permitted set in from the column, which is the
+thing the accept screen exists to show somebody before they bless it.
 */
 const finding = {
   rule: 'negative_order_amount',
@@ -57,6 +64,21 @@ const script = [
     ...finding,
     title: '1 order is recorded with a negative amount',
     affected_count: 1,
+  }),
+  toolCall('propose_rule', {
+    rule: 'status_domain',
+    description: 'customer status has to be one of the values in use today',
+    rationale:
+      'The column holds a handful of values that repeat, so it is a vocabulary rather than free ' +
+      'text. A spelling that appears once is a typing mistake, and nothing in the file will ' +
+      'notice it.',
+    table: 'customers_csv',
+    column: 'status',
+    expect: 'one_of',
+    severity: 'error',
+    // Nothing breaks a vocabulary drawn from the column itself, which is the
+    // good case rather than a claim that failed to reproduce.
+    violations_now: 0,
   }),
 ]
 
@@ -97,21 +119,43 @@ const done = {
   usage: { prompt_tokens: 1400, completion_tokens: 40 },
 }
 
-let call = 0
+/*
+Where in the script a request lands is read from the request itself, rather than
+counted here.
+
+A counter on the server is state shared between audits, and the suite runs more
+than one: the second run would start at the end of the script and be told the
+model had finished before it had done anything, which presents as an agent that
+produced nothing rather than as a stub that ran out. The transcript already
+carries the answer — every reply the model has given in this conversation is in
+it — so each request decides for itself, and any number of runs in any order get
+the same script from the beginning.
+*/
+function replyTo(body) {
+  const messages = Array.isArray(body?.messages) ? body.messages : []
+  const answered = messages.filter((m) => m.role === 'assistant').length
+  return answered < script.length ? script[answered] : done
+}
 
 const server = createServer((req, res) => {
   if (!req.url?.endsWith('/chat/completions')) {
     res.writeHead(404).end('{}')
     return
   }
-  // The body is drained rather than read: what was in it is asserted by the Go
-  // tests, which can scan it against the fixture's contents.
-  req.resume()
+  let body = ''
+  req.setEncoding('utf8')
+  req.on('data', (chunk) => {
+    body += chunk
+  })
   req.on('end', () => {
-    const reply = call < script.length ? script[call] : done
-    call += 1
+    let parsed = null
+    try {
+      parsed = JSON.parse(body)
+    } catch {
+      /* an unreadable request gets the opening move, and the loop carries on */
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(reply))
+    res.end(JSON.stringify(replyTo(parsed)))
   })
 })
 

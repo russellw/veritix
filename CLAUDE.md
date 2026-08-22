@@ -290,8 +290,27 @@ what is true.**
   additive; `runs.Merge` refuses a name collision rather than letting one file
   redefine another's rule. `TestAnAcceptedRuleIsEnforcedWithoutTheModel` is the
   milestone in one test: the model proposes on run one, a person strikes out
-  the typo, and run two finds the defect with no model at all. The web accept
-  screen is the rest of M6b.
+  the typo, and run two finds the defect with no model at all.
+- **The accept screen is where the values are the point.**
+  `web/src/components/proposals.tsx` lists a run's proposals out of the same
+  `report.Document` the findings come from — one document, so the screen and the
+  downloaded report cannot disagree — and fetches `…/proposals/{pid}` only when
+  a reviewer presses for one named proposal, which is the boundary the
+  offending-rows panel already sits on. What it shows there is the materialized
+  vocabulary with a checkbox each, because a set drawn from a column contains
+  whatever the column contains: on `dirty-retail` that is `Actve` beside
+  `Active`, and accepting it unread enforces the misspelling instead of catching
+  it. Name, description and severity are editable, and severity is always sent
+  rather than inherited, so a rule that can fail a build does so because
+  somebody chose that. A proposal's id is what the rule asserts rather than how
+  it was worded, so an accepted rule keeps it and a reload marks the proposal in
+  force instead of offering it again and being refused on press.
+  `e2e/tests/proposals.spec.ts` drives the whole of it, ending with a second
+  audit that runs no model at all. The dataset screen lists what is in force,
+  named as the rules file names it — the SQL table name a rule is written
+  against, not the source name the proposal screen showed, since that list is a
+  view of the file a person can edit.
+
 - **The egress guard is enforced by two types, not by diligence.**
   `redact.Text` is the only string type that may hold customer content and only
   a `Guard` method makes one; `redact.Sealed` is the only thing the loop sends
@@ -825,7 +844,13 @@ JavaScript unit-test runner; that is a dependency the current UI does not earn.
 
 `make e2e` also starts `e2e/stub-model.mjs`, a scripted chat-completions
 endpoint, and points the server at it with `VERITIX_LLM_*`, so the agentic
-screens can be driven without a network model. `scripts/local-model.sh` is the
+screens can be driven without a network model. **Which reply it sends is read
+out of the transcript**, not counted on the server: a counter is state shared
+between audits, and the second spec to run one would start at the end of the
+script and be told the model had finished before it had done anything — which
+presents as an agent that produced nothing rather than as a stub that ran out.
+Every reply the model has already given is in the request, so each one decides
+for itself. `scripts/local-model.sh` is the
 other half of that: the same run against a real one, by hand, when the question
 is whether a model that was not scripted can actually do the job. Pointing the
 script at the stub (`MODEL=stub-model BASE_URL=http://127.0.0.1:11435/v1`) is

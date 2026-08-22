@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import * as api from '../api'
-import type { Capabilities, Dataset, Run } from '../api'
+import type { Capabilities, Dataset, ProposalInfo, Run } from '../api'
 import { count, duration, when } from '../format'
 import { navigate, onLinkClick } from '../router'
 
@@ -14,6 +14,7 @@ export function DatasetScreen({
 }) {
   const [dataset, setDataset] = useState<Dataset | null>(null)
   const [runs, setRuns] = useState<Run[]>([])
+  const [rules, setRules] = useState<ProposalInfo[]>([])
   const [error, setError] = useState('')
   const [starting, setStarting] = useState(false)
   const [includeValues, setIncludeValues] = useState(false)
@@ -24,13 +25,15 @@ export function DatasetScreen({
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        const [d, r] = await Promise.all([
+        const [d, r, rl] = await Promise.all([
           api.getDataset(datasetId, signal),
           api.listRuns(datasetId, signal),
+          api.listDatasetRules(datasetId, signal),
         ])
         if (signal?.aborted) return
         setDataset(d)
         setRuns(r)
+        setRules(rl)
       } catch (e) {
         if (signal?.aborted) return
         setError(e instanceof Error ? e.message : String(e))
@@ -43,6 +46,7 @@ export function DatasetScreen({
     const ac = new AbortController()
     setDataset(null)
     setRuns([])
+    setRules([])
     setError('')
     void load(ac.signal)
     return () => ac.abort()
@@ -169,6 +173,36 @@ export function DatasetScreen({
         </div>
       )}
       {error && <p className="notice error">{error}</p>}
+
+      {/*
+        What this dataset enforces on its own account, which is where an
+        accepted proposal ends up. It is above the audit history rather than
+        below it because it applies to the next audit as much as the last one:
+        a person about to press "Run an audit" should be able to see what will
+        be checked without a model.
+      */}
+      {rules.length > 0 && (
+        <>
+          <h2>Rules in force</h2>
+          <p className="sub">
+            Accepted from what a model proposed. Every audit of this dataset
+            applies them, with no model involved. They are shown as they are
+            written in this dataset's rules file, which is where they can be
+            edited or removed.
+          </p>
+          <ul className="rule-list">
+            {rules.map((r) => (
+              <li key={r.id}>
+                <span className="badge plain">{r.expect}</span>
+                <span>{r.description || r.rule}</span>
+                <span className="sub">
+                  {r.target} · {r.rule} · {r.severity}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <h2>Audits</h2>
       {runs.length === 0 ? (
