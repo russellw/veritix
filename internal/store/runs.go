@@ -513,6 +513,84 @@ func (s *Store) SaveTrace(ctx context.Context, runID string, document json.RawMe
 	return nil
 }
 
+// Proposal is one rule the agent proposed during a run, as the store keeps it:
+// its identity, and the proposal itself as an opaque document.
+type Proposal struct {
+	ID      string
+	Ordinal int
+	Rule    string
+	// Document is the proposal in full, including anything the report omits.
+	Document json.RawMessage
+}
+
+// SaveProposals records what a run proposed, replacing anything already stored
+// for that run.
+//
+// Like the trace it is written after FinishRun and its failure does not fail
+// the run: the findings are already safe, and a lost proposal is a suggestion
+// nobody sees rather than an audit nobody has.
+func (s *Store) SaveProposals(ctx context.Context, runID string, ps []Proposal) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("save proposals: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rolled back only if Commit did not happen
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM proposals WHERE run_id = ?`, runID); err != nil {
+		return fmt.Errorf("save proposals: %w", err)
+	}
+	now := formatTime(time.Now())
+	for _, p := range ps {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO proposals (run_id, id, ordinal, rule, document, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			runID, p.ID, p.Ordinal, p.Rule, []byte(p.Document), now); err != nil {
+			return fmt.Errorf("save proposal %s: %w", p.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Proposals lists what a run proposed, in the order it proposed it.
+func (s *Store) Proposals(ctx context.Context, runID string) ([]Proposal, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, ordinal, rule, document FROM proposals WHERE run_id = ? ORDER BY ordinal`,
+		runID)
+	if err != nil {
+		return nil, fmt.Errorf("list proposals: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Err below reports what matters
+
+	var out []Proposal
+	for rows.Next() {
+		var p Proposal
+		var doc []byte
+		if err := rows.Scan(&p.ID, &p.Ordinal, &p.Rule, &doc); err != nil {
+			return nil, fmt.Errorf("read proposal: %w", err)
+		}
+		p.Document = doc
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// Proposal returns one proposal of one run.
+func (s *Store) Proposal(ctx context.Context, runID, id string) (*Proposal, error) {
+	var p Proposal
+	var doc []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, ordinal, rule, document FROM proposals WHERE run_id = ? AND id = ?`,
+		runID, id).Scan(&p.ID, &p.Ordinal, &p.Rule, &doc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("proposal %s in run %s: %w", id, runID, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read proposal: %w", err)
+	}
+	p.Document = doc
+	return &p, nil
+}
+
 // Trace returns a run's agent trace.
 func (s *Store) Trace(ctx context.Context, runID string) (json.RawMessage, error) {
 	var doc []byte

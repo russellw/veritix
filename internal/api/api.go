@@ -57,6 +57,10 @@ type Server struct {
 	// until its timeout expired.
 	stopping  chan struct{}
 	closeOnce sync.Once
+	// rulesMu serializes read-modify-write of a dataset's accepted rules file.
+	// Two accepts arriving together would otherwise each write the file they
+	// read, and one of the two rules would vanish.
+	rulesMu sync.Mutex
 }
 
 // New builds a server. The caller owns the store and closes it.
@@ -104,6 +108,8 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("POST /api/v1/datasets", s.handleCreateDataset)
 	authed.HandleFunc("GET /api/v1/datasets/{datasetId}", s.handleGetDataset)
 	authed.HandleFunc("DELETE /api/v1/datasets/{datasetId}", s.handleDeleteDataset)
+	authed.HandleFunc("GET /api/v1/datasets/{datasetId}/rules", s.handleGetDatasetRules)
+	authed.HandleFunc("POST /api/v1/datasets/{datasetId}/rules", s.handleAcceptProposal)
 
 	authed.HandleFunc("GET /api/v1/runs", s.handleListRuns)
 	authed.HandleFunc("POST /api/v1/runs", s.handleCreateRun)
@@ -112,6 +118,8 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/runs/{runId}/report", s.handleGetReport)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/report.html", s.handleGetReportHTML)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/trace", s.handleGetTrace)
+	authed.HandleFunc("GET /api/v1/runs/{runId}/proposals", s.handleListProposals)
+	authed.HandleFunc("GET /api/v1/runs/{runId}/proposals/{proposalId}", s.handleGetProposal)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/events", s.handleRunEvents)
 	authed.HandleFunc("GET /api/v1/runs/{runId}/findings/{findingId}/rows", s.handleFindingRows)
 

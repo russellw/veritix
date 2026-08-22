@@ -82,6 +82,10 @@ curl -sN localhost:8080/api/v1/runs/$ID/events            # progress, then done
 curl -s  localhost:8080/api/v1/runs/$ID/report | jq .finding_summary
 curl -s  localhost:8080/api/v1/runs/$ID/findings/<fid>/rows   # the gated one
 curl -s  localhost:8080/api/v1/runs/$ID/trace | jq .steps     # what the model saw
+curl -s  localhost:8080/api/v1/runs/$ID/proposals | jq .        # rules suggested
+curl -s  localhost:8080/api/v1/runs/$ID/proposals/<pid>          # the gated one
+curl -s -XPOST localhost:8080/api/v1/datasets/$DS/rules -H 'Content-Type: application/json' \
+     -d "{\"run_id\":\"$ID\",\"proposal_id\":\"<pid>\",\"values\":[\"Active\",\"Closed\"]}"
 ```
 
 ## Four ideas the design rests on
@@ -116,12 +120,16 @@ model.
 The model is the fourth place this has to hold, and `internal/agent/redact` is
 the single path to it. See "How the agent is put together" below.
 
-There is exactly one exception, and it is deliberate:
-`GET /runs/{id}/findings/{fid}/rows` returns the offending rows themselves,
-because showing somebody the three bad rows is the most useful thing the UI can
-do. It has to be asked for one finding at a time, it never appears in a list
-response, and its results are not logged. **Do not add a second way to get at
-raw values.**
+There are exactly two exceptions, both deliberate and both bounded the same
+way. `GET /runs/{id}/findings/{fid}/rows` returns the offending rows
+themselves, because showing somebody the three bad rows is the most useful
+thing the UI can do. `GET /runs/{id}/proposals/{pid}` returns the values a
+proposed `one_of` rule would permit, because that set is materialized from the
+customer's own column and an accept screen that cannot show what it is about to
+bless is not a review — it is how the misspelled status in `dirty-retail` gets
+struck out instead of enforced forever. Each has to be asked for one named
+thing at a time, neither ever appears in a list response, and neither's results
+are logged. **Do not add a third.**
 
 The browser is the third place this has to hold, not an afterthought to the
 first two. The web interface can call that endpoint, so a compromised npm
@@ -272,7 +280,18 @@ what is true.**
   `rules.RenderProposals` writes them out as a rules file, which is the one
   place the permitted values are written, since a `one_of` rule without them is
   not a rule. `audit --propose-rules-out` is that file from the command line.
-  The store, the endpoints and the web accept flow are the rest of M6b.
+- **Accepting is where a proposal stops being a suggestion.** The store keeps
+  proposals whole (the report cannot, since it omits the values), served by
+  `GET /runs/{id}/proposals` described and `…/proposals/{pid}` in full;
+  `POST /datasets/{id}/rules` writes the accepted rule — with whatever the
+  reviewer edited — into `<DataDir>/datasets/<id>/rules.yaml`, which
+  `runs.AcceptedRules` loads on *every* later audit of that dataset, over HTTP
+  and over MCP alike. `--rules` stays the customer's own file and the two are
+  additive; `runs.Merge` refuses a name collision rather than letting one file
+  redefine another's rule. `TestAnAcceptedRuleIsEnforcedWithoutTheModel` is the
+  milestone in one test: the model proposes on run one, a person strikes out
+  the typo, and run two finds the defect with no model at all. The web accept
+  screen is the rest of M6b.
 - **The egress guard is enforced by two types, not by diligence.**
   `redact.Text` is the only string type that may hold customer content and only
   a `Guard` method makes one; `redact.Sealed` is the only thing the loop sends

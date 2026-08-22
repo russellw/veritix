@@ -147,6 +147,21 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Rules accepted for this dataset are additive to whatever the caller
+	// passed: the customer's own file stays theirs, and a rule somebody
+	// accepted from a proposal is in force from then on without having to be
+	// named again. This is where a proposal stops being a suggestion.
+	accepted, err := runs.AcceptedRules(s.cfg.Server.DataDir, ds.ID)
+	if err != nil {
+		s.log.Error("could not read the accepted rules", "dataset", ds.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "could not read the rules in force")
+		return
+	}
+	if ruleFile, err = runs.Merge(ruleFile, accepted); err != nil {
+		writeError(w, http.StatusBadRequest, "%s", err)
+		return
+	}
+
 	// The agent is configured before the run is created, so that a
 	// misconfigured provider fails the request the operator is watching rather
 	// than a background run they have to go and find in the history.

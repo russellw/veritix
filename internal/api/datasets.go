@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/russellw/veritix/internal/engine"
+	"github.com/russellw/veritix/internal/runs"
 	"github.com/russellw/veritix/internal/store"
 )
 
@@ -260,7 +261,7 @@ func (s *Server) handleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 
 	// Collect the runs before the cascade removes them: their DuckDB files are
 	// on disk and the database is the only record of where.
-	runs, err := s.store.Runs(r.Context(), id, allRuns)
+	history, err := s.store.Runs(r.Context(), id, allRuns)
 	if err != nil {
 		s.writeStoreError(w, err, "could not list the dataset's runs")
 		return
@@ -271,10 +272,19 @@ func (s *Server) handleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, run := range runs {
+	for _, run := range history {
 		s.runs.cancel(run.ID)
 		s.removeRunFiles(run)
 	}
+	// The rules accepted for this dataset go with it. They are a file Veritix
+	// wrote, under its own data directory, and leaving them behind would leave
+	// customer content on disk with nothing left pointing at it.
+	if dir, err := runs.DatasetRulesPath(s.cfg.Server.DataDir, id); err == nil {
+		if err := os.RemoveAll(filepath.Dir(dir)); err != nil { //nolint:gosec // only paths this server wrote
+			s.log.Warn("could not remove the dataset's accepted rules", "dataset", id, "error", err)
+		}
+	}
+
 	// Only bytes Veritix wrote itself. A path an operator registered in place
 	// is theirs, and forgetting a dataset must not delete the customer's data.
 	if d.Uploaded {

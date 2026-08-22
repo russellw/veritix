@@ -203,6 +203,95 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /datasets/{datasetId}/rules:
+    parameters:
+      - $ref: "#/components/parameters/DatasetID"
+    get:
+      tags: [datasets]
+      summary: The rules in force for this dataset.
+      description: |
+        Rules accepted from the agent's proposals. Every audit of this dataset
+        applies them, in addition to any rules file the caller names.
+
+        Described, not reproduced: a `one_of` rule's permitted set is
+        materialized from the customer's own column, so this lists how many
+        values a rule permits and not what they are.
+      operationId: getDatasetRules
+      responses:
+        "200":
+          description: The rules in force.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: "#/components/schemas/Proposal" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [datasets]
+      summary: Accept a proposed rule into this dataset's rules.
+      description: |
+        This is where a proposal stops being a suggestion. From here on the
+        deterministic pass enforces the rule on every audit of this dataset,
+        with no model involved and nothing further to pay — which is the whole
+        point of proposing rules at all.
+
+        Nothing is accepted automatically. An accepted rule raises errors on
+        future data and can fail a build, so it takes a person.
+
+        The edits in this request are the review. A `one_of` rule permits
+        whatever the column happened to hold when the audit ran, mistakes
+        included, so `values` is how the reviewer strikes out a misspelling
+        before blessing it forever.
+      operationId: acceptProposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id, proposal_id]
+              properties:
+                run_id:
+                  type: string
+                  description: The run that proposed it. It must have audited this dataset.
+                proposal_id: { type: string }
+                id:
+                  type: string
+                  description: Rename the rule. It must be unique among the rules in force.
+                description: { type: string }
+                severity:
+                  type: string
+                  enum: [info, warning, error]
+                  description: How a future violation is reported. A rule defaults to error.
+                values:
+                  type: array
+                  items: { type: string }
+                  description: Replace what a one_of rule permits.
+      responses:
+        "201":
+          description: Accepted, and in force from the next audit.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rule, rules_in_force]
+                properties:
+                  rule: { $ref: "#/components/schemas/Proposal" }
+                  rules_in_force: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A rule of that name is already in force for this dataset.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /runs:
     get:
       tags: [runs]
@@ -410,6 +499,79 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /runs/{runId}/proposals:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: The rules the agent proposed during this run.
+      description: |
+        A proposal is not a finding. A finding says the data is wrong now; a
+        proposal says an expectation should hold on every future audit, and one
+        with no violations today is the best kind rather than a claim that
+        failed to reproduce.
+
+        This lists them described rather than reproduced, exactly as the report
+        carries them. Fetch one proposal to see the values it would permit.
+      operationId: listRunProposals
+      responses:
+        "200":
+          description: What was proposed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposals]
+                properties:
+                  proposals:
+                    type: array
+                    items: { $ref: "#/components/schemas/Proposal" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /runs/{runId}/proposals/{proposalId}:
+    parameters:
+      - $ref: "#/components/parameters/RunID"
+      - name: proposalId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [runs]
+      summary: One proposed rule, including the values it would permit.
+      description: |
+        **This endpoint can serve raw customer data**, and is the only one
+        besides the per-finding rows endpoint that does. A proposed `one_of`
+        rule permits a list materialized from the customer's own column, so
+        reviewing one means reading cell values — an accept screen that cannot
+        show what it is about to bless is not a review.
+
+        It is bounded the same way: one named proposal at a time, never inside
+        a list response, and never logged.
+
+        A proposal id identifies what the rule asserts rather than the words
+        around it, so the same expectation proposed on three runs has one id.
+      operationId: getRunProposal
+      responses:
+        "200":
+          description: The proposal.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposal]
+                properties:
+                  proposal: { $ref: "#/components/schemas/Proposal" }
+                  yaml:
+                    type: string
+                    description: The rule as it would appear in a rules file.
+                  values_note:
+                    type: string
+                    description: Present when the rule permits a materialized set,
+                      saying what those values are and are not.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /runs/{runId}/findings/{findingId}/rows:
     parameters:
       - $ref: "#/components/parameters/RunID"
@@ -554,6 +716,47 @@ components:
             errors: { type: integer }
             warnings: { type: integer }
             info: { type: integer }
+
+    Proposal:
+      type: object
+      description: |
+        A rule proposed for future audits, or one already accepted. It carries
+        the shape of the expectation and a count of what it permits, never the
+        values themselves — those come from one proposal at a time.
+      required: [id, rule, target, expect, severity, violations_now]
+      properties:
+        id:
+          type: string
+          description: Identifies what the rule asserts, so the same expectation
+            proposed on several runs is one thing to decide about.
+        rule: { type: string, description: The rule's slug, as it appears in findings. }
+        description: { type: string }
+        rationale:
+          type: string
+          description: Why it was proposed, in the model's words. It carries no
+            authority of its own.
+        target: { type: string, description: The source name a person recognizes. }
+        table: { type: string, description: The SQL name the rule is written against. }
+        column: { type: string }
+        expect:
+          type: string
+          enum: [not_null, unique, positive, non_negative, one_of, matches, range,
+                 not_future, references, sql]
+        severity:
+          type: string
+          enum: [info, warning, error]
+        violations_now:
+          type: integer
+          description: What the rule measured when it was proposed. Zero is the
+            good case — an expectation that already holds.
+        permitted_value_count:
+          type: integer
+          description: How many values a one_of rule permits.
+        permitted_values:
+          type: array
+          items: { type: string }
+          description: The values themselves. Present only when one proposal was
+            fetched by id, or when a report was asked to include values.
 
     AgentTrace:
       type: object

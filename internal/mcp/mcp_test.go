@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,6 +40,9 @@ type session struct {
 	*sdk.ClientSession
 	t    *testing.T
 	sent *bytes.Buffer
+	// dir is the server's data directory, for a test that needs to look at
+	// what Veritix wrote there.
+	dir string
 }
 
 func connect(t *testing.T, opts Options) *session {
@@ -91,7 +95,7 @@ func connectWithStore(t *testing.T, opts Options, st *store.Store) *session {
 	}
 	t.Cleanup(func() { _ = cs.Close() })
 
-	return &session{ClientSession: cs, t: t, sent: &sent}
+	return &session{ClientSession: cs, t: t, sent: &sent, dir: dir}
 }
 
 // call invokes a tool and decodes its structured result, failing the test if
@@ -430,5 +434,64 @@ func TestTheInstructionsStateTheEgressPolicy(t *testing.T) {
 	}
 	if !strings.Contains(res.Instructions, "no verbatim cell values") {
 		t.Error("the instructions do not state the egress policy")
+	}
+}
+
+// A rule accepted in the browser is in force for an audit an assistant starts,
+// because both doors open onto the same building. An entry point that quietly
+// skipped the dataset's own rules would report a different answer for the same
+// data depending on how it was asked for, which is what internal/runs exists
+// to prevent.
+func TestAnAcceptedRuleAppliesToAnAuditStartedOverMCP(t *testing.T) {
+	s := connect(t, Options{})
+
+	var ds struct {
+		ID string `json:"id"`
+	}
+	s.call("register_dataset", map[string]any{"path": fixtureDataset}, &ds)
+
+	// What the accept endpoint writes, written directly: this test is about
+	// whether the audit reads it, not about how it got there.
+	dir := filepath.Join(s.dir, "datasets", ds.ID)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	body := `version: 1
+rules:
+  - id: status_domain
+    description: status is drawn from a fixed vocabulary
+    table: customers_csv
+    column: status
+    expect: one_of
+    values: [Active, Inactive, Suspended, Closed]
+    ignore_case: true
+    allow_missing: true
+`
+	if err := os.WriteFile(filepath.Join(dir, "rules.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out struct {
+		Run struct {
+			ID string `json:"id"`
+		} `json:"run"`
+		Findings []struct {
+			Rule  string `json:"rule"`
+			Count int64  `json:"affected_count"`
+		} `json:"findings"`
+	}
+	s.call("audit_dataset", map[string]any{"dataset_id": ds.ID}, &out)
+
+	var found bool
+	for _, f := range out.Findings {
+		if f.Rule == "rule.status_domain" {
+			found = true
+			if f.Count != 1 {
+				t.Errorf("the rule caught %d rows, want 1", f.Count)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the dataset's accepted rules did not run: %+v", out.Findings)
 	}
 }

@@ -163,6 +163,19 @@ func (s *Server) auditDataset(ctx context.Context, _ *sdk.CallToolRequest, in au
 		return nil, auditOut{}, err
 	}
 
+	// Rules accepted for this dataset in the interface are in force here too.
+	// An audit started over MCP that ignored them would report a different
+	// answer for the same dataset depending on which door it was asked
+	// through, which is the thing internal/runs exists to prevent.
+	accepted, err := runs.AcceptedRules(s.opts.Config.Server.DataDir, ds.ID)
+	if err != nil {
+		return nil, auditOut{}, err
+	}
+	ruleFile, err := runs.Merge(s.opts.Rules, accepted)
+	if err != nil {
+		return nil, auditOut{}, err
+	}
+
 	run, err := s.opts.Store.CreateRun(ctx, ds.ID, s.opts.Version, "")
 	if err != nil {
 		return nil, auditOut{}, fmt.Errorf("could not create the run: %w", err)
@@ -195,7 +208,7 @@ func (s *Server) auditDataset(ctx context.Context, _ *sdk.CallToolRequest, in au
 			Paths:        []string{ds.Path},
 			Engine:       s.opts.Config.Engine,
 			DatabasePath: dbPath,
-			Rules:        s.opts.Rules,
+			Rules:        ruleFile,
 			Agent:        agentOpts,
 			Profile:      profile.Options{TopValues: s.opts.TopValues},
 		},

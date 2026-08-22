@@ -137,6 +137,26 @@ var migrations = []string{
 		document   BLOB NOT NULL,
 		created_at TEXT NOT NULL
 	);`,
+
+	// Rules the agent proposed. Unlike a finding, a proposal is not in the
+	// report document in full: a one_of rule's permitted values are cell
+	// values materialized from the data, and the report omits those the way it
+	// omits every other value. So the store keeps the whole proposal and the
+	// report keeps its shape, which is the same division as findings and their
+	// row queries.
+	//
+	// The proposal itself is an opaque blob for the reason the report document
+	// and the trace are: what the store knows is which run proposed what, and
+	// changing the shape of a rule should not be a database migration.
+	`CREATE TABLE proposals (
+		run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+		id         TEXT NOT NULL,
+		ordinal    INTEGER NOT NULL,
+		rule       TEXT NOT NULL,
+		document   BLOB NOT NULL,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (run_id, id)
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

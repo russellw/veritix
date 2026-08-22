@@ -21,11 +21,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/russellw/veritix/internal/audit"
 	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/report"
+	"github.com/russellw/veritix/internal/rules"
 	"github.com/russellw/veritix/internal/store"
 )
 
@@ -137,6 +139,16 @@ func Execute(ctx context.Context, o Options) error {
 		return err
 	}
 
+	// Proposals and the trace are stored last, and neither failure fails the
+	// run: the findings are already safe, and losing a suggestion or the
+	// record of how it was arrived at is worth a loud log line rather than
+	// throwing away a completed audit.
+	if len(res.Proposals) > 0 {
+		if err := o.Store.SaveProposals(recordCtx, o.RunID, storeProposals(res.Proposals)); err != nil {
+			log.Error("could not record the proposed rules", "run", o.RunID, "error", err)
+		}
+	}
+
 	// The trace is stored last and its failure does not fail the run: the
 	// findings are already safe, and losing the record of how they were
 	// investigated is worth a loud log line rather than throwing away a
@@ -176,6 +188,97 @@ func storeFindings(set *finding.Set) []store.Finding {
 		})
 	}
 	return out
+}
+
+// storeProposals reduces proposals to what the store keeps: identity, plus the
+// proposal itself as a document.
+//
+// The document is the whole rule, permitted values included, which is what no
+// report carries. A proposal whose values cannot be encoded is dropped with a
+// note rather than failing the run, for the same reason the trace is.
+func storeProposals(ps []rules.Proposal) []store.Proposal {
+	out := make([]store.Proposal, 0, len(ps))
+	for i, p := range ps {
+		body, err := json.Marshal(p)
+		if err != nil {
+			continue
+		}
+		out = append(out, store.Proposal{
+			ID: p.ID(), Ordinal: i, Rule: p.Rule.ID, Document: body,
+		})
+	}
+	return out
+}
+
+// DatasetRulesPath is where the rules accepted for a dataset live.
+//
+// It sits beside the runs directory under the data directory, so that the
+// layout of what Veritix writes is described in one place. The file is the
+// server's, written only by the accept endpoint; a customer's own rules file
+// stays wherever they keep it and is passed in separately, and the two are
+// additive.
+func DatasetRulesPath(dataDir, datasetID string) (string, error) {
+	if err := checkID(datasetID); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(dataDir, "datasets", datasetID)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("could not create the dataset directory: %w", err)
+	}
+	return filepath.Join(dir, "rules.yaml"), nil
+}
+
+// AcceptedRules loads the rules accepted for a dataset, or nil if none have
+// been.
+//
+// Every entry point that audits a dataset by id calls this, so that a rule
+// somebody accepted in the browser is in force for an audit started over MCP
+// as well. An entry point that quietly skipped it would report different
+// results for the same dataset depending on how the audit was asked for.
+func AcceptedRules(dataDir, datasetID string) (*rules.File, error) {
+	if err := checkID(datasetID); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dataDir, "datasets", datasetID, "rules.yaml")
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("could not read the accepted rules: %w", err)
+	}
+	return rules.Load(path)
+}
+
+// checkID refuses an id that is not one the store generated, so that
+// everything built from it stays inside the data directory. Ids are UUIDs;
+// anything carrying a separator or a dot segment is not one, whatever else it
+// might be.
+func checkID(id string) error {
+	if id == "" || id != filepath.Base(id) || strings.ContainsAny(id, `/\`) ||
+		strings.Contains(id, "..") {
+		return fmt.Errorf("%q is not an id", id)
+	}
+	return nil
+}
+
+// Merge combines the rules in force from more than one source, skipping empty
+// ones, and refuses a collision rather than letting one file silently redefine
+// another's rule.
+func Merge(files ...*rules.File) (*rules.File, error) {
+	out := &rules.File{Version: 1}
+	for _, f := range files {
+		if f == nil {
+			continue
+		}
+		out.Rules = append(out.Rules, f.Rules...)
+	}
+	if len(out.Rules) == 0 {
+		return nil, nil
+	}
+	if err := out.Validate(); err != nil {
+		return nil, fmt.Errorf("the rules in force cannot be applied together: %w", err)
+	}
+	return out, nil
 }
 
 // DatabasePath is where a run's ingested dataset lives, created if it does not

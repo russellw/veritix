@@ -390,40 +390,50 @@ func Build(res *audit.Result, version string, opts Options) *Document {
 func buildProposals(ps []rules.Proposal, opts Options) []ProposalInfo {
 	out := make([]ProposalInfo, 0, len(ps))
 	for _, p := range ps {
-		severity := finding.Error
-		if p.Rule.Severity != nil {
-			severity = *p.Rule.Severity
-		}
-		target := p.Display
-		if target == "" {
-			target = p.Rule.Table
-		}
-		if p.Rule.Column != "" {
-			target += "." + p.Rule.Column
-		}
-
-		info := ProposalInfo{
-			ID:                  p.ID(),
-			Rule:                p.Rule.ID,
-			Description:         p.Rule.Description,
-			Rationale:           p.Rationale,
-			Target:              target,
-			Table:               p.Rule.Table,
-			Column:              p.Rule.Column,
-			Expect:              string(p.Rule.Expect),
-			Severity:            severity.String(),
-			ViolationsNow:       p.ViolationsNow,
-			PermittedValueCount: len(p.Rule.Values),
-		}
-		if opts.IncludeValues {
-			info.PermittedValues = p.Rule.Values
-		}
-		out = append(out, info)
+		out = append(out, DescribeProposal(p, opts.IncludeValues))
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// DescribeProposal renders one proposal the way a report describes it.
+//
+// It is exported because the API lists proposals too, and a second renderer
+// would eventually disagree with this one about what a reader is shown — the
+// same argument that keeps the API serving the stored report document verbatim
+// rather than rebuilding it.
+func DescribeProposal(p rules.Proposal, includeValues bool) ProposalInfo {
+	severity := finding.Error
+	if p.Rule.Severity != nil {
+		severity = *p.Rule.Severity
+	}
+	target := p.Display
+	if target == "" {
+		target = p.Rule.Table
+	}
+	if p.Rule.Column != "" {
+		target += "." + p.Rule.Column
+	}
+
+	info := ProposalInfo{
+		ID:                  p.ID(),
+		Rule:                p.Rule.ID,
+		Description:         p.Rule.Description,
+		Rationale:           p.Rationale,
+		Target:              target,
+		Table:               p.Rule.Table,
+		Column:              p.Rule.Column,
+		Expect:              string(p.Rule.Expect),
+		Severity:            severity.String(),
+		ViolationsNow:       p.ViolationsNow,
+		PermittedValueCount: len(p.Rule.Values),
+	}
+	if includeValues {
+		info.PermittedValues = p.Rule.Values
+	}
+	return info
 }
 
 func buildTable(lt *ingest.Table, pt *profile.Table, opts Options) TableInfo {
