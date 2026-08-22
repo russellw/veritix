@@ -25,6 +25,7 @@ func WriteText(w io.Writer, res *audit.Result, opts Options) error {
 	p.newline()
 
 	writeFindingsText(p, doc)
+	writeProposalsText(p, doc)
 
 	if len(doc.Skipped) > 0 {
 		p.printf("Files not read (%d)\n", len(doc.Skipped))
@@ -67,6 +68,50 @@ func writeAgentText(p *printer, a *AgentInfo) {
 	if !a.Complete {
 		p.printf("  ! the investigation stopped early (%s), so it may be incomplete\n", a.Stopped)
 	}
+}
+
+// writeProposalsText renders the proposed rules.
+//
+// They sit after the findings and before the profile, in the same place in the
+// document as in the argument: here is what is wrong, and here is what would
+// catch it next time. The section states plainly that nothing has been
+// applied, because a list of rules in an audit report reads as a list of rules
+// in force unless it says otherwise.
+func writeProposalsText(p *printer, doc *Document) {
+	if len(doc.Proposals) == 0 {
+		return
+	}
+
+	p.printf("%d rule(s) proposed for future audits\n", len(doc.Proposals))
+	p.printf("  %s\n", wrap("None of these is in force. Each one is a suggestion, "+
+		"measured against this data; accept one into your rules file and Veritix "+
+		"enforces it on every audit from then on, with no model involved.", 2))
+
+	for _, pr := range doc.Proposals {
+		p.printf("\n  %s\n", pr.Description)
+		p.printf("    %s on %s   [%s, %s]\n", pr.Expect, pr.Target, pr.Rule, pr.Severity)
+
+		switch pr.ViolationsNow {
+		case 0:
+			p.printf("    nothing breaks it today\n")
+		case 1:
+			p.printf("    1 row breaks it today\n")
+		default:
+			p.printf("    %d rows break it today\n", pr.ViolationsNow)
+		}
+		if pr.PermittedValueCount > 0 && len(pr.PermittedValues) == 0 {
+			p.printf("    %s\n", wrap(fmt.Sprintf(
+				"permits the %d values the column holds today; they are not listed here, "+
+					"and have to be read before this is accepted", pr.PermittedValueCount), 4))
+		}
+		if len(pr.PermittedValues) > 0 {
+			p.printf("    permits: %s\n", wrap(strings.Join(pr.PermittedValues, ", "), 4))
+		}
+		if pr.Rationale != "" {
+			p.printf("    %s\n", wrap(pr.Rationale, 4))
+		}
+	}
+	p.newline()
 }
 
 func writeTable(p *printer, t TableInfo) {

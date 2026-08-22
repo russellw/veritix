@@ -8,6 +8,8 @@ import (
 
 	"github.com/russellw/veritix/internal/audit"
 	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/rules"
 )
 
 const fixtureDir = "../../testdata/dirty-retail"
@@ -21,6 +23,41 @@ var rawValuesInFixture = []string{
 	"Zürich", "München", "Montréal",
 	"Doohickey", "Widget",
 	"Quarterly Sales Report",
+}
+
+// proposedValues are what a one_of proposal's permitted set looks like: the
+// contents of the fixture's status column, materialized by rules.Materialize.
+// They are cell values, so the report may not carry them either.
+var proposedValues = []string{"ACTIVE", "Actve", "Inactive"}
+
+// withProposals attaches what an agentic run would have produced. The report
+// renders what it is given, so the proposals are written out here rather than
+// obtained by running a model.
+func withProposals(t *testing.T, res *audit.Result) *audit.Result {
+	t.Helper()
+	warning := finding.Warning
+	res.Proposals = []rules.Proposal{
+		{
+			Rule: rules.Rule{
+				ID: "status_domain", Description: "status is drawn from a fixed vocabulary",
+				Table: "customers_csv", Column: "status", Expect: rules.ExpectOneOf,
+				Values: proposedValues, IgnoreCase: true, AllowMissing: true,
+				Severity: &warning,
+			},
+			Display:   "customers.csv",
+			Rationale: "status drives billing, so a new spelling of it is a billing defect",
+		},
+		{
+			Rule: rules.Rule{
+				ID: "amount_within_reason", Description: "an order above a million needs sign-off",
+				Table: "orders_csv", Expect: rules.ExpectSQL,
+				Where: "TRY_CAST(amount AS DOUBLE) > 1000000",
+			},
+			Display:       "orders.csv",
+			ViolationsNow: 1,
+		},
+	}
+	return res
 }
 
 func run(t *testing.T) *audit.Result {
@@ -41,7 +78,7 @@ func run(t *testing.T) *audit.Result {
 // contents. The report is the same boundary — it gets emailed and pasted into
 // tickets — so it is tested the same way.
 func TestDefaultReportContainsNoRawValues(t *testing.T) {
-	res := run(t)
+	res := withProposals(t, run(t))
 
 	// HTML matters most here: it is the format that gets emailed.
 	for _, format := range []string{"json", "text", "html", "sarif"} {
@@ -66,7 +103,7 @@ func TestDefaultReportContainsNoRawValues(t *testing.T) {
 			if len(out) < 500 {
 				t.Fatalf("report is suspiciously short (%d bytes); it may be empty", len(out))
 			}
-			for _, raw := range rawValuesInFixture {
+			for _, raw := range append(append([]string(nil), rawValuesInFixture...), proposedValues...) {
 				if strings.Contains(out, raw) {
 					t.Errorf("the default %s report leaks the raw value %q", format, raw)
 				}
@@ -277,5 +314,81 @@ func TestSARIFStructure(t *testing.T) {
 		default:
 			t.Errorf("invalid SARIF level %q", res.Level)
 		}
+	}
+}
+
+// A proposed one_of rule permits a list materialized from the data, so the
+// report describes the rule and counts what it permits without reproducing it.
+// The values are for the rules file rules.RenderProposals writes and for the
+// person accepting the rule, not for something that gets emailed.
+func TestAProposedVocabularyIsCountedNotListed(t *testing.T) {
+	res := withProposals(t, run(t))
+
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, res, "test", Options{Indent: true}); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+	var doc Document
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if len(doc.Proposals) != 2 {
+		t.Fatalf("the report carries %d proposals, want 2", len(doc.Proposals))
+	}
+	p := doc.Proposals[0]
+	if p.PermittedValueCount != len(proposedValues) {
+		t.Errorf("permitted_value_count = %d, want %d", p.PermittedValueCount, len(proposedValues))
+	}
+	if len(p.PermittedValues) != 0 {
+		t.Errorf("the default report lists the permitted values: %q", p.PermittedValues)
+	}
+	if p.ID == "" || p.Target != "customers.csv.status" || p.Expect != "one_of" {
+		t.Errorf("the proposal is not described well enough to act on: %+v", p)
+	}
+	if p.Severity != "warning" {
+		t.Errorf("severity = %q, want the model's suggestion of warning", p.Severity)
+	}
+	if doc.Proposals[1].ViolationsNow != 1 {
+		t.Errorf("violations_now = %d, want 1", doc.Proposals[1].ViolationsNow)
+	}
+
+	// Asking for values must produce them here too, or the flag means
+	// something different in one section of one document.
+	buf.Reset()
+	if err := WriteJSON(&buf, res, "test", Options{IncludeValues: true, Indent: true}); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Actve") {
+		t.Error("--include-values did not list what the proposed rule permits")
+	}
+}
+
+// A list of rules inside an audit report reads as a list of rules in force
+// unless it says otherwise, and a customer who believes they are protected by
+// something nobody accepted is worse off than one who knows they are not.
+func TestTheReportSaysProposalsAreNotInForce(t *testing.T) {
+	res := withProposals(t, run(t))
+
+	for _, format := range []string{"text", "html"} {
+		t.Run(format, func(t *testing.T) {
+			var buf bytes.Buffer
+			var err error
+			if format == "html" {
+				err = WriteHTML(&buf, res, "test", Options{})
+			} else {
+				err = WriteText(&buf, res, Options{})
+			}
+			if err != nil {
+				t.Fatalf("writing %s: %v", format, err)
+			}
+			out := buf.String()
+			if !strings.Contains(out, "in force") {
+				t.Errorf("the %s report does not say the proposals are not in force", format)
+			}
+			if !strings.Contains(out, "amount_within_reason") {
+				t.Errorf("the %s report does not name what was proposed", format)
+			}
+		})
 	}
 }

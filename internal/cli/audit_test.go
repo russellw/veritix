@@ -14,6 +14,7 @@ import (
 
 	"github.com/russellw/veritix/internal/agent"
 	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/rules"
 	"github.com/russellw/veritix/internal/telemetry"
 )
 
@@ -175,5 +176,98 @@ func TestTraceOutRejectsAnUnwritablePathBeforeAuditing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "trace file") {
 		t.Errorf("the error does not say what could not be created: %v", err)
+	}
+}
+
+// The end of the rule-proposal path from the command line: a model proposes,
+// Veritix measures, and what lands on disk is a rules file the customer can
+// read and load. Anything less than that round trip is a feature that only
+// works in a test.
+func TestProposedRulesAreWrittenAsAFileThatLoads(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := filepath.Join(dir, "proposed.yaml")
+
+	call := `{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[` +
+		`{"id":"c1","type":"function","function":{"name":"propose_rule","arguments":` +
+		`"{\"rule\":\"status_domain\",\"description\":\"status is drawn from a fixed vocabulary\",` +
+		`\"rationale\":\"status drives billing\",\"table\":\"customers_csv\",\"column\":\"status\",` +
+		`\"expect\":\"one_of\",\"ignore_case\":true,\"allow_missing\":true,\"violations_now\":0}"}}]}}]}`
+	base := stubChatModel(t, call,
+		`{"choices":[{"finish_reason":"stop","message":{"content":"Nothing further."}}]}`)
+
+	if _, err := runCmd(t, fixtureDir,
+		"--llm", "openai-compatible",
+		"--llm-base-url", base,
+		"--llm-model", "stub",
+		"--output", filepath.Join(dir, "report.txt"),
+		"--propose-rules-out", rulesPath,
+	); err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+
+	raw, err := os.ReadFile(rulesPath) //nolint:gosec // a path this test just made
+	if err != nil {
+		t.Fatalf("reading the proposed rules: %v", err)
+	}
+	if !strings.Contains(string(raw), "in force") {
+		t.Errorf("the file does not say the rules are not in force:\n%s", raw)
+	}
+
+	// The permitted set was materialized from the column, which is the half
+	// the model never saw.
+	if !strings.Contains(string(raw), "Actve") {
+		t.Errorf("the vocabulary was not filled in from the data:\n%s", raw)
+	}
+
+	f, err := rules.Load(rulesPath)
+	if err != nil {
+		t.Fatalf("what was proposed does not load as a rules file: %v", err)
+	}
+	if len(f.Rules) != 1 || f.Rules[0].ID != "status_domain" {
+		t.Fatalf("loaded %+v", f.Rules)
+	}
+	if f.Rules[0].Expect != rules.ExpectOneOf || len(f.Rules[0].Values) < 3 {
+		t.Errorf("the loaded rule is not the one that was proposed: %+v", f.Rules[0])
+	}
+}
+
+// Asking for proposed rules with no model to propose them is refused before
+// the audit, like every other flag that cannot be honored.
+func TestProposeRulesOutRefusesWhatItCannotDo(t *testing.T) {
+	_, err := runCmd(t, filepath.Join(t.TempDir(), "no-such-dataset"),
+		"--propose-rules-out", filepath.Join(t.TempDir(), "rules.yaml"))
+	if err == nil {
+		t.Fatal("asking for proposed rules with no model configured was accepted")
+	}
+	if !strings.Contains(err.Error(), "--llm") {
+		t.Errorf("the refusal does not name the fix: %v", err)
+	}
+}
+
+// A run that proposes nothing still writes the file it was asked for, saying
+// so. A path that silently does not exist is indistinguishable from a failure.
+func TestAnEmptyProposalFileSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	rulesPath := filepath.Join(dir, "proposed.yaml")
+
+	if _, err := runCmd(t, fixtureDir,
+		"--llm", "openai-compatible",
+		"--llm-base-url", stubChatModel(t),
+		"--llm-model", "stub",
+		"--output", filepath.Join(dir, "report.txt"),
+		"--propose-rules-out", rulesPath,
+	); err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+
+	raw, err := os.ReadFile(rulesPath) //nolint:gosec // a path this test just made
+	if err != nil {
+		t.Fatalf("reading the proposed rules: %v", err)
+	}
+	if !strings.Contains(string(raw), "proposed no rules") {
+		t.Errorf("the file does not say why it is empty:\n%s", raw)
+	}
+	if _, err := rules.Load(rulesPath); err != nil {
+		t.Errorf("an empty proposal file does not load: %v", err)
 	}
 }

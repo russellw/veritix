@@ -126,6 +126,33 @@ report that tells someone else which datasets you are auditing.
   {{end}}
 {{end}}
 
+{{if .Proposals}}
+<h2>Rules proposed for future audits</h2>
+<p class="sub">
+  None of these is in force. Each is a suggestion, measured against this data;
+  accept one into your rules file and Veritix enforces it on every audit from
+  then on, with no model involved.
+</p>
+{{range .Proposals}}
+<div class="finding {{.Severity}}">
+  <h4><span class="badge {{.Severity}}">{{.Expect}}</span>{{if .Description}}{{.Description}}{{else}}{{.Rule}}{{end}}</h4>
+  <div class="where">
+    {{.Target}} &nbsp;·&nbsp; {{.Rule}} &nbsp;·&nbsp;
+    {{if .ViolationsNow}}{{.ViolationsNow}} row(s) break it today{{else}}nothing breaks it today{{end}}
+  </div>
+  {{if .Rationale}}<p class="detail">{{.Rationale}}</p>{{end}}
+  {{if .PermittedValues}}
+    <p class="detail">Permits: <span class="mono">{{range $i, $v := .PermittedValues}}{{if $i}}, {{end}}{{$v}}{{end}}</span></p>
+  {{else if .PermittedValueCount}}
+    <p class="detail">
+      Permits the {{.PermittedValueCount}} values the column holds today. They are
+      not listed in this report, and have to be read before this is accepted.
+    </p>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
 <h2>Tables</h2>
 {{range .Tables}}
 <h3>{{.Source}}</h3>

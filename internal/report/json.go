@@ -8,8 +8,10 @@ import (
 
 	"github.com/russellw/veritix/internal/agent"
 	"github.com/russellw/veritix/internal/audit"
+	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/ingest"
 	"github.com/russellw/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/rules"
 )
 
 // SchemaVersion identifies the JSON contract. It is declared in the output so
@@ -52,6 +54,50 @@ type Document struct {
 	// absent from a deterministic-only audit rather than present and empty, so
 	// that a reader can tell at a glance whether a model was involved at all.
 	Agent *AgentInfo `json:"agent,omitempty"`
+
+	// Proposals are rules suggested for future audits. They are not findings
+	// and nothing has been applied: they are here so that a reader of the
+	// report knows what was suggested, and so that whoever accepts one is
+	// looking at the same document as everybody else.
+	Proposals []ProposalInfo `json:"rule_proposals,omitempty"`
+}
+
+// ProposalInfo is one proposed rule, as a report describes it.
+//
+// It carries the shape of the rule and not its contents. A one_of rule's
+// permitted set is materialized from the data — see rules.Materialize — so it
+// is cell values, and a report is a file that gets emailed, committed and
+// pasted into tickets. The count is here; the values are written out by
+// rules.RenderProposals, which produces a rules file rather than a report, and
+// by --include-values for a reader who has already decided that this report may
+// carry them.
+type ProposalInfo struct {
+	// ID is stable across runs: it identifies what the rule asserts, so the
+	// same expectation proposed on three runs is one thing to decide about.
+	ID   string `json:"id"`
+	Rule string `json:"rule"`
+
+	Description string `json:"description,omitempty"`
+	Rationale   string `json:"rationale,omitempty"`
+
+	// Target is the source name a person recognizes; Table is the SQL name the
+	// rule is written against.
+	Target string `json:"target"`
+	Table  string `json:"table"`
+	Column string `json:"column,omitempty"`
+
+	Expect   string `json:"expect"`
+	Severity string `json:"severity"`
+
+	// ViolationsNow is what the rule measured when it was proposed. Zero is
+	// the good case: an expectation that already holds.
+	ViolationsNow int64 `json:"violations_now"`
+
+	// PermittedValueCount is how many values a one_of rule would allow.
+	PermittedValueCount int `json:"permitted_value_count,omitempty"`
+	// PermittedValues are those values, present only when the report was asked
+	// to include verbatim values.
+	PermittedValues []string `json:"permitted_values,omitempty"`
 }
 
 // AgentInfo is what the agentic pass did.
@@ -313,6 +359,7 @@ func Build(res *audit.Result, version string, opts Options) *Document {
 	}
 
 	doc.Agent = buildAgent(res.Trace)
+	doc.Proposals = buildProposals(res.Proposals, opts)
 	doc.Findings, doc.FindingSummary = buildFindings(res)
 	if !opts.IncludeValues {
 		doc.Redacted.Note = "Verbatim cell values are omitted. Counts, distributions, " +
@@ -336,6 +383,47 @@ func Build(res *audit.Result, version string, opts Options) *Document {
 		doc.Tables = append(doc.Tables, buildTable(lt, pt, opts))
 	}
 	return doc
+}
+
+// buildProposals describes what was proposed without reproducing what it
+// permits.
+func buildProposals(ps []rules.Proposal, opts Options) []ProposalInfo {
+	out := make([]ProposalInfo, 0, len(ps))
+	for _, p := range ps {
+		severity := finding.Error
+		if p.Rule.Severity != nil {
+			severity = *p.Rule.Severity
+		}
+		target := p.Display
+		if target == "" {
+			target = p.Rule.Table
+		}
+		if p.Rule.Column != "" {
+			target += "." + p.Rule.Column
+		}
+
+		info := ProposalInfo{
+			ID:                  p.ID(),
+			Rule:                p.Rule.ID,
+			Description:         p.Rule.Description,
+			Rationale:           p.Rationale,
+			Target:              target,
+			Table:               p.Rule.Table,
+			Column:              p.Rule.Column,
+			Expect:              string(p.Rule.Expect),
+			Severity:            severity.String(),
+			ViolationsNow:       p.ViolationsNow,
+			PermittedValueCount: len(p.Rule.Values),
+		}
+		if opts.IncludeValues {
+			info.PermittedValues = p.Rule.Values
+		}
+		out = append(out, info)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func buildTable(lt *ingest.Table, pt *profile.Table, opts Options) TableInfo {

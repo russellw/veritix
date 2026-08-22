@@ -59,6 +59,8 @@ make eval                                    # score the checks against the mani
 ./bin/veritix audit testdata/dirty-retail \
     --llm openai-compatible --llm-base-url http://localhost:11434/v1 --llm-model qwen3
 ./bin/veritix audit testdata/dirty-retail --llm anthropic --trace-out trace.json
+./bin/veritix audit testdata/dirty-retail --llm anthropic \
+    --propose-rules-out proposed.yaml   # rules to review, then load with --rules
 
 ./bin/veritix serve                          # loopback, no token
 ./bin/veritix serve --addr 0.0.0.0:8080 --auth-token "$(openssl rand -hex 16)"
@@ -264,9 +266,13 @@ what is true.**
   shape and `rules.Materialize` fills the permitted set in from the data, in
   the process, for a person to review. The tool result carries the *count* of
   those values and never the values; `TestAProposalsValuesNeverReachTheModel`
-  pins it. Nothing is applied: proposals reach `audit.Result.Proposals` and go
-  no further yet — the report section, the store and the accept flow are the
-  rest of M6b.
+  pins it. Nothing is applied. Proposals ride in the same `report.Document` as
+  their own section — the *shape* of each rule and a count of what it permits,
+  never the values, because a report is a file that gets emailed — and
+  `rules.RenderProposals` writes them out as a rules file, which is the one
+  place the permitted values are written, since a `one_of` rule without them is
+  not a rule. `audit --propose-rules-out` is that file from the command line.
+  The store, the endpoints and the web accept flow are the rest of M6b.
 - **The egress guard is enforced by two types, not by diligence.**
   `redact.Text` is the only string type that may hold customer content and only
   a `Guard` method makes one; `redact.Sealed` is the only thing the loop sends

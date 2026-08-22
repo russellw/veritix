@@ -29,6 +29,7 @@ type auditOptions struct {
 	rulesPath     string
 	topValues     int
 	traceOut      string
+	proposeOut    string
 
 	// The LLM flags override configuration for this run. They are here rather
 	// than on the root command because the agent is a property of an audit,
@@ -85,6 +86,8 @@ func newAuditCmd(e *env) *cobra.Command {
 		"permit the model to see cell values, masked; off by default, and the report says which was used")
 	f.StringVar(&opts.traceOut, "trace-out", "",
 		"write the agent's trace here as JSON: every payload sent and received (- for stdout)")
+	f.StringVar(&opts.proposeOut, "propose-rules-out", "",
+		"write the rules the agent proposed here as YAML, to review and load with --rules (- for stdout)")
 
 	return cmd
 }
@@ -133,6 +136,12 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 		return err
 	}
 	defer closeTrace()
+
+	proposeOut, closePropose, err := openProposals(cmd, opts, agentOpts != nil)
+	if err != nil {
+		return err
+	}
+	defer closePropose()
 
 	var ruleFile *rules.File
 	if opts.rulesPath != "" {
@@ -183,6 +192,12 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 		}
 	}
 
+	if proposeOut != nil {
+		if err := writeProposals(proposeOut, res, e); err != nil {
+			return err
+		}
+	}
+
 	return failOn(res, opts.failOn)
 }
 
@@ -212,6 +227,51 @@ func openTrace(cmd *cobra.Command, opts auditOptions, haveModel bool) (io.Writer
 		return nil, nil, fmt.Errorf("creating trace file: %w", err)
 	}
 	return f, func() { _ = f.Close() }, nil
+}
+
+// openProposals resolves --propose-rules-out, before the audit for the same
+// reason --trace-out is resolved before it.
+func openProposals(cmd *cobra.Command, opts auditOptions, haveModel bool) (io.Writer, func(), error) {
+	if opts.proposeOut == "" {
+		return nil, func() {}, nil
+	}
+	if !haveModel {
+		return nil, nil, fmt.Errorf(
+			"--propose-rules-out needs a model to propose the rules: pass --llm, or set " +
+				"llm.provider in the configuration")
+	}
+	if opts.proposeOut == "-" {
+		if opts.output == "" || opts.output == "-" || opts.traceOut == "-" {
+			return nil, nil, fmt.Errorf(
+				"--propose-rules-out - would interleave with another document on stdout: " +
+					"send one of them to a file")
+		}
+		return cmd.OutOrStdout(), func() {}, nil
+	}
+	f, err := os.Create(opts.proposeOut) //nolint:gosec // the path is the operator's choice
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating rules file: %w", err)
+	}
+	return f, func() { _ = f.Close() }, nil
+}
+
+// writeProposals saves what the agent suggested as a rules file.
+//
+// It is written even when the agent proposed nothing, because the file was
+// asked for and an empty one that says so is easier to act on than a path that
+// silently does not exist. Nothing here is in force: the header says so, and
+// the customer moves what they accept into the file they load with --rules.
+func writeProposals(w io.Writer, res *audit.Result, e *env) error {
+	header := rules.ProposalHeader(res.Dataset.Root, res.StartedAt)
+	if len(res.Proposals) == 0 {
+		e.log.Info("the agent proposed no rules")
+		header += "\n\nThe agent proposed no rules in this run."
+	}
+	if err := rules.RenderProposals(w, res.Proposals, header); err != nil {
+		return err
+	}
+	e.log.Info("wrote proposed rules", "count", len(res.Proposals))
+	return nil
 }
 
 // writeTrace saves the record of what the model was sent and what it sent back.

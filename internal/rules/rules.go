@@ -94,52 +94,52 @@ type Rule struct {
 	// ID names the rule in reports. Required and unique within a file.
 	ID string `yaml:"id"`
 	// Description explains what the rule is for, in the report.
-	Description string `yaml:"description"`
+	Description string `yaml:"description,omitempty"`
 	// Severity defaults to error when omitted: a rule the customer wrote
 	// states an expectation they hold, not a suggestion. It is a pointer so
 	// that an omitted severity is distinguishable from an explicit "info".
-	Severity *finding.Severity `yaml:"severity"`
+	Severity *finding.Severity `yaml:"severity,omitempty"`
 
 	// Table selects tables by name or display path. A "*" matches any run of
 	// characters, so "*.csv" applies a rule to every CSV in the dataset.
 	Table string `yaml:"table"`
 	// Column selects a column, with the same globbing.
-	Column string `yaml:"column"`
+	Column string `yaml:"column,omitempty"`
 
 	// Expect is the assertion.
 	Expect Expectation `yaml:"expect"`
 
 	// Values enumerates the permitted values for one_of.
-	Values []string `yaml:"values"`
+	Values []string `yaml:"values,omitempty"`
 	// ValuesFrom asks Veritix to fill Values in from the data instead of
 	// listing them, which is how a rule proposed by a model gets a value
 	// list: the model is never shown a cell value, so it can propose the
 	// shape of the expectation but not its contents. Materialize resolves
 	// it; an accepted rule carries the concrete list.
-	ValuesFrom ValuesSource `yaml:"values_from"`
+	ValuesFrom ValuesSource `yaml:"values_from,omitempty"`
 	// Pattern is the regular expression for matches.
-	Pattern string `yaml:"pattern"`
+	Pattern string `yaml:"pattern,omitempty"`
 	// Min and Max bound a range. Either may be omitted.
-	Min *float64 `yaml:"min"`
-	Max *float64 `yaml:"max"`
+	Min *float64 `yaml:"min,omitempty"`
+	Max *float64 `yaml:"max,omitempty"`
 	// References names the table and column that must contain every value,
 	// written as "table.column".
-	References string `yaml:"references"`
+	References string `yaml:"references,omitempty"`
 	// Where is the violation predicate for expect: sql.
-	Where string `yaml:"where"`
+	Where string `yaml:"where,omitempty"`
 
 	// IgnoreCase compares text without regard to case or surrounding spaces.
 	// Usually what a human means, and rarely what SQL does by default.
-	IgnoreCase bool `yaml:"ignore_case"`
+	IgnoreCase bool `yaml:"ignore_case,omitempty"`
 	// AllowMissing exempts null and blank values from the rule, so that
 	// "must be one of these four values" does not also mean "and must be
 	// present". Completeness is a separate expectation.
-	AllowMissing bool `yaml:"allow_missing"`
+	AllowMissing bool `yaml:"allow_missing,omitempty"`
 
 	// Message overrides the generated finding title.
-	Message string `yaml:"message"`
+	Message string `yaml:"message,omitempty"`
 	// Remedy overrides the generated advice.
-	Remedy string `yaml:"remedy"`
+	Remedy string `yaml:"remedy,omitempty"`
 }
 
 // Load reads a rules file.
