@@ -9,9 +9,11 @@
 // — a column full of wrong-but-plausible values looks exactly like a column
 // full of right ones.
 //
-// Rules are also the destination for the agent's proposals in M4: the model
-// suggests a rule, a human reads it, and once accepted it becomes a
-// deterministic check that runs on every future audit without the model.
+// Rules are also the destination for the agent's proposals: the model suggests
+// a rule, a human reads it, and once accepted it becomes a deterministic check
+// that runs on every future audit without the model. That is the only way a
+// defect the model found on one run gets found on every run — see Materialize
+// for the part the model cannot write itself.
 package rules
 
 import (
@@ -59,6 +61,14 @@ const (
 	ExpectSQL Expectation = "sql"
 )
 
+// ValuesSource names where a one_of rule's permitted values come from when the
+// rule does not list them itself.
+type ValuesSource string
+
+// ValuesFromCurrent fills the permitted set with the distinct values the
+// column holds when the rule is materialized.
+const ValuesFromCurrent ValuesSource = "current"
+
 // Rule is one expectation about the data.
 type Rule struct {
 	// ID names the rule in reports. Required and unique within a file.
@@ -81,6 +91,12 @@ type Rule struct {
 
 	// Values enumerates the permitted values for one_of.
 	Values []string `yaml:"values"`
+	// ValuesFrom asks Veritix to fill Values in from the data instead of
+	// listing them, which is how a rule proposed by a model gets a value
+	// list: the model is never shown a cell value, so it can propose the
+	// shape of the expectation but not its contents. Materialize resolves
+	// it; an accepted rule carries the concrete list.
+	ValuesFrom ValuesSource `yaml:"values_from"`
 	// Pattern is the regular expression for matches.
 	Pattern string `yaml:"pattern"`
 	// Min and Max bound a range. Either may be omitted.
@@ -127,6 +143,19 @@ func Load(path string) (*File, error) {
 	if err := f.Validate(); err != nil {
 		return nil, fmt.Errorf("rules: %s: %w", filepath.Base(path), err)
 	}
+	// values_from is an instruction to Veritix, not an expectation about the
+	// data, and it is carried out once — when a proposed rule is accepted.
+	// Left in a file on disk it would mean "whatever is there today is
+	// permitted", which is a rule that cannot fire: the same disease as a
+	// rule that matches nothing, wearing a different coat.
+	for i := range f.Rules {
+		if f.Rules[i].ValuesFrom != "" {
+			return nil, fmt.Errorf(
+				"rules: %s: rule %q reads its values from the data, which is resolved when a "+
+					"proposed rule is accepted; an accepted rule lists the values it permits",
+				filepath.Base(path), f.Rules[i].ID)
+		}
+	}
 	return &f, nil
 }
 
@@ -167,11 +196,26 @@ func (f *File) Validate() error {
 				where, r.Expect)
 		}
 
+		if r.ValuesFrom != "" {
+			if r.ValuesFrom != ValuesFromCurrent {
+				return fmt.Errorf("%s reads its values from %q; the only source is %q",
+					where, r.ValuesFrom, ValuesFromCurrent)
+			}
+			if r.Expect != ExpectOneOf {
+				return fmt.Errorf("%s sets values_from, which fills in the list for one_of, but expects %s",
+					where, r.Expect)
+			}
+		}
+
 		switch r.Expect {
 		case ExpectNotNull, ExpectUnique, ExpectPositive, ExpectNonNegative, ExpectNotFuture:
 			// No further configuration.
 		case ExpectOneOf:
-			if len(r.Values) == 0 {
+			switch {
+			case len(r.Values) > 0 && r.ValuesFrom != "":
+				return fmt.Errorf("%s both lists values and reads them from the data; it can do one or the other",
+					where)
+			case len(r.Values) == 0 && r.ValuesFrom == "":
 				return fmt.Errorf("%s expects one_of but lists no values", where)
 			}
 		case ExpectMatches:

@@ -217,6 +217,13 @@ func violationPredicate(r *Rule, tbl, col string) (predicate, expected string, e
 			"values of zero or more", nil
 
 	case ExpectOneOf:
+		if len(r.Values) == 0 {
+			// Validate permits a rule that has asked for its values and not
+			// yet been given them. Evaluating one would render NOT IN (),
+			// which is a syntax error at best and a rule that permits
+			// everything at worst.
+			return "", "", fmt.Errorf("rule %q expects one_of but its values were never materialized", r.ID)
+		}
 		lhs, values := comparableList(r, col)
 		return fmt.Sprintf("%s AND %s NOT IN (%s)",
 				profile.SQLNonBlank(col), lhs, strings.Join(values, ", ")),

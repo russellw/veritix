@@ -45,11 +45,7 @@ func evaluateYAML(t *testing.T, body string) []finding.Finding {
 	t.Helper()
 	e, prof := fixture(t)
 
-	path := filepath.Join(t.TempDir(), "rules.yaml")
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f, err := Load(path)
+	f, err := Load(writeTemp(t, body))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
