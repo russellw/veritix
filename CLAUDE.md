@@ -514,6 +514,29 @@ is the operator's half; these are the decisions.
   spills to disk at its own limit and is OOMKilled at the cgroup's: the first
   costs time, the second costs the run. The base ships 2GB against 3Gi.
   `readOnlyRootFilesystem` is why `engine.temp_dir` points at an `emptyDir`.
+- **The image is built locally with Podman, and the Dockerfile has to stay
+  plain for that to keep working.** Podman is rootless and daemonless, so
+  building an image here costs nobody a `docker` group that is root in all but
+  name; `podman-docker` supplies a `docker` shim, so `make docker` is unchanged
+  and tags from `git describe` as usual. What buys that is the Dockerfile using
+  no BuildKit-only syntax — no `# syntax=`, no `--mount`, no `--link`, no
+  heredoc `RUN`. **Adding one would not fail; it would make the local build
+  stop matching the CI build**, which is the worse outcome, so add a BuildKit
+  feature only along with a decision about which builder is the authority.
+- **What the first real build settled, so nobody re-derives it:** the image is
+  118 MB; `corepack pnpm install --frozen-lockfile` works in a clean container;
+  `COPY --from=web` lands before the Go build, so `//go:embed all:dist` gets a
+  real bundle; distroless `cc-debian12` carries enough C runtime for the
+  CGO/DuckDB binary; the `"web": true` assertion fires; the container refuses
+  `serve` without a token; `/health` answers unauthenticated while
+  `/api/v1/runs` is 401; the interface is served behind its full CSP and a
+  client-side route survives a reload; and `--read-only` works, which is
+  `readOnlyRootFilesystem` validated for real.
+- **The `/tmp` volume is the one part of the manifest nothing has exercised.**
+  An audit runs fine under `--read-only` with no tmpfs at all, because DuckDB
+  only spills once it passes its memory limit and both fixtures are tens of
+  rows. The mount is right for a real dataset and it is untested — do not read
+  a passing container smoke test as covering it.
 
 ## How the MCP server is put together
 
@@ -1027,6 +1050,12 @@ text — rather than as a missing dependency.
   The SQLite driver is `modernc.org/sqlite`, pure Go on purpose: a second C
   library in the build is a second way to break the one CGO dependency that
   actually matters.
+- **Podman, not Docker, builds the image here.** `sudo apt-get install -y
+  podman podman-docker` on Ubuntu 26.04 — both are in the distribution's own
+  repositories, so there is no third-party apt source or signing key in the
+  chain, which is the same test every other dependency in this project has to
+  pass. It runs rootless with no daemon. `make docker` works through the shim.
+  See "How it is deployed" for the constraint that keeps it faithful to CI.
 - **Node is a build-time requirement only.** Node 24 (pinned in `web/.nvmrc`)
   and pnpm 11 (pinned in `web/package.json`'s `packageManager`, fetched by
   corepack). Installed here under `~/.local/lib/node` from the official tarball
