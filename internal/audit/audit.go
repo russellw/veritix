@@ -58,6 +58,9 @@ type Result struct {
 	// Trace records what the agent did, when one ran. Nil when no model was
 	// configured.
 	Trace *agent.Trace
+	// Proposals are rules the agent suggested for future audits. They are not
+	// findings, are not applied, and go to a person to accept or discard.
+	Proposals []rules.Proposal
 	// StartedAt and Duration describe the run itself.
 	StartedAt time.Time
 	Duration  time.Duration
@@ -149,6 +152,7 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 			Engine:  e,
 			Profile: prof,
 			Known:   found.All(),
+			Rules:   opts.Rules,
 			Root:    ds.Root,
 		}, *opts.Agent, log)
 		if err != nil {
@@ -156,6 +160,7 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 			return nil, err
 		}
 		found.AddAll(agentRes.Findings)
+		res.Proposals = agentRes.Proposals
 		res.Trace = agentRes.Trace
 	}
 

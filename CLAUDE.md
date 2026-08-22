@@ -250,6 +250,23 @@ what is true.**
   is the same reason the count correction lives in `record_finding` rather than
   in the prompt. It is a nudge: the model still decides, the engine still
   decides the number, `Set.Verify` still has the last word.
+- **`propose_rule` is the agent's second output, and it inverts the zero rule.**
+  `record_finding` says the data is wrong now; `propose_rule` says an
+  expectation should hold in future, which is how a defect found on one run
+  gets found on every run without a model. Veritix compiles the proposal into a
+  real `rules.File`, materializes it, and runs it through the real
+  `rules.Evaluate`: same discipline, same disagreement-records-nothing rule for
+  the model's stated `violations_now`. But a proposed rule with **zero**
+  violations is the best kind of rule, not a claim that failed to reproduce —
+  what has to be refused instead is a rule that applies to nothing, which would
+  sit in a customer's file forever looking like protection. `one_of` takes no
+  value list, because its body is literally cell values: the model proposes the
+  shape and `rules.Materialize` fills the permitted set in from the data, in
+  the process, for a person to review. The tool result carries the *count* of
+  those values and never the values; `TestAProposalsValuesNeverReachTheModel`
+  pins it. Nothing is applied: proposals reach `audit.Result.Proposals` and go
+  no further yet — the report section, the store and the accept flow are the
+  rest of M6b.
 - **The egress guard is enforced by two types, not by diligence.**
   `redact.Text` is the only string type that may hold customer content and only
   a `Guard` method makes one; `redact.Sealed` is the only thing the loop sends

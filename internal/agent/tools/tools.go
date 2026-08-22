@@ -31,6 +31,7 @@ import (
 	"github.com/russellw/veritix/internal/engine"
 	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/rules"
 )
 
 // World is what the tools may look at, and where their findings accumulate.
@@ -45,15 +46,23 @@ type World struct {
 	// does not go rediscovering it; the tools consult it so that a check landing
 	// on new ground can say so at the moment it lands. See [World.knownAt].
 	Known []finding.Finding
+	// Rules are the customer's rules already in force for this run. They are
+	// Known's counterpart for propose_rule: protection that already exists is
+	// not worth a step, and a model cannot tell without being told. Only their
+	// ids and targets are ever sent — a rule's permitted values are cell
+	// values, and its where clause can be.
+	Rules *rules.File
 	// Guard decides what may leave the process.
 	Guard *redact.Guard
 	// MaxRows caps a query result. Zero uses the engine's own cap.
 	MaxRows int
 	Log     *slog.Logger
 
-	mu       sync.Mutex
-	findings []finding.Finding
-	refused  int
+	mu               sync.Mutex
+	findings         []finding.Finding
+	proposals        []rules.Proposal
+	refused          int
+	refusedProposals int
 }
 
 // Findings returns what the agent recorded, in the order it recorded them.
@@ -70,6 +79,37 @@ func (w *World) Refused() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.refused
+}
+
+// Proposals returns the rules the agent proposed, in the order it proposed
+// them. None of them has been applied to anything.
+func (w *World) Proposals() []rules.Proposal {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]rules.Proposal(nil), w.proposals...)
+}
+
+// RefusedProposals is how many proposals the engine measured differently from
+// the model's claim and therefore declined. It counts alongside Refused for
+// the same reason: it is how often the model asserted something the data did
+// not bear out.
+func (w *World) RefusedProposals() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.refusedProposals
+}
+
+// proposalMade reports the slug a proposal of this identity was already made
+// under during this run, or "".
+func (w *World) proposalMade(id string) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, p := range w.proposals {
+		if p.ID() == id {
+			return p.Rule.ID
+		}
+	}
+	return ""
 }
 
 func (w *World) log() *slog.Logger {
@@ -170,6 +210,7 @@ func New(w *World) *Registry {
 	r.add(checkReferentialIntegrity())
 	r.add(sampleValues())
 	r.add(recordFinding())
+	r.add(proposeRule())
 	return r
 }
 

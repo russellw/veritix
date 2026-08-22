@@ -67,9 +67,11 @@ cover:
 .PHONY: lint
 lint:
 	go vet ./...
-	@command -v golangci-lint >/dev/null 2>&1 \
-		&& golangci-lint run ./... \
-		|| echo "golangci-lint not installed; ran go vet only"
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not installed; ran go vet only"; \
+	fi
 
 .PHONY: fmt
 fmt:

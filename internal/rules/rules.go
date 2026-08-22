@@ -61,6 +61,26 @@ const (
 	ExpectSQL Expectation = "sql"
 )
 
+// Expectations lists every assertion a rule can make, in the order a caller
+// offering them as a choice should offer them.
+func Expectations() []Expectation {
+	return []Expectation{
+		ExpectNotNull, ExpectUnique, ExpectPositive, ExpectNonNegative,
+		ExpectOneOf, ExpectMatches, ExpectRange, ExpectNotFuture,
+		ExpectReferences, ExpectSQL,
+	}
+}
+
+// ParseExpectation reads an expectation by name.
+func ParseExpectation(s string) (Expectation, error) {
+	for _, e := range Expectations() {
+		if string(e) == strings.TrimSpace(strings.ToLower(s)) {
+			return e, nil
+		}
+	}
+	return "", fmt.Errorf("no expectation called %q", s)
+}
+
 // ValuesSource names where a one_of rule's permitted values come from when the
 // rule does not list them itself.
 type ValuesSource string

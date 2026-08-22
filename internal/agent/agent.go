@@ -28,6 +28,7 @@ import (
 	"github.com/russellw/veritix/internal/engine"
 	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/profile"
+	"github.com/russellw/veritix/internal/rules"
 )
 
 // Options configure a run of the agent.
@@ -69,6 +70,9 @@ type Result struct {
 	// Findings are the agent's proposals, each already measured once by the
 	// engine. They still have to survive Verify.
 	Findings []finding.Finding
+	// Proposals are rules the agent suggested. Nothing is applied: they are
+	// carried to a person, who decides. See [tools.World.Proposals].
+	Proposals []rules.Proposal
 	// Trace is the record of how they were arrived at.
 	Trace *Trace
 }
@@ -80,6 +84,9 @@ type Input struct {
 	// Known is what the deterministic pass already found, so the agent does not
 	// spend its budget rediscovering it.
 	Known []finding.Finding
+	// Rules are the customer's rules in force for this run, so the agent does
+	// not propose protection they already have.
+	Rules *rules.File
 	// Root is the dataset's root path, for the brief.
 	Root string
 }
@@ -107,6 +114,7 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 		Engine:  in.Engine,
 		Profile: in.Profile,
 		Known:   in.Known,
+		Rules:   in.Rules,
 		Guard:   guard,
 		MaxRows: opts.MaxRows,
 		Log:     log,
@@ -140,7 +148,7 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 			Role: llm.RoleUser,
 			Parts: []llm.Part{{
 				Kind: llm.PartText,
-				Text: brief(in.Profile, overview.String(), in.Known, in.Root),
+				Text: brief(in.Profile, overview.String(), in.Known, in.Rules, in.Root),
 			}},
 		}},
 	}
@@ -261,9 +269,11 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 	}
 
 	findings := world.Findings()
+	proposals := world.Proposals()
 
 	trace.Duration = time.Since(trace.StartedAt)
 	trace.Findings = len(findings)
+	trace.Proposals = len(proposals)
 	trace.Refused = world.Refused()
 	trace.Redaction = guard.Stats()
 	if trace.Stopped == "" {
@@ -273,12 +283,13 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 	log.Info("agent complete",
 		"steps", len(trace.Steps),
 		"findings", trace.Findings,
+		"rules_proposed", trace.Proposals,
 		"not_reproduced", trace.Refused,
 		"tokens", trace.Usage.Total(),
 		"stopped", string(trace.Stopped),
 		"duration", trace.Duration.Round(time.Millisecond))
 
-	return &Result{Findings: findings, Trace: trace}, nil
+	return &Result{Findings: findings, Proposals: proposals, Trace: trace}, nil
 }
 
 // complete makes one model call, retrying the failures the provider says are

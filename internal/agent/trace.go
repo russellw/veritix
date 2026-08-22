@@ -38,6 +38,10 @@ type Trace struct {
 	// is how often the model asserted something the data did not support.
 	Findings int `json:"findings"`
 	Refused  int `json:"not_reproduced"`
+	// Proposals is how many rules the agent proposed. They are not findings
+	// and are not applied: somebody accepts them, and from then on the
+	// deterministic pass does that part of the job.
+	Proposals int `json:"proposals,omitempty"`
 
 	MaxSteps    int `json:"max_steps"`
 	TokenBudget int `json:"token_budget,omitempty"`
@@ -168,12 +172,15 @@ func (t *Trace) Summary() string {
 	for _, s := range t.Steps {
 		calls += len(s.Calls)
 	}
-	return formatSummary(t.Model, steps, calls, t.Findings, t.Usage.Total(), t.Stopped)
+	return formatSummary(t.Model, steps, calls, t.Findings, t.Proposals, t.Usage.Total(), t.Stopped)
 }
 
-func formatSummary(model string, steps, calls, findings, tokens int, stopped Stopped) string {
+func formatSummary(model string, steps, calls, findings, proposals, tokens int, stopped Stopped) string {
 	out := fmt.Sprintf("%s: %d steps, %d tool calls, %d findings, %d tokens",
 		model, steps, calls, findings, tokens)
+	if proposals > 0 {
+		out += fmt.Sprintf(", %d rules proposed", proposals)
+	}
 	if !stopped.Complete() {
 		out += " (" + string(stopped) + ")"
 	}
