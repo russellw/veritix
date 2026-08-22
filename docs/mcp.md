@@ -5,9 +5,11 @@ Desktop, anything speaking the Model Context Protocol — over stdin and stdout.
 Ask the assistant to audit a folder, and it calls the same pipeline the web
 interface drives.
 
-This is the M5a half of the milestone: Veritix as an MCP **server**. Client
-mode, where Veritix's own agent pulls the customer's context (data
-dictionaries, ticketing, warehouse metadata) into an audit, is M5b.
+MCP goes both ways here, and the two halves are separate features that happen
+to share a protocol. **Server mode** is this: somebody else's assistant asks
+Veritix to audit something. **Client mode** is the other direction — Veritix's
+own agent reading the customer's documents so that it knows what their columns
+mean — and it is [its own section below](#client-mode-the-customers-own-documents).
 
 ## Wiring it up
 
@@ -113,6 +115,114 @@ note: Cell values are withheld: a column is described by the shape its contents 
 That is `testdata/dirty-retail` audited through MCP by a client running
 `veritix mcp` as a subprocess.
 
+## Client mode: the customer's own documents
+
+The deterministic checks read the export and nothing else, and so does the
+agent. That is a ceiling rather than a gap in the implementation: some defects
+are not in the data.
+
+`testdata/dirty-meters` is the fixture built to show it. Three meters are
+`dormant`, `pending_install` and `decommissioned` in a column of ordinary
+words; two were commissioned onto tariffs that had already closed; four reads
+are lower than the previous read of the same meter; four meters are sited at
+premises that do not exist. Nothing in the export marks any of these rows out.
+The status column has six categories where three are permitted and nothing in
+the data says which three. A falling register is a defect only if the column is
+cumulative. `site_ref` is `UPN-4471` and `upn` is `4471`, so the names differ,
+the shapes differ, and `relate.go` never compares them. Every one of these
+becomes visible the moment somebody reads the data dictionary the customer
+already maintains.
+
+So Veritix connects to the MCP servers the operator configures, and offers its
+model two tools: list what documents there are, and read one.
+
+### Configuring it
+
+```yaml
+# veritix.yaml
+context:
+  max_document_bytes: 24000
+  servers:
+    - name: dictionary
+      command: /usr/local/bin/dict-mcp
+      args: ["--read-only"]
+      env: ["DICT_TOKEN=…"]
+    - name: tickets
+      command: /usr/local/bin/tickets-mcp
+```
+
+There is no environment-variable form, deliberately: a list of subprocesses
+with their arguments does not survive being flattened into one variable, and
+this is the setting that says which programs Veritix will start. In a container
+the file arrives on a mounted volume and `VERITIX_CONFIG` names it, which is
+what `deploy/` already does.
+
+Nothing is configured by default. A default install still talks to nobody.
+
+For a run by hand, `audit` and `eval` take `--context-server name:command`
+(repeatable) and `--no-context`, which ignores whatever is configured — that
+second one is how to measure what the documents bought rather than assert it.
+
+### Trying it
+
+`scripts/context-server` serves a directory of Markdown as MCP resources. It is
+not part of the product — a real deployment connects to the customer's own
+dictionary or ticket system — but it is what the eval is measured with, and it
+is the smallest complete example of what such a server has to do.
+
+```sh
+go build -o /tmp/ctx ./scripts/context-server
+./bin/veritix audit testdata/dirty-meters --llm anthropic \
+    --context-server "docs:/tmp/ctx -dir $PWD/testdata/dirty-meters/context"
+```
+
+### What leaves the process
+
+A context server is the first thing since the model itself that anything leaves
+this process toward, so the rule is the same shape as the one for SQL
+identifiers, and it is structural rather than advisory:
+
+**No text the model wrote reaches a context server.** Veritix enumerates each
+server's resources at the start of the run and assigns each one a short id. The
+model names a document by that id; the id is looked up and the *catalog's* URI
+is what gets requested. An id that is not in the catalog is a tool error and
+produces no request at all. The model is not shown the URIs either, because a
+URI it can see is a URI it will invent.
+
+The servers' own **tools** are not exposed, for the same reason: a tool call
+forwards arguments the model wrote. That means a ticket system that can only be
+searched cannot be reached from here yet. Turning it on is a decision about
+egress rather than a feature to add, and it would need its own answer to "what
+is in that search string" before it is worth having.
+
+What does come back goes to the model **verbatim**. A data dictionary rendered
+as `⟨XXXXXXX⟩` explains nothing, so the useful thing and the redacted thing
+cannot be the same thing here — which is exactly unlike a cell value.
+`redact.Guard.Document` is the one path that admits text untouched, and it
+counts what it admitted. Configuring a context server is therefore the same
+class of decision as `--include-values`: the operator takes it, and the run's
+trace records every request Veritix made and every byte that came back.
+
+That trace is the point. `/runs/{id}/trace` and `audit --trace-out` now carry a
+`context` section listing each server, the catalog the model was offered, and
+every request in order — each of them a listing, or a read of a URI that came
+out of a listing. The web interface renders it on the trace screen, next to the
+existing "what was the model sent" panel, because they are the same promise
+read in two directions.
+
+### What it is measured against
+
+`dirty-meters`' manifest splits recall into **with context** and **unaided**.
+The aided half answers whether fetching the documents worked. The unaided
+half — two targets on the same runs of the same dataset that need no document —
+is the control, because a transcript filling with documents is exactly how a
+model stops doing the job it could already do. A run scoring worse on those
+with the documents loaded has found a regression.
+
+`ticket-4482.md` is a document no target needs, about a column that is fine. It
+is there so the fixture measures reading the documents *against the data*
+rather than reciting them.
+
 ## The dependency
 
 The official `github.com/modelcontextprotocol/go-sdk` v1.7.0, measured before
@@ -130,3 +240,5 @@ one, with a reference implementation in Go maintained alongside it. Owning
 JSON-RPC framing, initialization, capability negotiation, and the schema
 inference that turns a Go struct into a tool definition would be a standing
 maintenance cost against a moving target, for no gain in auditability.
+
+Client mode adds nothing: it is the same SDK, used from the other end.

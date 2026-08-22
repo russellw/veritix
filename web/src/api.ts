@@ -142,6 +142,8 @@ export interface AgentInfo {
   output_tokens: number
   values_sent_to_model: boolean
   values_withheld: number
+  context_documents?: number
+  context_servers?: string[]
   stopped: 'finished' | 'step_budget' | 'token_budget' | 'provider_error' | 'refused' | 'canceled'
   complete: boolean
   duration_ms: number
@@ -251,8 +253,11 @@ export interface AgentTrace {
     truncated: number
     sealed: number
     bytes: number
+    context_documents?: number
+    context_bytes?: number
   }
   values_allowed: boolean
+  context?: ContextTrace
   findings: number
   not_reproduced: number
   max_steps: number
@@ -261,6 +266,37 @@ export interface AgentTrace {
   error?: string
   started_at: string
   duration_ms: number
+}
+
+/**
+ * ContextTrace is the outbound half of the same record: what Veritix asked the
+ * customer's own MCP servers for, and what it got back.
+ *
+ * The trace has always answered "what was the model sent". A context server is
+ * the first thing since the model that anything leaves the process toward, so
+ * the screen has to answer "what did Veritix send, and to whom" as well —
+ * which is why every request is listed rather than counted.
+ */
+export interface ContextTrace {
+  servers: { name: string; documents: number; omitted?: number; error?: string }[]
+  documents?: {
+    id: string
+    server: string
+    name: string
+    description?: string
+    mime_type?: string
+    size_bytes?: number
+  }[]
+  requests?: {
+    server: string
+    method: string
+    uri?: string
+    bytes?: number
+    duration_ms: number
+    error?: string
+  }[]
+  documents_read: number
+  bytes_admitted: number
 }
 
 /** Capabilities is what this server can do, which shapes what is offered. */

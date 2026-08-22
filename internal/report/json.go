@@ -126,6 +126,17 @@ type AgentInfo struct {
 	ValuesSent bool `json:"values_sent_to_model"`
 	// ValuesWithheld is how many were replaced by their shape.
 	ValuesWithheld int `json:"values_withheld"`
+	// ContextDocuments is how many of the customer's own documents the model
+	// read during this run, and ContextServers what they were named after.
+	//
+	// A report is a file that gets emailed, so this is a count and the servers'
+	// names and nothing else — the documents' contents were sent to a model and
+	// belong in the trace, where somebody who wants them can read every byte.
+	// It is here at all because a finding that exists because a data dictionary
+	// said so is a finding whose reader deserves to know a document was
+	// consulted.
+	ContextDocuments int      `json:"context_documents,omitempty"`
+	ContextServers   []string `json:"context_servers,omitempty"`
 
 	// Stopped says why the investigation ended, and Complete whether that was
 	// because it finished rather than because it ran out of budget. A report
@@ -330,6 +341,13 @@ func buildAgent(t *agent.Trace) *AgentInfo {
 		OutputTokens:   t.Usage.Output,
 		ValuesSent:     t.ValuesAllowed,
 		ValuesWithheld: t.Redaction.Shaped,
+		ContextDocuments: func() int {
+			if t.Context == nil {
+				return 0
+			}
+			return t.Context.Read
+		}(),
+		ContextServers: contextServerNames(t),
 		Stopped:        string(t.Stopped),
 		Complete:       t.Stopped.Complete(),
 		DurationMS:     t.Duration.Milliseconds(),
@@ -581,4 +599,22 @@ func copysign(magnitude, sign float64) float64 {
 		return -magnitude
 	}
 	return magnitude
+}
+
+// contextServerNames lists the servers a run could read documents from.
+//
+// Only the ones that answered: a server that was configured and unreachable is
+// a fact about the deployment rather than about this dataset, and it is in the
+// trace with the reason it failed.
+func contextServerNames(t *agent.Trace) []string {
+	if t.Context == nil {
+		return nil
+	}
+	var out []string
+	for _, s := range t.Context.Servers {
+		if s.Error == "" {
+			out = append(out, s.Name)
+		}
+	}
+	return out
 }

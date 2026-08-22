@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/mcpclient"
 	"github.com/russellw/veritix/internal/profile"
 	"github.com/russellw/veritix/internal/rules"
 )
@@ -43,6 +44,29 @@ record_finding says this data is wrong now. propose_rule says an expectation sho
 When to stop
 Stop when you have investigated what looks wrong, recorded what you could prove, and proposed the rules that would catch it next time. Do not pad the report: a dataset with three real problems should yield three findings, and finding nothing new beyond the deterministic pass is a legitimate result worth saying plainly. Do not re-report what that pass already found; it is listed for you below. When you are done, say briefly what you looked at and what you concluded.`
 
+// contextPrompt is appended to the system prompt when the operator has
+// configured a context server, and only then.
+//
+// Appended rather than folded in, for two reasons. A run with no context
+// server has to be sent exactly the prompt it was sent before M5b, or the
+// unaided half of dirty-meters' scorecard is measuring a prompt change rather
+// than the documents — and the control exists precisely so that turning the
+// context on can be seen to cost nothing. And the prompt prefix is what the
+// provider caches, so a paragraph nobody needs is billed to everybody.
+//
+// What it has to establish is the half a model gets wrong on its own. Reading
+// is not the job: the documents say what should be true, and a claim only
+// becomes a finding when the engine measures the data disagreeing. ticket-4482
+// in the dirty-meters fixture is the trap this is aimed at — a closed ticket
+// about a column that is fine, which a model reciting its documents will
+// report and a model checking them against the data will not.
+const contextPrompt = `
+
+The customer's own documents
+This dataset comes with documents from the customer's own systems — a data dictionary, a warehouse catalog, tickets. They are listed in the brief and read with read_context. They matter because the most damaging defects are not visibly wrong: a status code that is not in the permitted vocabulary looks like an ordinary word, a register that goes backwards is only a defect if the column is cumulative, and two columns join only if something says they do. Nothing in the profile can tell you any of that, and no amount of SQL will.
+
+A document states what should be true; it does not tell you what is wrong. So read one when the question is what a column means or what it may contain, then write the query that finds out whether the data agrees, and record what the engine measures. A document that turns out to describe something the data gets right is a document that has done its job — report nothing for it. Reporting what a document says, without a count from the data behind it, is the one failure mode here that looks like work.`
+
 // brief is the first user turn: what this dataset is, what has been measured
 // about it, and what is already known.
 //
@@ -57,7 +81,9 @@ Stop when you have investigated what looks wrong, recorded what you could prove,
 // not two. And it went through the egress guard on its way here, which is what
 // keeps "everything customer-derived that reaches a model was cleared by the
 // guard" true of the brief as well as of tool results.
-func brief(ds *profile.Dataset, overview string, known []finding.Finding, inForce *rules.File, root string) string {
+func brief(ds *profile.Dataset, overview string, known []finding.Finding, inForce *rules.File,
+	docs []mcpclient.Document, root string,
+) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "Dataset: %s\n\n", root)
@@ -92,6 +118,25 @@ func brief(ds *profile.Dataset, overview string, known []finding.Finding, inForc
 				where += "." + r.Column
 			}
 			fmt.Fprintf(&b, "- %s — %s: %s\n", r.ID, where, r.Expect)
+		}
+	}
+
+	// The catalog rides in the brief for the same reason the profile does:
+	// orientation the model has to spend a step on is orientation it may
+	// instead skip. A document's name and description are the server's own
+	// prose about the customer's own systems, so they are exactly as
+	// disclosable as the documents themselves — and no more, which is why
+	// nothing here goes anywhere until a context server is configured.
+	if len(docs) > 0 {
+		fmt.Fprintf(&b, "\nThe customer's own documents (%d), readable with read_context. "+
+			"They say what the columns are for; the data is where you find out whether "+
+			"it agrees:\n", len(docs))
+		for _, d := range docs {
+			line := fmt.Sprintf("- %s — %s", d.ID, d.Name)
+			if d.Description != "" {
+				line += ": " + d.Description
+			}
+			fmt.Fprintln(&b, line)
 		}
 	}
 

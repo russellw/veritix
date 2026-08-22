@@ -30,7 +30,7 @@ Everything is on `main`. M0 through M3 are done.
 | M3b | React web interface, embedded and served behind a CSP | done |
 | M4 | Agentic LLM auditor with the egress guard | done |
 | M5a | MCP server: `veritix mcp` on stdio | done |
-| M5b | MCP client: the agent pulls the customer's own context | fixture done |
+| M5b | MCP client: the agent pulls the customer's own context | done |
 | M6a | The eval harness: defect manifests, `veritix eval`, a second fixture | done |
 | M6b | Rule proposal, OpenTelemetry, deployment, docs | done |
 
@@ -58,6 +58,10 @@ go run ./scripts/gen-dataset -out /var/tmp/vx-big -scale 1   # 2 GB and a manife
 ./bin/veritix eval testdata/dirty-logistics --llm anthropic --runs 5
 ./bin/veritix eval testdata/dirty-logistics --rules accepted.yaml  # what a rule bought
 ./bin/veritix eval testdata/dirty-meters                     # the context fixture
+go build -o /tmp/ctx ./scripts/context-server                # something to fetch from
+./bin/veritix eval testdata/dirty-meters --llm anthropic --runs 3 \
+    --context-server "docs:/tmp/ctx -dir $PWD/testdata/dirty-meters/context"
+./bin/veritix eval testdata/dirty-meters --llm anthropic --runs 3 --no-context
 
 ./bin/veritix audit testdata/dirty-retail --llm anthropic
 ./bin/veritix audit testdata/dirty-retail \
@@ -72,6 +76,8 @@ VERITIX_LLM_PROVIDER=anthropic ./bin/veritix serve   # offers the agent in the U
 
 ./bin/veritix mcp                            # stdio; an assistant launches it
 claude mcp add veritix -- "$PWD/bin/veritix" mcp --data-dir ~/.veritix
+./bin/veritix audit testdata/dirty-meters --llm anthropic \
+    --context-server "docs:/tmp/ctx -dir $PWD/testdata/dirty-meters/context"
 
 make docker                                  # the image, interface included
 kubectl apply -k deploy/kubernetes            # one replica, egress denied
@@ -130,6 +136,12 @@ model.
 The model is the fourth place this has to hold, and `internal/agent/redact` is
 the single path to it. See "How the agent is put together" below.
 
+M5b adds the one deliberate exception on that path, and it is the opposite
+shape to the two below: the customer's *own documents*, fetched from the
+customer's own MCP servers, go to the model verbatim, because a data dictionary
+rendered as shapes explains nothing. Nothing arrives there unless an operator
+configured a server. See "How the context client is put together".
+
 There are exactly two exceptions, both deliberate and both bounded the same
 way. `GET /runs/{id}/findings/{fid}/rows` returns the offending rows
 themselves, because showing somebody the three bad rows is the most useful
@@ -172,6 +184,7 @@ internal/
   store/               SQLite: datasets, runs, findings — the audit trail
   api/                 REST + SSE over audit.Run; openapi.yaml is the contract
   mcp/                 the Model Context Protocol server: `veritix mcp`
+  mcpclient/           the MCP *client*: the customer's own documents, fetched
   agent/               the tool-calling loop, the system prompt, the trace
     llm/               provider-agnostic message and tool types
       anthropic/       Claude, through the official SDK
@@ -185,6 +198,8 @@ testdata/dirty-logistics/ a second one, whose defects need reasoning not a tool
 testdata/dirty-meters/    a third, four of whose defects are not in the data at
                           all: they need the customer's own documents, which
                           sit in context/ where discovery cannot see them
+scripts/context-server a directory of Markdown served as MCP resources, so the
+                       context fixture has something to be measured against
 deploy/Dockerfile      three stages: the interface, the binary, distroless
 deploy/kubernetes/     a kustomize base; one replica, and egress denied
 docs/frontend-stack.md the front end's dependency and supply-chain policy
@@ -597,6 +612,76 @@ is the operator's half; these are the decisions.
   client, because Veritix is not driving that model. `docs/mcp.md` says so
   rather than letting the existing claim quietly over-reach.
 
+## How the context client is put together
+
+`internal/mcpclient` is the door out, as `internal/mcp` is the door in. It
+exists because some defects are not in the data: four of `dirty-meters`' six
+agent targets are invisible in the export and become visible only when the
+customer's own dictionary or catalog is read. `docs/mcp.md` §"Client mode" is
+the operator's half; these are the decisions.
+
+- **No text the model wrote reaches a context server.** Veritix enumerates each
+  server's resources when the run starts and gives each one a short id; the
+  model names a document by that id, the id is looked up, and the *catalog's*
+  URI is what gets requested. That is exactly the rule `tools` follows for SQL
+  identifiers — a model-supplied table name is looked up in the profile and the
+  profile's name is what gets quoted — applied to the other place where
+  something Veritix holds could be handed to somebody else. An id that is not
+  in the catalog is a tool error and produces no request at all.
+  `TestAnIDTheModelInventedNeverReachesTheServer` reads the bytes that crossed
+  the wire rather than the arguments a method was given.
+- **The model is not shown the URIs**, because a URI it can see is a URI it
+  will invent — the same failure a bare shape produced in a tool result. The
+  trace carries them; the trace is where a customer checks what left.
+- **The servers' own tools are not exposed, and that is the honest limit.** A
+  tool call forwards arguments the model wrote, which is the thing the first
+  rule exists to prevent, so a ticket system that can only be *searched* cannot
+  be reached from here. Turning that on is a decision about egress and not a
+  feature to add: it needs its own answer to "what is in that search string"
+  first.
+- **What comes back is admitted verbatim, and that is the exception the guard
+  is shaped around rather than a hole in it.** `redact.Guard.Document` is the
+  one path that does not redact, because the useful thing and the redacted
+  thing cannot be the same thing here — which is exactly unlike a cell value.
+  It counts what it admitted, so the trace says how much rather than leaving a
+  reader to add it up. It is deliberately not policy-dependent: a guard with
+  `AllowValues` off still admits documents, because withholding them would be
+  the feature configured and switched off at once.
+- **The trace answers a second question now.** It has always answered "what was
+  the model sent"; a context server is the first thing since the model that
+  anything leaves the process toward, so `Trace.Context` records every request
+  in order — each one a listing, or a read of a URI that came out of a listing.
+  The web interface renders it beside the existing egress panel, because they
+  are the same promise read in two directions.
+- **A server that will not answer is a warning.** An audit that died because a
+  data dictionary was down would be worse than one that runs unaided, and the
+  scorecard's unaided half is exactly what still gets scored. The reason is
+  recorded on the connection and shown.
+- **Nothing changes for a run with no context server**: same tool set, same
+  system prompt, no trace section. That is not tidiness — it is what makes the
+  unaided half of `dirty-meters`' scorecard a control rather than a second
+  experiment, and `TestWithoutAContextServerNothingAboutTheRunChanges` pins it.
+  The context paragraph is *appended* to the system prompt for the same reason,
+  and because a prompt prefix nobody needs is billed to everybody through the
+  cache.
+- **`audit.Run` connects and closes them**, from `Options.Context`, rather than
+  a caller doing it — `internal/runs`' argument one layer down. It happens
+  after `Engine.Lockdown`, so a subprocess Veritix started cannot be reached
+  through DuckDB either, and the subprocess's lifetime is tied to the run's
+  context so `Close` failing cannot leave one behind.
+- **Configuration is file-only, deliberately.** A list of subprocesses with
+  their arguments does not survive being flattened into `VERITIX_CONTEXT_SERVERS`,
+  and this is the one setting that names programs Veritix will start. In a
+  container the file arrives on a volume and `VERITIX_CONFIG` names it, which is
+  what `deploy/` already does. `audit` and `eval` take `--context-server` and
+  `--no-context` for a run by hand; the flag's parser is crude on purpose and
+  says so.
+- **`scripts/context-server` is the instrument, not the product.** A directory
+  of Markdown served as MCP resources: it is what the aided half of the
+  scorecard is measured with, since Veritix reading those files itself would
+  have measured a feature that does not exist. A real deployment connects to
+  the customer's own dictionary, which already exists.
+
 ## How the eval is put together
 
 `internal/eval` scores an audit against a dataset whose defects are already
@@ -654,8 +739,8 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   amount column beside it, and a contradiction that only exists across a join. A
   model can score full marks on the first with four tool calls and zero on the
   second.
-- **`dirty-meters` is the instrument M5b is built against, and it exists before
-  M5b does.** Four of its six agent targets are invisible in the export and
+- **`dirty-meters` is the instrument M5b was built against, and it existed
+  before M5b did.** Four of its six agent targets are invisible in the export and
   become visible only when the customer's own documents are read: a status
   vocabulary, a tariff lifecycle date, what `register_value` *means* (a
   cumulative register, so it cannot fall), and how `site_ref` joins to `upn`
@@ -686,8 +771,10 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   reciting them.
 
   **Nothing has scored it yet**: 8 of 8 deterministic defects with no false
-  positives, and the aided half stays at zero until there is an MCP client.
-  That is the baseline, not a result.
+  positives, and the aided half was zero before there was an MCP client. That
+  is the baseline, not a result. M5b built the client; the measurement is the
+  next thing to take, with `scripts/context-server` serving `context/` and
+  `--no-context` producing the control on the same command line.
 - **No two targets in one table may share a count.** `MatchesTarget` lets a
   table-scoped finding cover any column in that table, deliberately. The price
   is that three targets in one table all measuring 2 would credit a table-scoped
@@ -1151,6 +1238,19 @@ real SDK client, against the same fixtures — no stub pipeline, for the reason
 `internal/api`'s tests give. Every frame in both directions is recorded through
 `mcp.LoggingTransport`, so the egress test scans the bytes that actually
 crossed the connection rather than the values a handler meant to return.
+
+`internal/mcpclient`'s tests run both ways round. Most use an in-process SDK
+server through an in-memory transport, wrapped in `mcp.LoggingTransport` so the
+egress test reads the frames that crossed rather than the arguments a method
+was given; one connects to a *subprocess*, because `CommandTransport` and the
+stdio framing are what a customer's server actually is, and the test binary
+serves as that server through `TestMain`. `internal/audit` does the same trick
+for the other half of the wiring: audit.Run starts a server from a config
+file's worth of strings and closes it again, which no in-process transport can
+exercise. `internal/agent`'s context tests serve the real
+`testdata/dirty-meters/context` over MCP rather than reading it off disk —
+reading it off disk would test a feature that does not exist — and the one that
+matters ends with the fixture's aided target recorded at the manifest's count.
 
 `internal/agent`'s tests drive the real loop over the same fixtures with a
 scripted provider (`llm/llmtest`): every outbound payload is scanned for the

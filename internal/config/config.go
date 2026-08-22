@@ -28,7 +28,50 @@ type Config struct {
 	Server Server `yaml:"server"`
 	Engine Engine `yaml:"engine"`
 	LLM    LLM    `yaml:"llm"`
-	OTel   OTel   `yaml:"otel"`
+	// Context is where the customer's own documents come from. Empty by
+	// default: a default install talks to nobody, which is the same promise
+	// llm.provider: none makes.
+	Context Context `yaml:"context"`
+	OTel    OTel    `yaml:"otel"`
+}
+
+// Context configures the MCP servers Veritix reads the customer's own
+// documents from — data dictionaries, warehouse catalogs, tickets.
+//
+// It has no environment-variable form, and that is deliberate rather than an
+// omission: a list of subprocesses with their arguments does not survive being
+// flattened into VERITIX_CONTEXT_SERVERS, and this is the one setting that
+// says which programs Veritix will start. It belongs in a file somebody wrote
+// and can read back. In a container that file arrives on a mounted volume and
+// VERITIX_CONFIG names it, which is the shape deploy/ already uses.
+//
+// Whatever these servers return is sent to the model verbatim: a data
+// dictionary rendered as shapes would explain nothing, so configuring one is
+// the same class of decision as llm.allow_sample_values. Every request made
+// and every document admitted is in the run's trace. See internal/mcpclient.
+type Context struct {
+	// Servers are the MCP servers to connect to, in the order they are listed.
+	Servers []ContextServer `yaml:"servers"`
+	// MaxDocumentBytes truncates a single document before it reaches the
+	// model. Zero picks a default.
+	MaxDocumentBytes int `yaml:"max_document_bytes"`
+	// ConnectTimeout bounds starting one server and listing what it has. Zero
+	// picks a default.
+	ConnectTimeout time.Duration `yaml:"connect_timeout"`
+}
+
+// ContextServer is one such server, started as a subprocess and spoken to over
+// stdio.
+type ContextServer struct {
+	// Name is Veritix's handle for it, shown against every document it
+	// contributes.
+	Name string `yaml:"name"`
+	// Command is the executable, and Args its arguments.
+	Command string   `yaml:"command"`
+	Args    []string `yaml:"args"`
+	// Env adds NAME=VALUE entries to the command's environment, which is where
+	// a credential for the customer's own ticket system goes.
+	Env []string `yaml:"env"`
 }
 
 // Log controls diagnostic output.
@@ -396,6 +439,28 @@ func (c Config) Validate() error {
 	if c.Engine.MaxResultRows < 1 {
 		return fmt.Errorf("engine.max_result_rows: want a positive count, got %d", c.Engine.MaxResultRows)
 	}
+	for i, srv := range c.Context.Servers {
+		if srv.Name == "" {
+			return fmt.Errorf("context.servers[%d]: needs a name, which is how its documents are labeled", i)
+		}
+		if srv.Command == "" {
+			return fmt.Errorf("context.servers[%d] (%s): needs a command to run", i, srv.Name)
+		}
+		for _, e := range srv.Env {
+			if !strings.Contains(e, "=") {
+				return fmt.Errorf("context.servers[%d] (%s): env entries are NAME=VALUE, got %q",
+					i, srv.Name, e)
+			}
+		}
+	}
+	if names := duplicateNames(c.Context.Servers); names != "" {
+		return fmt.Errorf("context.servers: %s is configured twice; names label documents "+
+			"and have to tell one server from another", names)
+	}
+	if c.Context.MaxDocumentBytes < 0 {
+		return fmt.Errorf("context.max_document_bytes: want a byte count, got %d", c.Context.MaxDocumentBytes)
+	}
+
 	if c.LLM.MaxSteps < 1 {
 		return fmt.Errorf("llm.max_steps: want a positive count, got %d", c.LLM.MaxSteps)
 	}
@@ -424,4 +489,16 @@ func IsLoopback(addr string) bool {
 		return true
 	}
 	return strings.HasPrefix(host, "127.")
+}
+
+// duplicateNames reports the first context server name used more than once.
+func duplicateNames(servers []ContextServer) string {
+	seen := make(map[string]bool, len(servers))
+	for _, s := range servers {
+		if seen[s.Name] {
+			return strconv.Quote(s.Name)
+		}
+		seen[s.Name] = true
+	}
+	return ""
 }

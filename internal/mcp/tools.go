@@ -210,6 +210,7 @@ func (s *Server) auditDataset(ctx context.Context, _ *sdk.CallToolRequest, in au
 			DatabasePath: dbPath,
 			Rules:        ruleFile,
 			Agent:        agentOpts,
+			Context:      s.opts.Config.Context,
 			Profile:      profile.Options{TopValues: s.opts.TopValues},
 		},
 		Report: report.Options{IncludeValues: s.opts.IncludeValues},

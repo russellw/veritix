@@ -7,6 +7,7 @@ import (
 
 	"github.com/russellw/veritix/internal/agent/llm"
 	"github.com/russellw/veritix/internal/agent/redact"
+	"github.com/russellw/veritix/internal/mcpclient"
 )
 
 // Trace is the record of what the agent did.
@@ -32,6 +33,10 @@ type Trace struct {
 	// It belongs in the trace because it is the single most important thing
 	// about a run for anybody reviewing one later.
 	ValuesAllowed bool `json:"values_allowed"`
+	// Context records the customer's own documents this run could reach, and
+	// every request Veritix made to reach them. Nil when no context server was
+	// configured, which is the default.
+	Context *ContextTrace `json:"context,omitempty"`
 
 	// Findings is how many the agent recorded, and Refused how many it proposed
 	// that the engine measured at zero. The second number is worth keeping: it
@@ -77,6 +82,47 @@ func (t *Trace) UnmarshalJSON(b []byte) error {
 	*t = Trace(wire.alias)
 	t.Duration = time.Duration(wire.DurationMS) * time.Millisecond
 	return nil
+}
+
+// ContextTrace is the outbound half of the egress record: what Veritix asked
+// the customer's own MCP servers for, and what it got.
+//
+// The trace has always answered "what was the model sent". Once Veritix can
+// fetch documents it has to answer a second question — what did Veritix send,
+// and to whom — because a context server is the first thing since the model
+// itself that anything leaves the process toward. Every entry in Requests is a
+// listing or a read of a URI that came out of a listing, which is what makes
+// "no text the model wrote leaves the process" something a customer can check
+// by reading rather than by believing. The documents that came back are in the
+// steps, verbatim, like every other tool result.
+type ContextTrace struct {
+	// Servers is what each configured server contributed, including the ones
+	// that contributed nothing and why.
+	Servers []mcpclient.Connection `json:"servers"`
+	// Documents is the catalog the model was offered. It carries no URIs, for
+	// the same reason the model is not shown any.
+	Documents []mcpclient.Document `json:"documents,omitempty"`
+	// Requests is every call Veritix made, in order.
+	Requests []mcpclient.Request `json:"requests,omitempty"`
+	// Read and Bytes are how many documents the model actually read and how
+	// much of them was admitted.
+	Read  int `json:"documents_read"`
+	Bytes int `json:"bytes_admitted"`
+}
+
+// contextTrace snapshots a library, or returns nil when there is none.
+func contextTrace(lib *mcpclient.Library) *ContextTrace {
+	if lib == nil {
+		return nil
+	}
+	read, bytes := lib.Stats()
+	return &ContextTrace{
+		Servers:   lib.Connections(),
+		Documents: lib.Catalog(),
+		Requests:  lib.Requests(),
+		Read:      read,
+		Bytes:     bytes,
+	}
 }
 
 // Step is one turn: what the model said, and what it asked to be run.

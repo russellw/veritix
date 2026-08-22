@@ -375,11 +375,30 @@ the shape of the output, not a measurement:
     unaided       ..%   over 2 targets the export alone can answer
 ```
 
-**No model has been run against this fixture yet**, because nothing can fetch
-the context until M5b lands. The deterministic half is measured: 8 of 8 planted
-defects, no false positives. The aided half is expected to score zero until
-there is an MCP client, which is the baseline worth having — a number to
-improve on rather than a claim.
+### Running it
+
+The documents live in `context/`, which `source.Discover` does not recognize,
+so an audit ingests four CSVs and never sees them. What reaches a model is
+whatever Veritix's MCP client fetches, and that needs a server to fetch from.
+`scripts/context-server` is one:
+
+```sh
+go build -o /tmp/ctx ./scripts/context-server
+./bin/veritix eval testdata/dirty-meters --llm anthropic --runs 3 \
+    --context-server "docs:/tmp/ctx -dir $PWD/testdata/dirty-meters/context"
+
+# the control, on the same command line
+./bin/veritix eval testdata/dirty-meters --llm anthropic --runs 3 --no-context
+```
+
+`--no-context` ignores whatever is configured, which is what makes the second
+run a control rather than a different experiment. `docs/mcp.md` has the client
+half in full: what leaves the process, and what does not.
+
+**No model has been run against this fixture yet.** The deterministic half is
+measured: 8 of 8 planted defects, no false positives. The aided half scored
+zero before there was an MCP client, which is the baseline worth having — a
+number to improve on rather than a claim.
 
 A run that scores worse unaided with the documents loaded than without them has
 found a regression, not a feature, and without the second number that would

@@ -62,6 +62,10 @@ func writeAgentText(p *printer, a *AgentInfo) {
 		p.printf("  no cell values were sent to the model; %d were replaced by their shape\n",
 			a.ValuesWithheld)
 	}
+	if a.ContextDocuments > 0 {
+		p.printf("  it read %d of your own document(s) from %s; the trace has every byte\n",
+			a.ContextDocuments, strings.Join(a.ContextServers, ", "))
+	}
 	if a.NotReproduced > 0 {
 		p.printf("  %d proposed finding(s) did not reproduce and were discarded\n", a.NotReproduced)
 	}

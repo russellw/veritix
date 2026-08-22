@@ -40,6 +40,7 @@ type auditOptions struct {
 	llmEffort         string
 	llmMaxSteps       int
 	allowSampleValues bool
+	context           contextFlags
 }
 
 func newAuditCmd(e *env) *cobra.Command {
@@ -86,6 +87,7 @@ func newAuditCmd(e *env) *cobra.Command {
 		"permit the model to see cell values, masked; off by default, and the report says which was used")
 	f.StringVar(&opts.traceOut, "trace-out", "",
 		"write the agent's trace here as JSON: every payload sent and received (- for stdout)")
+	addContextFlags(cmd, &opts.context)
 	f.StringVar(&opts.proposeOut, "propose-rules-out", "",
 		"write the rules the agent proposed here as YAML, to review and load with --rules (- for stdout)")
 
@@ -124,6 +126,11 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 	if err != nil {
 		return err
 	}
+
+	contextCfg, err := resolveContext(e.cfg.Context, opts.context)
+	if err != nil {
+		return err
+	}
 	if agentOpts != nil {
 		agentOpts.UseEngineLimits(e.cfg.Engine)
 	}
@@ -156,6 +163,7 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 		DatabasePath: opts.database,
 		Rules:        ruleFile,
 		Agent:        agentOpts,
+		Context:      contextCfg,
 		Profile: profile.Options{
 			TopValues: opts.topValues,
 		},

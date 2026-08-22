@@ -803,6 +803,71 @@ components:
             truncated: { type: integer }
             sealed: { type: integer }
             bytes: { type: integer }
+            context_documents:
+              type: integer
+              description: How many of the customer's own documents were
+                admitted verbatim. They are the one thing the guard does not
+                redact, because a data dictionary rendered as shapes explains
+                nothing — see the context object below.
+            context_bytes: { type: integer }
+        context:
+          type: object
+          description: |
+            The outbound half of the same record: what Veritix asked the
+            customer's own MCP servers for, and what it got. Present only when
+            a context server was configured, which is off by default.
+
+            Every request is listed rather than counted, because the thing a
+            reader is checking is that each one is a listing or a read of a URI
+            that came out of a listing — never a string the model wrote. The
+            documents themselves are in the steps, verbatim, like any other
+            tool result.
+          properties:
+            servers:
+              type: array
+              description: What each configured server contributed, including
+                the ones that contributed nothing and why.
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  documents: { type: integer }
+                  omitted: { type: integer }
+                  error: { type: string }
+            documents:
+              type: array
+              description: The catalog the model was offered. It carries no
+                URIs, for the same reason the model is not shown any.
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: What the model passes to read_context.
+                  server: { type: string }
+                  name: { type: string }
+                  description: { type: string }
+                  mime_type: { type: string }
+                  size_bytes: { type: integer }
+            requests:
+              type: array
+              description: Every call Veritix made, in order.
+              items:
+                type: object
+                properties:
+                  server: { type: string }
+                  method:
+                    type: string
+                    examples: ["resources/list", "resources/read"]
+                  uri:
+                    type: string
+                    description: For a read, always one the server itself
+                      advertised.
+                  bytes: { type: integer }
+                  duration_ms: { type: integer }
+                  error: { type: string }
+            documents_read: { type: integer }
+            bytes_admitted: { type: integer }
         steps:
           type: array
           items:
@@ -885,6 +950,16 @@ components:
             values_withheld:
               type: integer
               description: How many values were replaced by their shape.
+            context_documents:
+              type: integer
+              description: How many of the customer's own documents the model
+                read. A count and not their contents — a report is a file that
+                gets emailed, and the contents are in the trace.
+            context_servers:
+              type: array
+              items: { type: string }
+              description: The servers that answered, so a reader knows a
+                document was consulted.
             stopped:
               type: string
               enum: [finished, step_budget, token_budget, provider_error, refused, canceled]

@@ -37,6 +37,11 @@ type Options struct {
 	// auditor alone, which is a useful thing to measure and the only thing CI
 	// can measure without a model.
 	Agent *agent.Options
+	// Context names the MCP servers the agent may read the customer's own
+	// documents from. It is what the aided half of a scorecard measures: the
+	// same fixture, the same model, scored with the documents reachable and
+	// without them.
+	Context config.Context
 	// Runs is how many times to audit the dataset. One is enough for the
 	// deterministic pass and is not enough for a model.
 	Runs int
@@ -118,6 +123,7 @@ func evalOnce(ctx context.Context, opts Options, log *slog.Logger) RunScore {
 		Profile: opts.Profile,
 		Rules:   opts.Rules,
 		Agent:   opts.Agent,
+		Context: opts.Context,
 	}, log)
 	if err != nil {
 		return RunScore{Err: err.Error()}

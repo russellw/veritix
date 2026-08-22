@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import * as api from '../api'
-import type { AgentTrace, TraceCall } from '../api'
+import type { AgentTrace, ContextTrace, TraceCall } from '../api'
 import { count, duration } from '../format'
 
 /*
@@ -69,6 +69,8 @@ export function Trace({ runId }: { runId: string }) {
           Everything below is shown exactly as it was sent.
         </p>
       )}
+
+      {trace.context && <Context context={trace.context} />}
 
       {trace.not_reproduced > 0 && (
         <p className="notice">
@@ -169,4 +171,75 @@ function stoppedReason(trace: AgentTrace): string {
     default:
       return 'The investigation ended early.'
   }
+}
+
+/*
+The context panel is the outbound half of the same promise.
+
+Everything else on this screen answers "what was the model sent". Once Veritix
+can fetch the customer's own documents it has to answer a second question — what
+did Veritix send, and to whom — because a context server is the first thing
+since the model that anything leaves the process toward. So every request is
+listed rather than counted: the point a reader is checking is that each one is
+a listing, or a read of a URI that came out of a listing, and never a string the
+model wrote.
+*/
+function Context({ context }: { context: ContextTrace }) {
+  const failed = context.servers.filter((s) => s.error)
+
+  return (
+    <section className="context-trace">
+      <p className="notice">
+        This run could read {count(context.documents?.length ?? 0)} of your own
+        documents, from{' '}
+        {context.servers.map((s) => s.name).join(', ')}. The model read{' '}
+        {count(context.documents_read)} of them, totalling{' '}
+        {count(context.bytes_admitted)} bytes, and those went to it as you wrote
+        them — a data dictionary reduced to shapes would explain nothing.
+        Veritix chose what to request: the model names a document by its id, and
+        the id is looked up here, so nothing it wrote was sent on.
+      </p>
+
+      {failed.map((s) => (
+        <p className="notice warn" key={s.name}>
+          {s.name} could not be reached ({s.error}), so this audit ran without
+          it.
+        </p>
+      ))}
+
+      {context.documents && context.documents.length > 0 && (
+        <ul className="context-docs">
+          {context.documents.map((d) => (
+            <li key={d.id}>
+              <code>{d.id}</code> <span className="sub">{d.server}</span>
+              {d.description && <span className="sub"> · {d.description}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {context.requests && context.requests.length > 0 && (
+        <details className="context-requests">
+          <summary>
+            {count(context.requests.length)} request
+            {context.requests.length === 1 ? '' : 's'} Veritix made
+          </summary>
+          <ol>
+            {context.requests.map((r, i) => (
+              <li key={i}>
+                <code>{r.method}</code> <span className="sub">{r.server}</span>
+                {r.uri && <code className="uri">{r.uri}</code>}
+                <span className="sub">
+                  {' '}
+                  · {duration(r.duration_ms)}
+                  {r.bytes ? ` · ${count(r.bytes)} bytes` : ''}
+                </span>
+                {r.error && <span className="notice error">{r.error}</span>}
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </section>
+  )
 }

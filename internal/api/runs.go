@@ -209,6 +209,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			DatabasePath: dbPath,
 			Rules:        ruleFile,
 			Agent:        agentOpts,
+			Context:      s.cfg.Context,
 			Profile:      profile.Options{TopValues: topValues},
 		},
 		report.Options{IncludeValues: req.IncludeValues},

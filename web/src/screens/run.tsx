@@ -247,6 +247,15 @@ function AgentBanner({ agent }: { agent: api.AgentInfo }) {
             shapes.
           </>
         )}
+        {agent.context_documents ? (
+          <>
+            {' '}
+            It also read {agent.context_documents} of your own document
+            {agent.context_documents === 1 ? '' : 's'} from{' '}
+            {agent.context_servers?.join(', ')}, which is how a defect that
+            nothing in the data marks out becomes visible.
+          </>
+        ) : null}
         {agent.not_reproduced > 0 && (
           <>
             {' '}

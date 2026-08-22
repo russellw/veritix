@@ -31,6 +31,7 @@ import (
 	"github.com/russellw/veritix/internal/agent/tools"
 	"github.com/russellw/veritix/internal/engine"
 	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/mcpclient"
 	"github.com/russellw/veritix/internal/profile"
 	"github.com/russellw/veritix/internal/rules"
 	"github.com/russellw/veritix/internal/telemetry"
@@ -95,6 +96,11 @@ type Input struct {
 	// Rules are the customer's rules in force for this run, so the agent does
 	// not propose protection they already have.
 	Rules *rules.File
+	// Context is the customer's own documents, already connected. Nil means no
+	// context server is configured, which is the default: the agent then has
+	// the tool set and the prompt it had before M5b, exactly, so the unaided
+	// half of a scorecard measures the model rather than a prompt change.
+	Context *mcpclient.Library
 	// Root is the dataset's root path, for the brief.
 	Root string
 }
@@ -120,6 +126,7 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 	guard := redact.New(opts.Policy)
 	world := &tools.World{
 		Engine:       in.Engine,
+		Context:      in.Context,
 		Profile:      in.Profile,
 		Known:        in.Known,
 		Rules:        in.Rules,
@@ -148,8 +155,13 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 		log.Error("the dataset profile could not be sealed for the brief", "error", err)
 	}
 
+	system := systemPrompt
+	if in.Context != nil {
+		system += contextPrompt
+	}
+
 	req := &llm.Request{
-		System:    systemPrompt,
+		System:    system,
 		Tools:     registry.Definitions(),
 		MaxTokens: opts.MaxTokens,
 		Effort:    opts.Effort,
@@ -157,7 +169,8 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 			Role: llm.RoleUser,
 			Parts: []llm.Part{{
 				Kind: llm.PartText,
-				Text: brief(in.Profile, overview.String(), in.Known, in.Rules, in.Root),
+				Text: brief(in.Profile, overview.String(), in.Known, in.Rules,
+					in.Context.Catalog(), in.Root),
 			}},
 		}},
 	}
@@ -321,6 +334,9 @@ func Run(ctx context.Context, in Input, opts Options, log *slog.Logger) (*Result
 	trace.Proposals = len(proposals)
 	trace.Refused = world.Refused()
 	trace.Redaction = guard.Stats()
+	// Snapshotted at the end, so the requests and the counts are what the run
+	// actually did rather than what it was set up to do.
+	trace.Context = contextTrace(in.Context)
 	if trace.Stopped == "" {
 		trace.Stopped = StoppedModelFinished
 	}

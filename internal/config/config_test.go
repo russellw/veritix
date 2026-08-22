@@ -118,6 +118,26 @@ func TestValidateRejectsBadInput(t *testing.T) {
 		// startup rather than ten minutes into a run nobody is watching.
 		"otel scheme": func(c *Config) { c.OTel.Endpoint = "collector:4318" },
 		"otel ratio":  func(c *Config) { c.OTel.SampleRatio = 1.5 },
+		// A context server is a program Veritix will start and documents it
+		// will send to a model, so a typo in one has to fail the process the
+		// operator is watching.
+		"context name": func(c *Config) {
+			c.Context.Servers = []ContextServer{{Command: "/bin/true"}}
+		},
+		"context command": func(c *Config) {
+			c.Context.Servers = []ContextServer{{Name: "docs"}}
+		},
+		"context env": func(c *Config) {
+			c.Context.Servers = []ContextServer{{Name: "docs", Command: "/bin/true", Env: []string{"TOKEN"}}}
+		},
+		// Names label documents in the catalog and in every finding's
+		// provenance, so two servers sharing one is a catalog nobody can read.
+		"context duplicate": func(c *Config) {
+			c.Context.Servers = []ContextServer{
+				{Name: "docs", Command: "/bin/true"},
+				{Name: "docs", Command: "/bin/false"},
+			}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := Default()
@@ -208,5 +228,52 @@ func TestNothingIsEnabledByDefault(t *testing.T) {
 	}
 	if cfg.OTel.Enabled {
 		t.Error("otel.enabled is true by default")
+	}
+	// A context server is an outbound connection and a subprocess, and
+	// whatever it returns goes to a model verbatim. A default install talks to
+	// nobody.
+	if len(cfg.Context.Servers) != 0 {
+		t.Errorf("context.servers is %+v by default", cfg.Context.Servers)
+	}
+}
+
+// The config file is the whole surface for context servers, so a round trip
+// through YAML is what has to work.
+func TestContextServersLoadFromTheConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "veritix.yaml")
+	body := `
+context:
+  max_document_bytes: 8000
+  servers:
+    - name: dictionary
+      command: /usr/local/bin/dict-mcp
+      args: ["--read-only", "--catalog", "billing"]
+      env: ["DICT_TOKEN=secret"]
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Context.Servers) != 1 {
+		t.Fatalf("loaded %+v", cfg.Context.Servers)
+	}
+	srv := cfg.Context.Servers[0]
+	if srv.Name != "dictionary" || srv.Command != "/usr/local/bin/dict-mcp" {
+		t.Errorf("server is %+v", srv)
+	}
+	if len(srv.Args) != 3 || srv.Args[2] != "billing" {
+		t.Errorf("args are %q, and an argument with a space in it is the reason "+
+			"they are a list rather than a string", srv.Args)
+	}
+	if cfg.Context.MaxDocumentBytes != 8000 {
+		t.Errorf("max_document_bytes is %d", cfg.Context.MaxDocumentBytes)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
 	}
 }

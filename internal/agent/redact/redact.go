@@ -95,6 +95,12 @@ type Stats struct {
 	Sealed int `json:"sealed"`
 	// Bytes is how many bytes of tool results were sent.
 	Bytes int `json:"bytes"`
+	// Documents is how many of the customer's own context documents were
+	// admitted verbatim, and DocumentBytes how much of them. They are counted
+	// apart from everything else because they are the one thing here that was
+	// not withheld: see [Guard.Document].
+	Documents     int `json:"context_documents,omitempty"`
+	DocumentBytes int `json:"context_bytes,omitempty"`
 }
 
 // New returns a guard applying the policy.
@@ -230,6 +236,35 @@ func (g *Guard) Derived(s string) Text { return Text{Mark(s)} }
 // can arrive here, because a token that is not in the vocabulary is not a
 // sentinel.
 func (g *Guard) Sentinel(s string) Text { return Text{s} }
+
+// Document admits one of the customer's own context documents verbatim.
+//
+// This is the one place the guard lets text through untouched, and it is the
+// exception the rest of the package is shaped around rather than a hole in it.
+// A data dictionary is what makes four of dirty-meters' defects visible at
+// all, and a dictionary rendered as ⟨XXXXXXX⟩ explains nothing: the useful
+// thing and the redacted thing cannot be the same thing here, which is exactly
+// unlike a cell value.
+//
+// So the decision is moved to where decisions about egress belong. Nothing
+// arrives here unless the operator configured a context server, which is the
+// same act --include-values is for cell values; the documents are the
+// customer's own, fetched from the customer's own machine; every request that
+// fetched one is in the run's trace, and so is every byte of what came back on
+// its way to the model. What this method does is count it, so that a trace
+// says how much was admitted rather than leaving a reader to add it up.
+//
+// It is deliberately not policy-dependent. A guard with AllowValues off still
+// admits documents, because withholding them would not be a stricter reading
+// of the promise — it would be the feature switched off while still configured,
+// which is the kind of half-state nobody can reason about.
+func (g *Guard) Document(s string) Text {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.stats.Documents++
+	g.stats.DocumentBytes += len(s)
+	return Text{s}
+}
 
 // Values clears a list of values.
 func (g *Guard) Values(ss []string) []Text {

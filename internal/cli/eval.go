@@ -27,6 +27,7 @@ type evalOptions struct {
 	llmEffort      string
 	llmMaxSteps    int
 	llmTokenBudget int
+	context        contextFlags
 }
 
 func newEvalCmd(e *env) *cobra.Command {
@@ -73,6 +74,7 @@ func newEvalCmd(e *env) *cobra.Command {
 	f.StringVar(&opts.llmEffort, "llm-effort", "", "how much deliberation to ask the model for")
 	f.IntVar(&opts.llmMaxSteps, "llm-max-steps", 0, "cap the agent's tool-calling loop")
 	f.IntVar(&opts.llmTokenBudget, "llm-token-budget", 0, "stop a run after this many tokens")
+	addContextFlags(cmd, &opts.context)
 
 	return cmd
 }
@@ -128,6 +130,11 @@ func runEval(cmd *cobra.Command, e *env, opts evalOptions, paths []string) error
 		agentOpts.UseEngineLimits(e.cfg.Engine)
 	}
 
+	contextCfg, err := resolveContext(e.cfg.Context, opts.context)
+	if err != nil {
+		return err
+	}
+
 	// Where the scorecard goes is settled before the runs start. An hour of a
 	// local model's time is the expensive way to find out the output path was
 	// wrong.
@@ -151,6 +158,7 @@ func runEval(cmd *cobra.Command, e *env, opts evalOptions, paths []string) error
 		Profile:  profile.Options{TopValues: 10},
 		Rules:    ruleFile,
 		Agent:    agentOpts,
+		Context:  contextCfg,
 		Runs:     opts.runs,
 	}, e.log)
 	if err != nil {

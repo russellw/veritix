@@ -26,6 +26,7 @@ import (
 	"github.com/russellw/veritix/internal/engine"
 	"github.com/russellw/veritix/internal/finding"
 	"github.com/russellw/veritix/internal/ingest"
+	"github.com/russellw/veritix/internal/mcpclient"
 	"github.com/russellw/veritix/internal/profile"
 	"github.com/russellw/veritix/internal/rules"
 	"github.com/russellw/veritix/internal/source"
@@ -59,6 +60,12 @@ type Options struct {
 	// deterministic pass. Nil means no model is configured, which is the
 	// default and a complete audit in its own right.
 	Agent *agent.Options
+	// Context names the MCP servers the agent may read the customer's own
+	// documents from. It is connected here rather than by the caller for the
+	// reason internal/runs exists: four entry points each remembering to
+	// connect, and to close afterwards, is how one of them eventually forgets.
+	// It is ignored when Agent is nil, since nothing else reads a document.
+	Context config.Context
 }
 
 // Result is everything a run produced.
@@ -286,12 +293,51 @@ func Run(ctx context.Context, opts Options, log *slog.Logger) (*Result, error) {
 			return nil, err
 		}
 
+		// The context servers are connected after lockdown and before the
+		// model, so that a subprocess Veritix started cannot be reached
+		// through DuckDB either. A server that will not answer is a warning
+		// and not a failure: an audit that dies because a data dictionary was
+		// down is worse than one that runs unaided.
+		var lib *mcpclient.Library
+		if len(opts.Context.Servers) > 0 {
+			lib, err = stage(ctx, log, "context", func(ctx context.Context) (*mcpclient.Library, error) {
+				return mcpclient.Connect(ctx, mcpclient.Options{
+					Servers:          contextServers(opts.Context.Servers),
+					MaxDocumentBytes: opts.Context.MaxDocumentBytes,
+					ConnectTimeout:   opts.Context.ConnectTimeout,
+					Log:              log,
+				})
+			}, func(l *mcpclient.Library) []attribute.KeyValue {
+				// A count, never a name: a document title is the customer's
+				// own vocabulary, which is the schema half of the rule in
+				// telemetry.Start.
+				return []attribute.KeyValue{
+					attribute.Int("veritix.context.documents", len(l.Catalog())),
+				}
+			})
+			if err != nil {
+				span.SetStatus(codes.Error, "the context servers could not be reached")
+				_ = e.Close()
+				return nil, err
+			}
+			// Closed as soon as the agent is done rather than with the run:
+			// these are subprocesses, and a report that takes a minute to
+			// render is a minute of a ticket system's connection held for
+			// nothing.
+			defer func() {
+				if closeErr := lib.Close(); closeErr != nil {
+					log.Warn("a context server did not shut down cleanly", "error", closeErr)
+				}
+			}()
+		}
+
 		agentRes, err := stage(ctx, log, "agent", func(ctx context.Context) (*agent.Result, error) {
 			return agent.Run(ctx, agent.Input{
 				Engine:  e,
 				Profile: prof,
 				Known:   found.All(),
 				Rules:   opts.Rules,
+				Context: lib,
 				Root:    ds.Root,
 			}, *opts.Agent, log)
 		}, func(a *agent.Result) []attribute.KeyValue {
@@ -436,4 +482,23 @@ func recordAgent(ctx context.Context, t *agent.Trace) {
 				metric.WithAttributes(telemetry.AttrDirection.String(dir)))
 		}
 	}
+}
+
+// contextServers converts the configured servers into what the client wants.
+//
+// The two types are deliberately separate: config.ContextServer is what a
+// person writes in a YAML file, and mcpclient.Server carries a Transport that
+// a config file has no way to express and that tests use to connect to a
+// server in the same process.
+func contextServers(servers []config.ContextServer) []mcpclient.Server {
+	out := make([]mcpclient.Server, 0, len(servers))
+	for _, s := range servers {
+		out = append(out, mcpclient.Server{
+			Name:    s.Name,
+			Command: s.Command,
+			Args:    s.Args,
+			Env:     s.Env,
+		})
+	}
+	return out
 }

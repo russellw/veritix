@@ -31,6 +31,7 @@ import (
 	"github.com/russellw/veritix/internal/agent/redact"
 	"github.com/russellw/veritix/internal/engine"
 	"github.com/russellw/veritix/internal/finding"
+	"github.com/russellw/veritix/internal/mcpclient"
 	"github.com/russellw/veritix/internal/profile"
 	"github.com/russellw/veritix/internal/rules"
 )
@@ -53,6 +54,11 @@ type World struct {
 	// ids and targets are ever sent — a rule's permitted values are cell
 	// values, and its where clause can be.
 	Rules *rules.File
+	// Context is the customer's own documents, reachable over MCP. Nil when no
+	// context server is configured, which is the default and which is what
+	// keeps the tool surface — and therefore the cached prompt prefix —
+	// exactly what it was before M5b for everybody who has not turned this on.
+	Context *mcpclient.Library
 	// Guard decides what may leave the process.
 	Guard *redact.Guard
 	// MaxRows caps a query result. Zero uses the engine's own cap.
@@ -219,6 +225,13 @@ func New(w *World) *Registry {
 	r.add(checkCandidateKey())
 	r.add(checkReferentialIntegrity())
 	r.add(sampleValues())
+	// The context tools go before the outputs and after the measurements,
+	// because that is the order the work happens in: read what a column is
+	// for, measure whether the data agrees, record what it does not.
+	if w.Context != nil {
+		r.add(listContext())
+		r.add(readContext())
+	}
 	r.add(recordFinding())
 	r.add(proposeRule())
 	return r

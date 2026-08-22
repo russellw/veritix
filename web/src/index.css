@@ -841,6 +841,57 @@ left the process.
   font-size: 0.92rem;
 }
 
+/*
+The context panel sits between the egress notice and the steps, because it is
+the same claim read the other way round: what left the process, rather than
+what reached the model.
+*/
+.context-trace {
+  margin-top: 1rem;
+}
+
+.context-docs {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  font-size: 0.88rem;
+}
+
+.context-docs > li {
+  padding: 0.2rem 0;
+}
+
+.context-docs code,
+.context-requests code {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.context-requests {
+  margin-top: 0.7rem;
+  font-size: 0.88rem;
+}
+
+.context-requests summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.context-requests ol {
+  margin: 0.5rem 0 0;
+  padding-left: 1.4rem;
+}
+
+.context-requests li {
+  padding: 0.15rem 0;
+}
+
+/* A URI can be long and must not push the page sideways. */
+.context-requests .uri {
+  margin-left: 0.4rem;
+  overflow-wrap: anywhere;
+}
+
 .call {
   border: 1px solid var(--line);
   border-radius: 5px;
