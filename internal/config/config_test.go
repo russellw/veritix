@@ -114,6 +114,10 @@ func TestValidateRejectsBadInput(t *testing.T) {
 		"agent budget": func(c *Config) { c.LLM.MaxSteps = 0 },
 		// The interface renders this one as an href.
 		"source scheme": func(c *Config) { c.Server.SourceURL = "javascript:alert(1)" },
+		// A collector endpoint that cannot be reached is worth refusing at
+		// startup rather than ten minutes into a run nobody is watching.
+		"otel scheme": func(c *Config) { c.OTel.Endpoint = "collector:4318" },
+		"otel ratio":  func(c *Config) { c.OTel.SampleRatio = 1.5 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := Default()
@@ -148,5 +152,61 @@ func TestIsLoopback(t *testing.T) {
 		if IsLoopback(addr) {
 			t.Errorf("IsLoopback(%q) = true, want false", addr)
 		}
+	}
+}
+
+// TestConfigEnvNamesTheFile covers what a container needs: the config arrives
+// on a mounted volume at a path the image did not choose, so it is named in the
+// environment rather than on the command line, where overriding args would
+// silently lose it.
+func TestConfigEnvNamesTheFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("log:\n  level: warn\notel:\n  enabled: true\n  endpoint: http://collector:4318\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv(ConfigEnv, path)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("loading the file named by %s: %v", ConfigEnv, err)
+	}
+	if cfg.Log.Level != "warn" {
+		t.Errorf("log.level = %q, want warn", cfg.Log.Level)
+	}
+	if !cfg.OTel.Enabled || cfg.OTel.Endpoint != "http://collector:4318" {
+		t.Errorf("otel = %+v, want the file's settings", cfg.OTel)
+	}
+
+	// A named file that is not there is an error, exactly as --config is:
+	// somebody who names a config file expects it to be used.
+	t.Setenv(ConfigEnv, filepath.Join(dir, "absent.yaml"))
+	if _, err := Load(""); err == nil {
+		t.Error("a missing file named by the environment was accepted")
+	}
+
+	// An explicit --config still wins, so the flag is not shadowed by an
+	// environment somebody set once and forgot.
+	other := filepath.Join(dir, "other.yaml")
+	if err := os.WriteFile(other, []byte("log:\n  level: error\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(other)
+	if err != nil {
+		t.Fatalf("loading an explicit path: %v", err)
+	}
+	if cfg.Log.Level != "error" {
+		t.Errorf("--config lost to %s: log.level = %q", ConfigEnv, cfg.Log.Level)
+	}
+}
+
+// Nothing talks to anybody until it is told to. Two switches, one rule.
+func TestNothingIsEnabledByDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.LLM.Provider != ProviderNone {
+		t.Errorf("llm.provider = %q, want %q", cfg.LLM.Provider, ProviderNone)
+	}
+	if cfg.OTel.Enabled {
+		t.Error("otel.enabled is true by default")
 	}
 }
