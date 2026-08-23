@@ -15,6 +15,17 @@ server:
   # why the Deployment supplies one from a Secret.
   addr: 0.0.0.0:8080
   data_dir: /data
+  # How long a finished run's ingested data is kept. Every run leaves a DuckDB
+  # copy of the dataset behind so that a finding's offending rows can be
+  # fetched afterwards, at roughly a third of the dataset's size — which
+  # auditing by hand never made a problem and a nightly audit does: two
+  # gigabytes a night is about 700 MB a night, against a 20Gi volume.
+  # Discarding one takes nothing out of the audit trail; the run, its report,
+  # its findings and its trace are small and stay, and the most recent run of
+  # each dataset keeps its data whatever this says. 0 keeps everything.
+  #
+  # Hours, because a Go duration has no day unit and "14d" is a startup error.
+  retain_databases: 336h # 14 days
   max_upload_bytes: 2147483648
 
   # AGPL section 13: whoever modified Veritix and serves it to other people

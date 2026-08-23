@@ -692,6 +692,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: |
+            The ingested data for this run has been discarded and its rows are
+            no longer available. Every run leaves a copy of the dataset behind
+            so that this endpoint can read it, and `server.retain_databases`
+            says how long that is kept — the run, its report and its findings
+            stay whatever happens. Auditing the dataset again produces a run
+            whose rows can be read.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
 components:
   securitySchemes:

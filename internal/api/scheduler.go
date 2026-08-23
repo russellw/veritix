@@ -3,13 +3,14 @@ package api
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/russellw/veritix/internal/store"
 )
 
-// scheduler starts the audits nobody pressed.
+// scheduler starts the audits nobody pressed, and clears up after them.
 //
 // It runs in the process that serves, and nowhere else. internal/mcp
 // deliberately does not call store.MarkInterrupted, because a subprocess must
@@ -25,6 +26,14 @@ import (
 type scheduler struct {
 	srv  *Server
 	tick time.Duration
+	// fire is whether this process starts due audits. Discarding expired run
+	// databases happens either way: it is disk hygiene, and an operator who
+	// turned the clock off because another process owns it has not asked for
+	// the disk to fill up.
+	fire bool
+	// retain is how long a finished run's ingested data is kept. Zero keeps
+	// all of it.
+	retain time.Duration
 	// now is the clock, injected so that the tests do not have to sleep
 	// through a window.
 	now func() time.Time
@@ -33,8 +42,24 @@ type scheduler struct {
 }
 
 func newScheduler(s *Server) *scheduler {
-	return &scheduler{srv: s, tick: s.cfg.Schedule.Tick, now: time.Now}
+	// Validate only bounds the tick when the clock is on, and time.NewTicker
+	// panics on a zero one. Discarding expired databases uses the same ticker
+	// and does not care how often it fires.
+	tick := s.cfg.Schedule.Tick
+	if tick <= 0 {
+		tick = 30 * time.Second
+	}
+	return &scheduler{
+		srv:    s,
+		tick:   tick,
+		fire:   s.cfg.Schedule.Enabled,
+		retain: s.cfg.Server.RetainDatabases,
+		now:    time.Now,
+	}
 }
+
+// needed reports whether there is anything for the ticker to do.
+func (sc *scheduler) needed() bool { return sc.fire || sc.retain > 0 }
 
 // start runs the clock until the context is canceled or the server is closing.
 func (sc *scheduler) start(ctx context.Context) {
@@ -55,10 +80,21 @@ func (sc *scheduler) start(ctx context.Context) {
 			case <-sc.srv.stopping:
 				return
 			case <-t.C:
-				sc.sweep(ctx)
+				sc.tickOnce(ctx)
 			}
 		}
 	}()
+}
+
+// tickOnce is one turn of the clock: start what is due, then clear up after
+// what is finished.
+func (sc *scheduler) tickOnce(ctx context.Context) {
+	if sc.fire {
+		sc.sweep(ctx)
+	}
+	if sc.retain > 0 {
+		sc.discard(ctx)
+	}
 }
 
 // wait blocks until the clock has stopped. Server.Close closes stopping and
@@ -153,5 +189,46 @@ func (sc *scheduler) record(
 	if err := sc.srv.store.ScheduleFired(ctx, s.DatasetID, next, runID, reason); err != nil {
 		sc.srv.log.Error("could not record what a schedule did",
 			"dataset", s.DatasetID, "error", err)
+	}
+}
+
+// discard deletes the ingested data of runs old enough to have lost it, and
+// records that it is gone.
+//
+// What goes is the DuckDB file a run left behind so that a finding's rows
+// could be fetched afterwards — a copy of the customer's own files, which can
+// be made again by auditing them again. What stays is the run, its report, its
+// findings and its trace: that is the audit trail, it is small, and it is the
+// thing somebody wants six months later.
+//
+// The comparison a report is built from reads the stored document and never
+// this file, so discarding one cannot make a run-over-run comparison stop
+// working. That is what makes the split possible at all.
+func (sc *scheduler) discard(ctx context.Context) {
+	cutoff := sc.now().Add(-sc.retain)
+
+	expired, err := sc.srv.store.DiscardableRunDatabases(ctx, cutoff)
+	if err != nil {
+		sc.srv.log.Error("could not list the run databases to discard", "error", err)
+		return
+	}
+
+	for _, run := range expired {
+		var bytes int64
+		if info, err := os.Stat(run.DatabasePath); err == nil { //nolint:gosec // server-generated path
+			bytes = info.Size()
+		}
+
+		// removeRunFiles refuses anything that is not under DataDir/runs, so a
+		// row edited by hand cannot make this delete something else.
+		sc.srv.removeRunFiles(run)
+
+		if err := sc.srv.store.ClearRunDatabase(ctx, run.ID); err != nil {
+			sc.srv.log.Error("could not record a discarded run database",
+				"run", run.ID, "error", err)
+			continue
+		}
+		sc.srv.log.Info("discarded a run's ingested data",
+			"run", run.ID, "dataset", run.DatasetID, "finished", run.FinishedAt, "bytes", bytes)
 	}
 }

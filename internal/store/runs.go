@@ -462,6 +462,56 @@ func (s *Store) ActiveRun(ctx context.Context, datasetID string) (*Run, error) {
 	return r, nil
 }
 
+// DiscardableRunDatabases returns finished runs whose ingested data may be
+// deleted: those that finished before the given instant and are not the most
+// recent run of their dataset still holding one.
+//
+// The floor matters more than the cutoff. A dataset audited once, six months
+// ago, would otherwise lose the only copy of the data its findings were
+// computed from, and the rows behind a finding are the most useful thing the
+// interface shows.
+//
+// The caller checks the cutoff again in Go. This comparison is between the
+// texts formatTime writes, and RFC 3339 Nano drops the trailing zeros of the
+// fraction, so the boundary is fuzzy by under a second — which does not matter
+// for a cutoff measured in days, and a run wrongly left out here is picked up
+// on the next pass anyway.
+func (s *Store) DiscardableRunDatabases(ctx context.Context, before time.Time) ([]*Run, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+runColumns+` FROM runs r
+		 WHERE r.database_path <> ''
+		   AND r.finished_at IS NOT NULL AND r.finished_at <> ''
+		   AND r.finished_at < ?
+		   AND r.id <> (SELECT id FROM runs
+		                WHERE dataset_id = r.dataset_id AND database_path <> ''
+		                ORDER BY created_at DESC LIMIT 1)
+		 ORDER BY r.finished_at`,
+		formatTime(before))
+	if err != nil {
+		return nil, fmt.Errorf("list discardable run databases: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // rows.Err below reports what matters
+
+	var out []*Run
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("read run: %w", err)
+		}
+		if r.FinishedAt.Before(before) {
+			out = append(out, r)
+		}
+	}
+	return out, rows.Err()
+}
+
+// ClearRunDatabase records that a run's ingested data is gone. The run itself
+// stays: it is the audit trail, and what was discarded is a copy of the
+// customer's files that can be made again by auditing them again.
+func (s *Store) ClearRunDatabase(ctx context.Context, id string) error {
+	return s.update(ctx, `UPDATE runs SET database_path = '' WHERE id = ?`, id)
+}
+
 // Runs lists run history, most recent first. An empty datasetID lists every
 // dataset's runs.
 func (s *Store) Runs(ctx context.Context, datasetID string, limit int) ([]*Run, error) {

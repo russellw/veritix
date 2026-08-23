@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -54,6 +55,15 @@ func (s *Server) handleFindingRows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rs, err := s.queryRows(r, run, f, limit)
+	if errors.Is(err, errRunDataDiscarded) {
+		// Gone rather than a 500: the data really did exist, it was deleted on
+		// purpose, and saying so is the difference between a product that
+		// clears up after itself and one that looks broken on old runs.
+		writeError(w, http.StatusGone,
+			"the ingested data for run %s has been discarded, so its rows are no longer "+
+				"available; audit the dataset again to see them", run.ID)
+		return
+	}
 	if err != nil {
 		// The query text is not returned: it embeds column names and
 		// predicates, and an error page is the wrong place for either.
@@ -88,17 +98,20 @@ func (s *Server) handleFindingRows(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// errRunDataDiscarded reports that the run's ingested data is not there to be
+// read: retention removed it, or the run never kept one.
+var errRunDataDiscarded = errors.New("the run's ingested data is gone")
+
 func (s *Server) queryRows(
 	r *http.Request, run *store.Run, f *store.Finding, limit int,
 ) (*engine.ResultSet, error) {
 	if run.DatabasePath == "" {
-		return nil, fmt.Errorf("run %s kept no database", run.ID)
+		return nil, fmt.Errorf("run %s kept no database: %w", run.ID, errRunDataDiscarded)
 	}
 	// The path was written by runs.DatabasePath from the data directory and the
 	// run's generated id, never by anything a request supplied.
 	if _, err := os.Stat(run.DatabasePath); err != nil { //nolint:gosec // server-generated path
-
-		return nil, fmt.Errorf("run %s: %w", run.ID, err)
+		return nil, fmt.Errorf("run %s: %w: %w", run.ID, errRunDataDiscarded, err)
 	}
 
 	// Read-only is enforced by DuckDB rather than by inspecting the query

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -220,14 +222,23 @@ func TestTheClockCanBeTurnedOff(t *testing.T) {
 	ts := newTestServerTuned(t, "", nil, func(cfg *config.Config) {
 		cfg.Schedule.Enabled = false
 	})
-	if ts.srv.sched != nil {
-		t.Fatal("the clock is running with schedule.enabled off")
+	ds := ts.registerFixture()
+	ts.dueSchedule(ds, time.Hour)
+
+	// The ticker is still there, because discarding expired run databases uses
+	// it and is not something an operator turned off. It fires no windows.
+	ts.srv.sched.tickOnce(context.Background())
+
+	var runs struct {
+		Runs []*runJSON `json:"runs"`
+	}
+	ts.decode(ts.do(http.MethodGet, "/api/v1/runs?dataset_id="+ds, nil), http.StatusOK, &runs)
+	if len(runs.Runs) != 0 {
+		t.Errorf("the clock started %d audits with schedule.enabled off", len(runs.Runs))
 	}
 
 	// The schedule is still stored and still readable: turning the clock off
 	// is about this process, not about the commitment.
-	ds := ts.registerFixture()
-	ts.dueSchedule(ds, time.Hour)
 	ts.decode(ts.do(http.MethodGet, "/api/v1/datasets/"+ds+"/schedule", nil), http.StatusOK, nil)
 }
 
@@ -262,4 +273,137 @@ func TestAScheduledAuditRunsNoModel(t *testing.T) {
 	if resp := ts.get("/api/v1/runs/" + run.ID + "/trace"); resp.Status != http.StatusNotFound {
 		t.Errorf("trace = %d, want 404 for a run with no model", resp.Status)
 	}
+}
+
+// Retention is what makes scheduling survivable: every run leaves a DuckDB
+// file behind at roughly a third of the dataset's size, and a nightly audit of
+// a two gigabyte export is 700 MB a night.
+func TestOldRunDataIsDiscardedAndTheAuditTrailIsNot(t *testing.T) {
+	ts := newTestServerTuned(t, "", nil, retention(time.Hour))
+	ctx := context.Background()
+	ds := ts.registerFixture()
+
+	old := ts.startRun(map[string]any{"dataset_id": ds})
+	recent := ts.startRun(map[string]any{"dataset_id": ds})
+
+	// Move the clock past the cutoff rather than editing the runs: it ages
+	// every run at once, which is also the harder case — the most recent run
+	// is then over the cutoff too, and has to be kept anyway.
+	ts.srv.sched.now = func() time.Time { return time.Now().Add(48 * time.Hour) }
+
+	oldRun, err := ts.st.Run(ctx, old.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	dbPath := oldRun.DatabasePath
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("the run kept no database to discard: %v", err)
+	}
+
+	ts.srv.sched.tickOnce(ctx)
+
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Errorf("the expired run database is still there: %v", err)
+	}
+	if dir := filepath.Dir(dbPath); dirExists(t, dir) {
+		t.Errorf("the run directory %s survived", dir)
+	}
+
+	// The audit trail is untouched: the run, its counts, its report.
+	var run runJSON
+	ts.decode(ts.do(http.MethodGet, "/api/v1/runs/"+old.ID, nil), http.StatusOK, &run)
+	if run.Status != string(store.StatusSucceeded) || run.Findings.Total == 0 {
+		t.Errorf("the run itself changed: %+v", run)
+	}
+	ts.decode(ts.get("/api/v1/runs/"+old.ID+"/report"), http.StatusOK, nil)
+
+	// And the most recent run keeps its data whatever the cutoff says, so the
+	// newest audit's rows are always there to look at.
+	after, err := ts.st.Run(ctx, recent.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if after.DatabasePath == "" {
+		t.Fatal("the most recent run lost its data")
+	}
+	if _, err := os.Stat(after.DatabasePath); err != nil {
+		t.Errorf("the most recent run's database is gone: %v", err)
+	}
+}
+
+// A run whose data has been discarded says so, rather than looking like a
+// server that is broken on old runs.
+func TestAskingForTheRowsOfADiscardedRunSaysSo(t *testing.T) {
+	ts := newTestServerTuned(t, "", nil, retention(time.Hour))
+	ds := ts.registerFixture()
+
+	old := ts.startRun(map[string]any{"dataset_id": ds})
+	ts.startRun(map[string]any{"dataset_id": ds}) // so the old one is not the newest
+
+	var doc struct {
+		Findings []struct {
+			ID string `json:"id"`
+		} `json:"findings"`
+	}
+	ts.decode(ts.get("/api/v1/runs/"+old.ID+"/report"), http.StatusOK, &doc)
+	var findingID string
+	for _, f := range doc.Findings {
+		resp := ts.do(http.MethodGet, "/api/v1/runs/"+old.ID+"/findings/"+f.ID+"/rows", nil)
+		if resp.Status == http.StatusOK {
+			findingID = f.ID
+			break
+		}
+	}
+	if findingID == "" {
+		t.Fatal("no finding of the fixture has rows to show")
+	}
+
+	ts.srv.sched.now = func() time.Time { return time.Now().Add(48 * time.Hour) }
+	ts.srv.sched.tickOnce(context.Background())
+
+	resp := ts.do(http.MethodGet, "/api/v1/runs/"+old.ID+"/findings/"+findingID+"/rows", nil)
+	if resp.Status != http.StatusGone {
+		t.Fatalf("rows for a discarded run = %d, want 410: %s", resp.Status, resp.Body)
+	}
+	if !bytes.Contains(resp.Body, []byte("discarded")) {
+		t.Errorf("the refusal does not say what happened: %s", resp.Body)
+	}
+}
+
+func TestKeepingEverythingDiscardsNothing(t *testing.T) {
+	ts := newTestServerTuned(t, "", nil, retention(0))
+	ctx := context.Background()
+	ds := ts.registerFixture()
+
+	old := ts.startRun(map[string]any{"dataset_id": ds})
+	ts.startRun(map[string]any{"dataset_id": ds})
+	ts.srv.sched.now = func() time.Time { return time.Now().Add(10 * 365 * 24 * time.Hour) }
+
+	ts.srv.sched.tickOnce(ctx)
+
+	after, err := ts.st.Run(ctx, old.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if after.DatabasePath == "" {
+		t.Fatal("a run was discarded with retention off")
+	}
+	if _, err := os.Stat(after.DatabasePath); err != nil {
+		t.Errorf("its database is gone: %v", err)
+	}
+}
+
+// retention configures how long run data is kept, and slows the ticker right
+// down so that a test can drive it by hand without the clock racing it.
+func retention(d time.Duration) func(*config.Config) {
+	return func(cfg *config.Config) {
+		cfg.Server.RetainDatabases = d
+		cfg.Schedule.Tick = time.Hour
+	}
+}
+
+func dirExists(t *testing.T, dir string) bool {
+	t.Helper()
+	_, err := os.Stat(dir)
+	return err == nil
 }

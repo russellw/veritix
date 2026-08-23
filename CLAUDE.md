@@ -1088,6 +1088,10 @@ positives, both commented in place:
 - A run recorded as `running` that survives a restart belongs to a process that
   is gone. `store.MarkInterrupted` closes those out at startup, or the history
   lies and an events stream waits forever on nothing.
+- **A Go duration has no day unit**, so `retain_databases: 14d` is a startup
+  error and the config file says `336h`. Worse in the environment:
+  `config.dur` ignores a value it cannot parse, so `VERITIX_RETAIN_DATABASES=14d`
+  is *silently* the default — which is true of every `VERITIX_*_TIMEOUT` too.
 - **A timestamp in the store is not lexicographically ordered.** `formatTime`
   writes RFC 3339 *Nano*, which drops the trailing zeros of the fraction, so
   `…:00Z` sorts *after* `…:00.5Z` and a `WHERE next_due_at <= ?` against

@@ -94,8 +94,8 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 
 	// After MarkInterrupted, so that the first sweep cannot mistake a run
 	// belonging to a process that is gone for one that is in flight here.
-	if s.cfg.Schedule.Enabled {
-		s.sched = newScheduler(s)
+	if sched := newScheduler(s); sched.needed() {
+		s.sched = sched
 		s.sched.start(ctx)
 	}
 

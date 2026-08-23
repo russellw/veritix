@@ -154,6 +154,20 @@ type Server struct {
 	// this at their repository and the interface makes that offer for them.
 	SourceURL string `yaml:"source_url"`
 
+	// RetainDatabases is how long a finished run's ingested data is kept
+	// before it is discarded. Zero keeps every one of them forever.
+	//
+	// Every run leaves a DuckDB file behind so that a finding's offending rows
+	// can be fetched afterwards, at roughly a third of the dataset's size.
+	// Auditing by hand never made that a problem; a nightly audit of a two
+	// gigabyte export is about 700 MB a night, which fills a disk in a
+	// quarter. What is discarded is the ingested copy of the customer's data
+	// and nothing else: the run, its report, its findings and its trace are
+	// the audit trail, they are small, and they stay. The most recent run of
+	// each dataset that still has one keeps it whatever this says, so the
+	// newest audit's rows are always there to look at.
+	RetainDatabases time.Duration `yaml:"retain_databases"`
+
 	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`
 	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"`
 }
@@ -252,6 +266,7 @@ func Default() Config {
 			DataDir:           defaultDataDir(),
 			MaxUploadBytes:    2 << 30, // 2 GiB
 			SourceURL:         buildinfo.SourceURL,
+			RetainDatabases:   14 * 24 * time.Hour,
 			ReadHeaderTimeout: 10 * time.Second,
 			ShutdownTimeout:   15 * time.Second,
 		},
@@ -359,6 +374,7 @@ func applyEnv(cfg *Config) {
 	str(&cfg.Server.DataDir, "DATA_DIR")
 	num64(&cfg.Server.MaxUploadBytes, "MAX_UPLOAD_BYTES")
 	str(&cfg.Server.SourceURL, "SOURCE_URL")
+	dur(&cfg.Server.RetainDatabases, "RETAIN_DATABASES")
 
 	str(&cfg.Engine.MemoryLimit, "ENGINE_MEMORY_LIMIT")
 	num(&cfg.Engine.Threads, "ENGINE_THREADS")
@@ -463,6 +479,11 @@ func (c Config) Validate() error {
 	if u := c.Server.SourceURL; u != "" &&
 		!strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
 		return fmt.Errorf("server.source_url: want an http or https URL, got %q", u)
+	}
+	if c.Server.RetainDatabases < 0 {
+		return fmt.Errorf(
+			"server.retain_databases: want a duration or 0 to keep everything, got %s",
+			c.Server.RetainDatabases)
 	}
 	if c.Schedule.Enabled {
 		// A tick faster than a second is a busy loop over the run store, and
