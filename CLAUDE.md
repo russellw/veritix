@@ -87,6 +87,7 @@ claude mcp add veritix -- "$PWD/bin/veritix" mcp --data-dir ~/.veritix
     --context-server "docs:/tmp/ctx -dir $PWD/testdata/dirty-meters/context"
 
 make docker                                  # the image, interface included
+make docker-smoke                            # run it and check it, zones included
 kubectl apply -k deploy/kubernetes            # one replica, egress denied
 
 VERITIX_OTEL_ENABLED=true \
@@ -217,6 +218,8 @@ testdata/dirty-meters/    a third, four of whose defects are not in the data at
                           sit in context/ where discovery cannot see them
 scripts/context-server a directory of Markdown served as MCP resources, so the
                        context fixture has something to be measured against
+scripts/smoke-image.sh runs the built image and talks to it: the checks that
+                       need a container rather than a test binary
 deploy/Dockerfile      three stages: the interface, the binary, distroless
 deploy/kubernetes/     a kustomize base; one replica, and egress denied
 docs/frontend-stack.md the front end's dependency and supply-chain policy
@@ -327,7 +330,11 @@ decisions.
   library's is UTC — that difference would move every unconfigured schedule by
   an hour for half the year, silently, in exactly the countries that observe
   summer time. The blank `time/tzdata` import lives in that package because a
-  distroless image carries no zone database.
+  binary otherwise depends on the operating system's, and Windows has none at
+  all — a named zone would be an error on the platform the interface is for.
+  Nothing in `go test` can see that: every machine running the tests has a
+  system zoneinfo that answers first, so `make docker-smoke` takes it away from
+  a container and is the only check that fails without the import.
 - **A scheduled run is an ordinary run.** The clock calls the same
   `Server.startRun` that `POST /runs` does — extracted from the handler for
   exactly this — so it streams on the same events, cancels from the same
@@ -697,6 +704,23 @@ is the operator's half; these are the decisions.
 
 `deploy/` is the shipping half of M6b and `docs/deployment.md` is the argument.
 
+- **`make docker-smoke` asserts what the build cannot.** The Dockerfile can
+  assert things about the binary, and does; distroless has no shell, so
+  everything about the image that ships has to be asserted by running it and
+  talking to it. `scripts/smoke-image.sh` is that: health unauthenticated, the
+  API behind the token, the interface under its CSP, `--read-only`, a dataset
+  registered by path, and a schedule accepted in a named zone — `Asia/Kolkata`,
+  because +05:30 with no summer time makes a zone accepted and then ignored
+  visible in every season, where London is +00:00 for half the year.
+  **The second phase is the whole reason it exists.** It restarts the same
+  image with an empty directory bind-mounted over all three zone sources Go
+  looks in, and asks it to accept `Europe/London` anyway. That is the only
+  check in the repo that fails when `internal/schedule` stops importing
+  `time/tzdata` — measured, against an image built without it, which answers
+  400. **The premise it was nearly built on is false**: `cc-debian12` ships
+  `/usr/share/zoneinfo`, so a container check that does not take the database
+  away proves nothing, and the platform the import is actually load bearing on
+  is Windows, where Go has no system zone source at all.
 - **The image builds the interface or fails.** `deploy/Dockerfile` gained a
   Node stage: plain `go build` produces a working API and a page saying the
   interface is missing, which is right for a developer and wrong for an image

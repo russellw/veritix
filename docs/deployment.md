@@ -42,6 +42,32 @@ An image bound to `0.0.0.0` refuses to start without `VERITIX_AUTH_TOKEN`. That
 is not a container rule, it is `serve`'s rule: exposing an instance to a network
 is a deliberate act, and a deliberate act without authentication is a mistake.
 
+```sh
+make docker-smoke
+```
+
+runs the image and talks to it: `/health` unauthenticated, the API behind the
+token, the interface under its CSP, `--read-only`, a dataset registered by
+path, and a schedule accepted in a named time zone. The build can assert things
+about the *binary*, and does; distroless has no shell, so anything about the
+image that ships has to be asserted from outside it.
+
+The zone is the check that exists nowhere else. A schedule names an IANA zone,
+and Go resolves one from the operating system unless the binary carries the
+database itself — which is what `internal/schedule`'s `time/tzdata` import is
+for. Every machine that runs `go test` has a system zoneinfo that answers
+first, so the whole suite passes whether that import is there or not. The
+second phase of the smoke check bind-mounts an empty directory over every zone
+source Go looks in and asks the container to accept `Europe/London` anyway.
+That is not a contrived condition: it is what Go sees on a Windows desktop,
+where there is no system zone source at all, and Windows desktops are who the
+web interface is for. The check has been run against an image built without the
+import, where the same request comes back 400.
+
+The `cc-debian12` base does ship `/usr/share/zoneinfo` today, which is why the
+check has to take it away to see anything — and why relying on the base image
+for zones would be relying on something nobody here decided.
+
 ## 3. Kubernetes
 
 ```sh

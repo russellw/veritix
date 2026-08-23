@@ -81,6 +81,11 @@ times:
   exist — 02:30 — rather than silently missing that night.
 - **The night they go back**, an hour happens twice. The audit runs **once**.
 
+The zone database travels with the binary, because Go otherwise asks the
+operating system and Windows has nothing to ask — which would make a named zone
+an error on the platform the interface is for. `make docker-smoke` is what
+checks that it is still there; see [deployment.md](deployment.md).
+
 An *interval* schedule is the other choice on purpose: it counts elapsed time,
 so "every 24 hours" drifts by an hour across a transition where "daily at 03:00"
 does not. Use a daily schedule when you mean a time of day.

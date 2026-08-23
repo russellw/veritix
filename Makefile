@@ -86,6 +86,14 @@ tidy:
 docker:
 	docker build -t veritix:$(VERSION) -f deploy/Dockerfile .
 
+# The build asserts what it can about the binary; distroless has no shell, so
+# everything about the image that ships has to be asserted by running it. The
+# embedded zone database is the one that cannot be checked anywhere else at
+# all — every other machine has a system zoneinfo that answers first.
+.PHONY: docker-smoke
+docker-smoke: docker
+	IMAGE=veritix:$(VERSION) scripts/smoke-image.sh
+
 # ── web interface ──────────────────────────────────────────────────────────
 
 # The lockfile is the source of truth, the way go.sum is. An install that would

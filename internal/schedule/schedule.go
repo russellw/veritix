@@ -17,10 +17,18 @@ import (
 	"strings"
 	"time"
 
-	// A schedule names an IANA zone, and a distroless image carries no zone
-	// database. Without this a zone that works in development is an error in
-	// the container, which is the worst place to find out. It costs about
-	// 450 KB and it is the whole of the fix.
+	// A schedule names an IANA zone, and Go resolves one from the operating
+	// system unless the binary carries the database itself. On Windows there is
+	// no system zone source at all — time.LoadLocation has nothing to read —
+	// and Windows desktops are who the web interface exists for, so without this
+	// import "Europe/London" is an error on the product's primary platform. A
+	// minimal container image is the same story. It costs about 450 KB.
+	//
+	// No test here can prove it took: this machine and every CI runner have a
+	// system zoneinfo, which is read first, so the suite passes with the import
+	// removed. `make docker-smoke` takes the zone database away from a running
+	// container and asks it to accept Europe/London anyway, which is the one
+	// check that fails without this line.
 	_ "time/tzdata"
 )
 
