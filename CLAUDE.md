@@ -770,11 +770,22 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   so the fixture measures reading the documents against the data rather than
   reciting them.
 
-  **Nothing has scored it yet**: 8 of 8 deterministic defects with no false
-  positives, and the aided half was zero before there was an MCP client. That
-  is the baseline, not a result. M5b built the client; the measurement is the
-  next thing to take, with `scripts/context-server` serving `context/` and
-  `--no-context` producing the control on the same command line.
+  **Measured, with `gpt-oss-120b`: 0% both halves**, over three aided runs and
+  three `--no-context` controls, checks 8 of 8 with no false positives in all
+  six. The aided half is zero for a different reason than before M5b, and the
+  trace is what says so: three `resources/list` and **zero `resources/read`**,
+  so the client connected, enumerated all three documents and listed them in
+  the brief, and the model called neither context tool. What it did instead was
+  find the `site_ref` → `premises.upn` pair unaided in all six runs, join the
+  columns as written, and report **14 orphans where the answer is 4** — the
+  number the `clean:` guard was written to catch, walked into by a model rather
+  than by a change to `relate.go`. Three runs then proposed a `references` rule
+  encoding that join, which is what the accept screen's materialized values are
+  for. The control says the documents cost nothing measurable (steps 10/7/8
+  aided against 16/7/7), which is the most it can say while both halves are
+  zero. The gap is in what makes a model reach for a tool it was not pushed
+  toward — the same thing the check tools' `note` fixed — and not in
+  `internal/mcpclient`. `docs/local-model.md` has the run.
 - **No two targets in one table may share a count.** `MatchesTarget` lets a
   table-scoped finding cover any column in that table, deliberately. The price
   is that three targets in one table all measuring 2 would credit a table-scoped
@@ -1023,6 +1034,17 @@ positives, both commented in place:
   which is why `Guard.Derived` can wrap a profiler shape without re-shaping it.
   The delimiters go on afterwards, at the boundary, so the property still holds
   of the bare pattern.
+- **`noteRepeat` is defeated by an empty field, and this is a known gap rather
+  than a fixed one.** `canonical()` normalizes key order and whitespace, so the
+  same call reworded by a serializer still hashes the same; it does not
+  normalize content. gpt-oss-120b re-sent a refused `propose_rule` with
+  `"where": ""` added and nothing else changed, which is a different key, so
+  the repeat note did not fire and the model was told nothing to distinguish
+  the second refusal from the first — the exact failure `noteRepeat` was
+  written for. The fix is to drop empty-valued keys before hashing, and it
+  wants care: an empty string is meaningless in `where` and is not necessarily
+  meaningless in every parameter. Measured on `dirty-meters`, twice in three
+  runs, at about eight minutes a step.
 
 **Local models** — `scripts/local-model.sh` runs one by hand (probe, audit,
 trace summary, egress check; `--probe`, `--serve`, `-- <veritix flags>`), and
@@ -1115,6 +1137,17 @@ loop rather than to the auditing.
   `record_finding`, findings narrated in prose at the end. What separates them
   is whether the model will use a tool surface it was not asked to use, and the
   only way to know is to run one audit and read the trace.
+- **A model that will use a check tool unprompted will still not reach for
+  `read_context`.** gpt-oss-120b was offered three of the customer's own
+  documents on three runs of `dirty-meters` — connected, enumerated, listed in
+  the brief, named in the system prompt — and called neither context tool once,
+  while finding the very pair of columns one of those documents explains. Being
+  offered a tool is not the same as being given a reason to call it at the
+  moment the evidence is in hand, which is the lesson the check tools' `note`
+  already taught. Verify with the trace's `context` section rather than the
+  score: `resources/list` with no `resources/read` is a model that did not
+  look, and is not distinguishable from a broken client by the recall figure
+  alone.
 - **A clean `check_referential_integrity` is evidence about that pair, not about
   that column**, and a model reads it as the latter. gpt-oss-120b has found each
   of `dirty-retail`'s two unresolved references on a different run and never

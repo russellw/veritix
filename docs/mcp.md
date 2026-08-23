@@ -223,6 +223,18 @@ with the documents loaded has found a regression.
 is there so the fixture measures reading the documents *against the data*
 rather than reciting them.
 
+**The first measurement, `gpt-oss-120b` over three aided runs and three
+controls, is 0% on both halves** — and the interesting half of that is in the
+trace rather than in the score. It records three `resources/list` requests and
+**no `resources/read`**: the client connected, enumerated the three documents
+and listed them in the brief, and the model never asked for one. Client mode
+worked; the model did not use it. Read that as a statement about this model and
+not about the fixture — the same runs found the `site_ref` → `premises.upn`
+pair unaided every time and reported 14 orphans where the dictionary's join
+gives 4, so the document that would have corrected the number was one call away
+in every run that got the number wrong. `docs/local-model.md` has the whole of
+it.
+
 ## The dependency
 
 The official `github.com/modelcontextprotocol/go-sdk` v1.7.0, measured before

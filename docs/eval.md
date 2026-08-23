@@ -395,10 +395,15 @@ go build -o /tmp/ctx ./scripts/context-server
 run a control rather than a different experiment. `docs/mcp.md` has the client
 half in full: what leaves the process, and what does not.
 
-**No model has been run against this fixture yet.** The deterministic half is
-measured: 8 of 8 planted defects, no false positives. The aided half scored
-zero before there was an MCP client, which is the baseline worth having — a
-number to improve on rather than a claim.
+**Measured once, and both halves scored zero.** Three aided runs and three
+`--no-context` controls of `gpt-oss-120b` found none of the six agent targets;
+the deterministic half was 8 of 8 with no false positives in all six. The aided
+half is worth reading with the trace beside it, which recorded three
+`resources/list` requests and no `resources/read` at all: the documents were
+fetched, cataloged and listed in the brief, and the model never asked for one.
+Every run found the `site_ref` → `premises.upn` pair by itself and reported 14
+orphans against an answer of 4 — the number this fixture's `clean:` list was
+written to guard. `docs/local-model.md` has the runs.
 
 A run that scores worse unaided with the documents loaded than without them has
 found a regression, not a feature, and without the second number that would

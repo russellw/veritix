@@ -1364,6 +1364,208 @@ Both halves of that belong in the same paragraph. The rule-proposal loop paid
 for itself on a run where the model's *findings* were worth nothing, which is
 an argument for `propose_rule` and not for the model.
 
+## Scored: the context fixture, both halves
+
+`dirty-meters` is the fixture M5b was built against, and it existed before M5b
+did. Four of its six agent targets are invisible in the export — a status
+vocabulary, a tariff lifecycle date, what `register_value` means, and how
+`site_ref` joins to `upn` — and until now the aided half scored zero because
+there was no client to fetch anything with. This is the first score taken with
+one, on 22-23 Aug 2026, and the first measurement here where a model was
+offered documents at all.
+
+```sh
+go build -o /tmp/ctx ./scripts/context-server
+
+VERITIX_LLM_REQUEST_TIMEOUT=60m ./bin/veritix eval testdata/dirty-meters \
+    --llm openai-compatible --llm-base-url http://127.0.0.1:11500/v1 \
+    --llm-model gpt-oss-120b --llm-effort low --llm-max-steps 24 --runs 3 \
+    --context-server "docs:/tmp/ctx -dir $PWD/testdata/dirty-meters/context"
+
+# the control, on the same command line
+VERITIX_LLM_REQUEST_TIMEOUT=60m ./bin/veritix eval testdata/dirty-meters \
+    --llm openai-compatible --llm-base-url http://127.0.0.1:11500/v1 \
+    --llm-model gpt-oss-120b --llm-effort low --llm-max-steps 24 --runs 3 \
+    --no-context
+```
+
+**Mean recall 0%, coverage 0%, on both halves.** Six runs, 6h57m, and not one
+of the six targets was found by any of them. The deterministic half was 8 of 8
+with no false positives, identical in all six.
+
+| | aided 1 | aided 2 | aided 3 | control 1 | control 2 | control 3 |
+|---|---|---|---|---|---|---|
+| stopped | `finished` | `finished` | `finished` | `finished` | `finished` | `finished` |
+| steps | 10 of 24 | 7 | 8 | 16 | 7 | 7 |
+| recorded | 1 | 1 | 1 | 2 | 1 | 1 |
+| proposed | 0 | 1 | 1 | 1 | 1 | 1 |
+| tokens in | 71,643 | 49,092 | 54,924 | 110,991 | 44,917 | 44,641 |
+| wall clock | 1h33m | 56m | 56m | 2h03m | 46m | 41m |
+| targets found | 0 of 6 | 0 of 6 | 0 of 6 | 0 of 6 | 0 of 6 | 0 of 6 |
+
+All six ended on `finished`, none near the 24-step budget. That is what
+`dirty-logistics` already said about this model — the ceiling is the stop
+decision — restated on a fixture where it found nothing at all.
+
+### The model never opened a document
+
+The tool log says it called neither `list_context` nor `read_context`. The
+trace says it better, because the trace records what left the process: **three
+`resources/list` requests, one per aided run, and zero `resources/read`.**
+
+Everything M5b builds worked. The client connected in 82 ms, enumerated all
+three documents, put their ids and descriptions in the brief, and appended the
+context paragraph to the system prompt. The model declined to use any of it.
+
+Separating those two is the whole reason to read the trace rather than the
+score. A zero on the aided half is equally consistent with a client that did
+not connect, a catalog that came back empty, a prompt that never mentioned the
+documents, and ids that did not resolve. The trace rules out all four.
+
+### What it did instead: the right pair, the wrong number
+
+Every one of the six runs recorded the same finding, and it is the one the
+manifest wrote down in advance:
+
+```
+agent.orphan_site_ref @ meters.csv  count=14
+```
+
+The model found the `site_ref` → `premises.upn` pairing unaided, in all six
+runs. Nothing proposes that pair — the columns are not named alike, the shapes
+differ, and `relate.go` never compares them — so reaching it at all is the
+model doing the half of the job that is its to do. Then it joined the columns
+as written, where `site_ref` is `UPN-4471` and `upn` is `4471`, and on that
+comparison all fourteen values are orphans. The answer is 4. The only thing
+that says so is one sentence in the data dictionary, which sat in the catalog
+for the whole run.
+
+`MatchesTarget` refused it credit, and the fixture's `clean:` list had already
+named the number:
+
+> compared against `premises.upn` as written, every one of the fourteen values
+> is an orphan. This is the guard on `meters.site_ref_orphans` — a `relate.go`
+> that began pairing these columns would report 14 where the answer is 4.
+
+That guard was written against a hypothetical change to `relate.go`. A model
+walked into it instead, six times out of six.
+
+### The proposal is the part to worry about
+
+Three of the six runs did not stop at reporting 14. They proposed a rule:
+
+```json
+{"rule": "site_ref_refs_upn", "expect": "references", "table": "meters_csv",
+ "column": "site_ref", "references": "premises_csv.upn", "violations_now": 14}
+```
+
+`propose_rule` accepted it, and was right to: it compiles, it materializes, it
+reproduces, and 14 is the number the engine gets. A reviewer who accepts it
+gets a rule that fails fourteen rows on every future audit of this dataset,
+forever, enforcing a join the customer's own dictionary contradicts — and the
+defect it was reaching for stays invisible while looking covered.
+
+Two things already in the design are what stop that, and this run is the
+argument for both. Nothing is applied: a proposal is a suggestion until a
+person accepts it. And the accept screen shows what the rule is *about*,
+because the reviewer's question here is not whether the rule compiles but
+whether `UPN-4471` is the same site as `4471` — which is a question about
+values, not about a rule name.
+
+The ids are worth a line too. All three proposals came back as
+`74604179606080d2`, though two runs named the rule `site_ref_refs_upn` and one
+named it `meter_site_ref_exists`. A proposal's id is what the rule asserts and
+not how it was worded; three independent runs wording it two ways is that
+property demonstrated rather than asserted.
+
+Of the five proposals across the six runs, exactly one is worth accepting
+unedited: control run 3's `meter_tariff_reference`, `meters.tariff_code`
+referencing `tariffs.tariff_code`, at **zero** violations. That is the best
+kind of rule — an invariant that holds today and would catch the export where
+it stops holding — and it is the only one of the five that a reviewer could
+wave through. Control run 1's `tariff_code_format` (`^[A-Z]{3}-[0-9]$`, 7
+violations) is the opposite: `STD-A` is a perfectly good tariff code, and the
+rule would fail seven rows for not matching a pattern the model invented.
+
+### What the guards caught on the way
+
+Four corrections fired across the six runs, each of them the mechanism working
+as designed:
+
+- **A finding that did not reproduce.** Aided run 1 claimed all 8 premises had
+  non-standard postcodes; the `count_query` returned 0, and nothing was
+  recorded.
+- **Two inflated proposals.** `violations_now: 0` against an engine count of 7,
+  and `violations_now: 0` against 14. Both refused, both re-sent with the real
+  figure.
+
+### The repeat note that did not fire
+
+Aided runs 1 and 3 each sent the same refused `propose_rule` twice — an
+`expect: references` rule with no `column` — and got back a byte-identical
+refusal with no repeat note on it. `noteRepeat` is supposed to catch exactly
+that, and it was written after this same model spent four consecutive steps of
+a `dirty-logistics` run doing it.
+
+It did not fire because the two calls were not identical. The second added
+`"where": ""` — an empty field that changes nothing about what the rule
+asserts. `canonical()` normalizes key order and whitespace, so a call reworded
+by a serializer still hashes the same; it does not normalize *content*, so one
+meaningless empty key is enough to make a repeat look like a new attempt. At
+roughly eight minutes a step, aided run 1 spent a fifth of itself on the same
+refusal twice.
+
+The fix is in the canonicalization rather than in the note: drop keys whose
+value is empty before hashing, so that a call which asserts the same thing is
+the same call. Worth doing carefully — an empty string is meaningless in
+`where` and is not necessarily meaningless everywhere — which is why it is
+written down here rather than patched in passing.
+
+### The control, and what it does not say
+
+The control exists to catch the documents costing something, and it does not
+show that:
+
+| | aided | control |
+|---|---|---|
+| steps | 10, 7, 8 | 16, 7, 7 |
+| unaided targets | 0 of 2 | 0 of 2 |
+
+Control run 1 did about double the work of any other run — 16 steps, 2h03m,
+four `run_sql` calls in a row — and found nothing extra for it. The spread
+inside one half is wider than the gap between the halves, so on these numbers
+the context paragraph and a three-line catalog cost nothing measurable. That is
+the most the unaided pair can say while both halves score zero: the floor did
+not move. It is not evidence that context helps, and it cannot be until
+something scores.
+
+Control run 1 also produced the only other recorded finding of the six:
+`register_value_exceeds_width` on `readings.csv`, at count 1 where
+`readings.register_wider_than_meter` is 3. The right idea, the wrong
+arithmetic, no credit — the same shape of failure as the 14, on a target that
+needs no document at all.
+
+### What this changes
+
+Nothing in `internal/mcpclient`, which is why the measurement was worth taking
+this way round rather than reading the score alone. The gap is in what makes a
+model reach for a tool it was not pushed toward, and this repo has closed that
+gap once already: `check_referential_integrity` and `check_candidate_key` grew
+a `note` on their own results saying whether what they measured was new,
+because a tool result is read where the evidence is and the brief is not.
+
+The same lever fits here, and the run says where it goes. The model reaches the
+`site_ref` pair by itself in every run; the moment it has is the moment a
+document about that column is worth naming. Whether that belongs on a tool
+result, in the brief's catalog line, or nowhere is a decision to take
+deliberately — a nudge that reads as "you were supposed to read something" is
+how a transcript fills with documents nobody needed, which is precisely what
+the unaided control pair exists to detect.
+
+Until something like that is tried, the honest statement of the aided half is
+that **the client works and this model does not use it**. 0% is a measurement
+of the model, not of M5b.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,
