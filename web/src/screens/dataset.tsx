@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import * as api from '../api'
 import type { Capabilities, Dataset, ProposalInfo, Run } from '../api'
 import { count, duration, when } from '../format'
+import { SchedulePanel } from '../components/schedule'
 import { navigate, onLinkClick } from '../router'
 
 export function DatasetScreen({
@@ -203,6 +204,13 @@ export function DatasetScreen({
           </ul>
         </>
       )}
+
+      <SchedulePanel
+        datasetId={datasetId}
+        uploaded={dataset.uploaded}
+        clockRunning={caps?.schedule?.available ?? true}
+        notifyConfigured={caps?.schedule?.notify ?? false}
+      />
 
       <h2>Audits</h2>
       {runs.length === 0 ? (

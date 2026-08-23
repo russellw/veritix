@@ -39,7 +39,10 @@ node "${repo_root}/e2e/stub-model.mjs" "$MODEL_PORT" &
 model_pid=$!
 
 echo "==> Starting veritix serve on ${host}:${port} (data dir ${data_dir})"
-VERITIX_LLM_PROVIDER=openai-compatible \
+# A five-second tick rather than the default thirty: the schedule spec waits for
+# a real window to come round, and a minute is the shortest gap Veritix accepts.
+VERITIX_SCHEDULE_TICK=5s \
+	VERITIX_LLM_PROVIDER=openai-compatible \
 	VERITIX_LLM_BASE_URL="http://127.0.0.1:${MODEL_PORT}/v1" \
 	VERITIX_LLM_MODEL=stub-model \
 	./bin/veritix serve --addr "${host}:${port}" --data-dir "$data_dir" &

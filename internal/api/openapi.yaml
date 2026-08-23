@@ -103,6 +103,19 @@ paths:
                         description: Whether the operator has already permitted
                           cell values to reach the model in this server's own
                           configuration.
+                  schedule:
+                    type: object
+                    required: [available, notify]
+                    properties:
+                      available:
+                        type: boolean
+                        description: Whether this process runs the clock. A
+                          schedule can be stored either way; with the clock off
+                          nothing fires it.
+                      notify:
+                        type: boolean
+                        description: Whether a notification sink is configured,
+                          and so whether asking to be told will do anything.
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /datasets:

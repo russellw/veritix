@@ -211,7 +211,19 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, _ *http.Request) {
 		agentInfo["values_allowed_by_default"] = llm.AllowSampleValues
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"agent": agentInfo})
+	// Whether this server runs the clock, and whether it has anywhere to send
+	// a notification, for the same reason the agent's half is here: a schedule
+	// control on a server with the clock off, or a "tell me" checkbox with no
+	// sink behind it, is a control that quietly does nothing.
+	scheduleInfo := map[string]any{
+		"available": s.cfg.Schedule.Enabled,
+		"notify":    s.notify != nil,
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"agent":    agentInfo,
+		"schedule": scheduleInfo,
+	})
 }
 
 func (s *Server) handleOpenAPI(w http.ResponseWriter, _ *http.Request) {

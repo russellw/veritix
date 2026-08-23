@@ -23,6 +23,26 @@ export interface Dataset {
   created_at: string
 }
 
+/**
+ * Schedule is a dataset's standing instruction to audit itself.
+ *
+ * The time of day is "HH:MM" and the weekday is a name because that is what an
+ * <input type="time"> and a <select> produce; everything from next_due_at down
+ * is what happened and is ignored on the way in.
+ */
+export interface Schedule {
+  kind: 'daily' | 'weekly' | 'interval'
+  at?: string
+  weekday?: string
+  every_minutes?: number
+  timezone?: string
+  notify: boolean
+  next_due_at?: string
+  last_run_id?: string
+  last_error?: string
+  created_at?: string
+}
+
 export interface FindingCounts {
   total: number
   errors: number
@@ -369,6 +389,10 @@ export interface Capabilities {
     model?: string
     values_allowed_by_default?: boolean
   }
+  schedule?: {
+    available: boolean
+    notify: boolean
+  }
 }
 
 /** FindingRows is the one response that carries raw customer data. */
@@ -628,6 +652,32 @@ export async function listDatasetRules(
     signal,
   )
   return body.rules ?? []
+}
+
+/**
+ * getSchedule is when a dataset is audited without anybody asking.
+ *
+ * A dataset that is not audited on a schedule answers 404, which is an
+ * ordinary answer rather than a failure: most datasets are not.
+ */
+export function getSchedule(datasetId: string, signal?: AbortSignal): Promise<Schedule> {
+  return get<Schedule>(`/datasets/${encodeURIComponent(datasetId)}/schedule`, signal)
+}
+
+/**
+ * setSchedule replaces a dataset's schedule, and answers with the window it is
+ * now waiting for.
+ *
+ * Only a dataset registered by path can have one: an upload is a copy of the
+ * data as it was, so auditing it nightly would produce the same report forever.
+ */
+export function setSchedule(datasetId: string, s: Schedule): Promise<Schedule> {
+  return send<Schedule>('PUT', `/datasets/${encodeURIComponent(datasetId)}/schedule`, s)
+}
+
+/** deleteSchedule stops auditing a dataset on a clock. */
+export function deleteSchedule(datasetId: string): Promise<void> {
+  return send<void>('DELETE', `/datasets/${encodeURIComponent(datasetId)}/schedule`)
 }
 
 /** reportDownloadURL is the self-contained HTML report, for a normal download. */
