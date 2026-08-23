@@ -32,6 +32,10 @@ type Options struct {
 	IncludeValues bool
 	// Indent produces human-readable JSON.
 	Indent bool
+	// Baseline is a previous run of the same dataset to compare against. When
+	// it is set the document carries a Comparison; when it is not, nothing
+	// about the report changes.
+	Baseline *Baseline
 }
 
 // Document is the root of the JSON report.
@@ -44,6 +48,13 @@ type Document struct {
 	// Findings lead the document: they are the reason to read it.
 	FindingSummary FindingSummary `json:"finding_summary"`
 	Findings       []FindingInfo  `json:"findings"`
+
+	// Comparison is what changed since a previous audit of the same dataset,
+	// present only when a baseline was given. It is here rather than in a
+	// document of its own because "is this getting better or worse" is the
+	// question somebody asks on every audit after the first, and it has to be
+	// answered beside the findings it is about.
+	Comparison *Delta `json:"comparison,omitempty"`
 
 	Tables   []TableInfo  `json:"tables"`
 	Skipped  []SkipInfo   `json:"skipped_files,omitempty"`
@@ -312,8 +323,17 @@ type SkipInfo struct {
 
 // WriteJSON renders a run as JSON.
 func WriteJSON(w io.Writer, res *audit.Result, version string, opts Options) error {
-	doc := Build(res, version, opts)
+	return RenderJSON(w, Build(res, version, opts), opts)
+}
 
+// RenderJSON encodes an already-built document.
+//
+// Every format has one of these beside its Write function, because a caller
+// that needs the document for something else — the CLI's --baseline
+// comparison, the server's stored blob — must not build it twice. Two
+// documents from one run is two chances for a report and the thing that
+// gates on it to disagree.
+func RenderJSON(w io.Writer, doc *Document, opts Options) error {
 	enc := json.NewEncoder(w)
 	if opts.Indent {
 		enc.SetIndent("", "  ")
@@ -399,6 +419,14 @@ func Build(res *audit.Result, version string, opts Options) *Document {
 			continue
 		}
 		doc.Tables = append(doc.Tables, buildTable(lt, pt, opts))
+	}
+
+	// The comparison goes last because it reads the document that has just
+	// been built: findings, tables and all.
+	if opts.Baseline != nil && opts.Baseline.Document != nil {
+		doc.Comparison = Compare(opts.Baseline.Document, doc)
+		doc.Comparison.Baseline.RunID = opts.Baseline.RunID
+		doc.Comparison.Baseline.Source = opts.Baseline.Source
 	}
 	return doc
 }

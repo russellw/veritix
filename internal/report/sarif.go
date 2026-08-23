@@ -83,7 +83,12 @@ type sarifRegion struct {
 
 // WriteSARIF renders a run in SARIF 2.1.0.
 func WriteSARIF(w io.Writer, res *audit.Result, version string, opts Options) error {
-	doc := Build(res, version, opts)
+	return RenderSARIF(w, Build(res, version, opts), opts)
+}
+
+// RenderSARIF encodes an already-built document, so a caller that needs the
+// document for something else does not build a second one.
+func RenderSARIF(w io.Writer, doc *Document, opts Options) error {
 
 	// SARIF separates the rule catalog from the results, so collect the
 	// distinct rules first.
@@ -149,7 +154,7 @@ func WriteSARIF(w io.Writer, res *audit.Result, version string, opts Options) er
 		Runs: []sarifRun{{
 			Tool: sarifTool{Driver: sarifDriver{
 				Name:           "Veritix",
-				Version:        version,
+				Version:        doc.Version,
 				InformationURI: "https://github.com/russellw/veritix",
 				Rules:          rules,
 			}},

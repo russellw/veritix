@@ -24,6 +24,8 @@ type auditOptions struct {
 	format        string
 	output        string
 	failOn        string
+	baseline      string
+	failOnRegress string
 	includeValues bool
 	database      string
 	rulesPath     string
@@ -67,6 +69,11 @@ func newAuditCmd(e *env) *cobra.Command {
 	f.StringVarP(&opts.output, "output", "o", "-", "write the report here (- for stdout)")
 	f.StringVar(&opts.failOn, "fail-on", "",
 		"exit non-zero if any finding reaches this severity: info, warning, error")
+	f.StringVar(&opts.baseline, "baseline", "",
+		"a JSON report from a previous audit; the report gains a section saying what changed")
+	f.StringVar(&opts.failOnRegress, "fail-on-regression", "",
+		"exit non-zero if this audit introduced or worsened a finding at this severity "+
+			"or above; needs --baseline")
 	f.BoolVar(&opts.includeValues, "include-values", false,
 		"include verbatim cell values in the report")
 	f.StringVar(&opts.database, "database", "",
@@ -150,6 +157,14 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 	}
 	defer closePropose()
 
+	// The baseline is read before the audit for the same reason: an audit is
+	// minutes of work, and an unreadable baseline discovered afterwards is the
+	// expensive way to find a typo in a path.
+	baseline, err := openBaseline(opts)
+	if err != nil {
+		return err
+	}
+
 	var ruleFile *rules.File
 	if opts.rulesPath != "" {
 		if ruleFile, err = rules.Load(opts.rulesPath); err != nil {
@@ -179,16 +194,21 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 	}
 	defer closeOut()
 
-	ro := report.Options{IncludeValues: opts.includeValues, Indent: true}
+	// The document is built once and rendered from, rather than built inside
+	// each writer: the comparison and the gate that acts on it have to be
+	// reading the same document the report was written from.
+	ro := report.Options{IncludeValues: opts.includeValues, Indent: true, Baseline: baseline}
+	doc := report.Build(res, buildinfo.Short(), ro)
+
 	switch format {
 	case "json":
-		err = report.WriteJSON(out, res, buildinfo.Short(), ro)
+		err = report.RenderJSON(out, doc, ro)
 	case "sarif":
-		err = report.WriteSARIF(out, res, buildinfo.Short(), ro)
+		err = report.RenderSARIF(out, doc, ro)
 	case "html":
-		err = report.WriteHTML(out, res, buildinfo.Short(), ro)
+		err = report.RenderHTML(out, doc)
 	default:
-		err = report.WriteText(out, res, ro)
+		err = report.RenderText(out, doc, ro)
 	}
 	if err != nil {
 		return err
@@ -206,7 +226,60 @@ func runAudit(cmd *cobra.Command, e *env, opts auditOptions, paths []string) err
 		}
 	}
 
-	return failOn(res, opts.failOn)
+	if err := failOn(res, opts.failOn); err != nil {
+		return err
+	}
+	return failOnRegression(doc, opts.failOnRegress)
+}
+
+// openBaseline resolves --baseline, and refuses --fail-on-regression without
+// one.
+//
+// A gate with nothing to compare against would pass every build silently,
+// which is the worst thing a gate can do: it looks like the code is clean
+// rather than like the check never ran. That is the same argument
+// rule.never_applied makes about a rule that matched nothing.
+func openBaseline(opts auditOptions) (*report.Baseline, error) {
+	if opts.baseline == "" {
+		if opts.failOnRegress != "" {
+			return nil, fmt.Errorf(
+				"--fail-on-regression needs a --baseline to compare against: pass the JSON " +
+					"report from the previous audit")
+		}
+		return nil, nil
+	}
+	if opts.failOnRegress != "" {
+		if _, err := finding.ParseSeverity(opts.failOnRegress); err != nil {
+			return nil, err
+		}
+	}
+	doc, err := report.LoadDocument(opts.baseline)
+	if err != nil {
+		return nil, err
+	}
+	return &report.Baseline{Document: doc, Source: opts.baseline}, nil
+}
+
+// failOnRegression is the CI gate that makes a diff worth having: a build can
+// fail on what this change introduced without failing on the debt that was
+// already there when somebody turned Veritix on. A team that cannot fix
+// everything today can still refuse to make it worse.
+func failOnRegression(doc *report.Document, threshold string) error {
+	if threshold == "" || doc.Comparison == nil {
+		return nil
+	}
+	want, err := finding.ParseSeverity(threshold)
+	if err != nil {
+		return err
+	}
+	n := doc.Comparison.Regressions(want.String())
+	if n == 0 {
+		return nil
+	}
+	return &exitError{
+		msg: fmt.Sprintf("%d finding(s) at or above %s are new or worse than the baseline",
+			n, want),
+	}
 }
 
 // openTrace resolves --trace-out, before the audit rather than after it.

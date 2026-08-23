@@ -71,6 +71,28 @@ report that tells someone else which datasets you are auditing.
     margin: .5rem 0 0;
   }
 
+  /* The comparison leads the page when there is one: on the second and every
+     later audit, "three errors" is a number and "three errors that were two
+     last week" is a direction. */
+  .delta { border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+           padding: .9rem 1.1rem; margin: 1.5rem 0 0; }
+  .delta h2 { margin: 0 0 .2rem; border: 0; padding: 0; font-size: 1.05rem; }
+  .delta .counts { margin: .5rem 0 0; font-size: .9rem; }
+  .delta .counts span { margin-right: 1rem; white-space: nowrap; }
+  .delta .n { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .delta .note { color: var(--warning); font-size: .85rem; margin: .5rem 0 0; }
+  .delta ul { list-style: none; margin: .75rem 0 0; padding: 0; }
+  .delta li { padding: .35rem 0; border-top: 1px solid var(--line); font-size: .9rem; }
+  .delta .moved { font-family: var(--mono); font-size: .8rem; color: var(--muted); }
+  .tag {
+    display: inline-block; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em;
+    padding: .1rem .4rem; border-radius: 3px; margin-right: .5rem; vertical-align: .1em;
+    border: 1px solid currentColor; font-weight: 600;
+  }
+  .tag.new, .tag.worsened { color: var(--error); }
+  .tag.resolved, .tag.improved { color: var(--info); }
+  .tag.unchanged { color: var(--muted); }
+
   .scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: .85rem; }
   th, td { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -100,6 +122,65 @@ report that tells someone else which datasets you are auditing.
   <div class="tile error"><div class="n">{{.Dataset.UnreadableRows}}</div><div class="k">Unreadable rows</div></div>
   {{end}}
 </div>
+
+{{with .Comparison}}
+<section class="delta">
+  <h2>Since the previous audit</h2>
+  <p class="sub">
+    {{if .Baseline.RunID}}run {{.Baseline.RunID}} · {{end}}
+    {{if .Baseline.Source}}{{.Baseline.Source}} · {{end}}
+    {{.Baseline.StartedAt.Format "2006-01-02 15:04"}}
+  </p>
+  <p class="counts">
+    <span><span class="n">{{.Summary.New}}</span> new</span>
+    <span><span class="n">{{.Summary.Worsened}}</span> worse</span>
+    <span><span class="n">{{.Summary.Resolved}}</span> resolved</span>
+    <span><span class="n">{{.Summary.Improved}}</span> improved</span>
+    <span class="sub"><span class="n">{{.Summary.Unchanged}}</span> unchanged</span>
+  </p>
+  {{range .Notes}}<p class="note">{{.}}</p>{{end}}
+
+  {{if .Findings}}
+  <ul>
+    {{range .Findings}}
+    <li>
+      <span class="tag {{.Status}}">{{.Status}}</span>{{.Title}}
+      <div class="moved">
+        {{if .Source}}{{.Source}}{{else}}{{.Table}}{{end}}{{if .Column}}.{{.Column}}{{end}}
+        &nbsp;·&nbsp; {{.Rule}}
+        {{if or (eq .Status "worsened") (eq .Status "improved")}}
+          &nbsp;·&nbsp; {{.CountBefore}} → {{.CountAfter}} affected
+        {{end}}
+        {{if .SeverityBefore}}&nbsp;·&nbsp; {{.SeverityBefore}} → {{.Severity}}{{end}}
+      </div>
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+
+  {{if .Tables}}
+  <ul>
+    {{range .Tables}}
+    <li>
+      {{$name := .Source}}{{if not $name}}{{$name = .Name}}{{end}}
+      {{if eq .Change "added"}}
+        <span class="tag new">added</span>{{$name}} is new ({{.RowsAfter}} rows)
+      {{else if eq .Change "removed"}}
+        <span class="tag worsened">removed</span>{{$name}} is no longer in the dataset (had {{.RowsBefore}} rows)
+      {{else}}
+        <span class="tag unchanged">changed</span>{{$name}}
+        <div class="moved">
+          {{if ne .RowsBefore .RowsAfter}}{{.RowsBefore}} → {{.RowsAfter}} rows{{end}}
+          {{if .ColumnsRemoved}}&nbsp;·&nbsp; lost {{range .ColumnsRemoved}}{{.}} {{end}}{{end}}
+          {{if .ColumnsAdded}}&nbsp;·&nbsp; gained {{range .ColumnsAdded}}{{.}} {{end}}{{end}}
+        </div>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+</section>
+{{end}}
 
 <h2>Findings</h2>
 {{if not .Findings}}

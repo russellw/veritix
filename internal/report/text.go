@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/russellw/veritix/internal/audit"
 )
@@ -16,14 +17,20 @@ import (
 // of unremarkable numbers, and burying three real problems inside it is how a
 // tool gets ignored.
 func WriteText(w io.Writer, res *audit.Result, opts Options) error {
-	doc := Build(res, "", opts)
+	return RenderText(w, Build(res, "", opts), opts)
+}
+
+// RenderText renders an already-built document, so that a caller which needs
+// the document itself does not build a second one to print.
+func RenderText(w io.Writer, doc *Document, opts Options) error {
 	p := &printer{w: w}
 
 	p.printf("Dataset: %s\n", doc.Dataset.Root)
-	p.printf("  %s\n", res.Summarize())
+	p.printf("  %s\n", summaryLine(doc))
 	writeAgentText(p, doc.Agent)
 	p.newline()
 
+	writeComparisonText(p, doc.Comparison)
 	writeFindingsText(p, doc)
 	writeProposalsText(p, doc)
 
@@ -43,6 +50,25 @@ func WriteText(w io.Writer, res *audit.Result, opts Options) error {
 		p.printf("\n%s\n", doc.Redacted.Note)
 	}
 	return p.err
+}
+
+// summaryLine renders the headline numbers out of the document rather than out
+// of the run, so that a report printed from a stored document says exactly
+// what one printed straight from an audit says. It is the same line
+// audit.Summary.String produces, and TestATextReportFromADocumentMatchesTheRun
+// pins that they agree.
+func summaryLine(doc *Document) string {
+	d := (time.Duration(doc.Run.DurationMS) * time.Millisecond).Round(time.Millisecond)
+	out := fmt.Sprintf("%d files, %d tables, %d columns, %d rows in %s",
+		doc.Dataset.FileCount, doc.Dataset.TableCount, doc.Dataset.ColumnCount,
+		doc.Dataset.RowCount, d)
+	if doc.Dataset.UnreadableRows > 0 {
+		out += fmt.Sprintf(" (%d rows unreadable)", doc.Dataset.UnreadableRows)
+	}
+	if len(doc.Skipped) > 0 {
+		out += fmt.Sprintf(", %d files skipped", len(doc.Skipped))
+	}
+	return out
 }
 
 // writeAgentText says a model was involved, and under what terms. A reader
