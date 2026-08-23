@@ -292,6 +292,70 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /datasets/{datasetId}/schedule:
+    parameters:
+      - $ref: "#/components/parameters/DatasetID"
+    get:
+      tags: [datasets]
+      summary: When this dataset is audited without being asked.
+      operationId: getDatasetSchedule
+      responses:
+        "200":
+          description: The schedule in force.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Schedule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: The dataset does not exist, or is not audited on a schedule.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      tags: [datasets]
+      summary: Audit this dataset on a schedule.
+      description: |
+        A schedule is what makes the comparison worth having: an audit nobody
+        remembered to start says nothing about what changed since the last one.
+
+        The time of day is read in the schedule's own zone, because "overnight"
+        is a fact about the business whose export this is and not about the
+        machine Veritix runs on. Replacing a schedule takes effect at once —
+        the next window is computed from now, not from whatever the previous
+        schedule was waiting for — and does not erase what already happened.
+
+        Only a dataset registered by path can be scheduled. An upload is a copy
+        of the data as it was, so auditing it nightly would produce the same
+        report forever and a comparison that never said anything, which looks
+        exactly like a schedule that is working.
+      operationId: setDatasetSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Schedule" }
+      responses:
+        "200":
+          description: The schedule as stored, with the window it is waiting for.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Schedule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [datasets]
+      summary: Stop auditing this dataset on a schedule.
+      description: |
+        Idempotent: a dataset that is not audited on a schedule is already in
+        the state this asks for. It does not touch the runs the schedule
+        started, which are history.
+      operationId: deleteDatasetSchedule
+      responses:
+        "204": { description: There is no schedule. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /runs:
     get:
       tags: [runs]
@@ -687,6 +751,69 @@ components:
         uploaded:
           type: boolean
           description: True when the server holds the bytes itself.
+        created_at: { type: string, format: date-time }
+
+    Schedule:
+      type: object
+      required: [kind]
+      description: |
+        A dataset's standing instruction to audit itself. Everything from
+        next_due_at down is what happened, and is ignored on the way in.
+      properties:
+        kind:
+          type: string
+          enum: [daily, weekly, interval]
+          description: |
+            There is deliberately no cron syntax. Daily, weekly and
+            every-so-often are what a data export actually does, and the people
+            this interface is for cannot write a cron string.
+        at:
+          type: string
+          example: "02:00"
+          description: |
+            The time of day, HH:MM, for a daily or weekly schedule. Read in
+            timezone. On the night a clock goes forward there may be no such
+            time, and the audit runs at the next instant there is; on the night
+            it goes back the hour happens twice and the audit runs once.
+        weekday:
+          type: string
+          enum: [sunday, monday, tuesday, wednesday, thursday, friday, saturday]
+          description: The day a weekly schedule fires on.
+        every_minutes:
+          type: integer
+          description: |
+            The gap between windows, for an interval schedule, counted from the
+            previous window rather than from when the run actually started — so
+            an audit that took longer than usual does not push the schedule
+            later. Unlike a daily schedule this counts elapsed time, so it
+            drifts by an hour across a daylight saving change.
+        timezone:
+          type: string
+          example: Europe/London
+          description: |
+            The IANA zone the time of day is read in. Empty means the server's
+            own zone, and comes back as "Local" to say so.
+        notify:
+          type: boolean
+          description: |
+            Send this dataset's regressions to the sink the operator
+            configured. Where that sink is is not settable here: it is an
+            egress decision and it lives in the server's configuration, with
+            the model provider.
+        next_due_at:
+          type: string
+          format: date-time
+          description: |
+            The window this schedule is waiting for, in its own zone, so the
+            offset says which 02:00 this is.
+        last_run_id:
+          type: string
+          description: The run the last window started, if it started one.
+        last_error:
+          type: string
+          description: |
+            Why the last window did not produce a run. Empty is the normal case
+            and is not evidence that anything ran.
         created_at: { type: string, format: date-time }
 
     Run:

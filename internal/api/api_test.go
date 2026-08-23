@@ -31,6 +31,10 @@ type testServer struct {
 	*httptest.Server
 	token string
 	t     *testing.T
+	// st is the same store the server is using, for the few tests that have to
+	// set up or inspect state the API does not expose — a schedule's record of
+	// what its last window did, for one.
+	st *store.Store
 }
 
 func newTestServer(t *testing.T, token string) *testServer {
@@ -64,7 +68,7 @@ func newTestServerWith(t *testing.T, token string, webFS fs.FS) *testServer {
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
 
-	return &testServer{Server: hs, token: token, t: t}
+	return &testServer{Server: hs, token: token, t: t, st: st}
 }
 
 // response is a request's outcome, already read and closed. Returning this

@@ -1088,6 +1088,14 @@ positives, both commented in place:
 - A run recorded as `running` that survives a restart belongs to a process that
   is gone. `store.MarkInterrupted` closes those out at startup, or the history
   lies and an events stream waits forever on nothing.
+- **A timestamp in the store is not lexicographically ordered.** `formatTime`
+  writes RFC 3339 *Nano*, which drops the trailing zeros of the fraction, so
+  `…:00Z` sorts *after* `…:00.5Z` and a `WHERE next_due_at <= ?` against
+  `time.Now()` is false for the first second of every window. `ORDER BY` is
+  unaffected in practice because two rows almost never share a second, but
+  comparisons are: `store.Schedules` returns every row and the caller compares
+  times as times, deliberately, because there is one schedule per dataset and
+  that is tens of rows.
 - `golangci-lint`'s `gosec` taint analysis (G703/G304) flags every
   filesystem call reachable from a request. Each one in `internal/api` carries
   a `//nolint:gosec` naming the guard that makes it safe — sanitized name plus

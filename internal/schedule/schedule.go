@@ -14,6 +14,7 @@ package schedule
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	// A schedule names an IANA zone, and a distroless image carries no zone
@@ -186,9 +187,9 @@ func (s Schedule) Validate() error {
 func (s Schedule) String() string {
 	switch s.Kind {
 	case KindDaily:
-		return fmt.Sprintf("daily at %s %s", clock(s.AtMinute), s.Zone())
+		return fmt.Sprintf("daily at %s %s", s.At(), s.Zone())
 	case KindWeekly:
-		return fmt.Sprintf("weekly on %s at %s %s", s.Weekday, clock(s.AtMinute), s.Zone())
+		return fmt.Sprintf("weekly on %s at %s %s", s.Weekday, s.At(), s.Zone())
 	case KindInterval:
 		return fmt.Sprintf("every %s", s.Every)
 	default:
@@ -196,6 +197,31 @@ func (s Schedule) String() string {
 	}
 }
 
-func clock(atMinute int) string {
-	return fmt.Sprintf("%02d:%02d", atMinute/60%24, atMinute%60)
+// At is the time of day as "HH:MM", which is how a person reads it and what an
+// <input type="time"> in the interface both produces and expects.
+func (s Schedule) At() string {
+	return fmt.Sprintf("%02d:%02d", s.AtMinute/60%24, s.AtMinute%60)
+}
+
+// ParseAt reads a time of day back into minutes past midnight. Seconds are
+// accepted and ignored: a browser asked for them will send them, and a
+// schedule that fires on the second is a precision nothing here has.
+func ParseAt(at string) (int, error) {
+	for _, layout := range []string{"15:04", "15:04:05"} {
+		if t, err := time.Parse(layout, at); err == nil {
+			return t.Hour()*60 + t.Minute(), nil
+		}
+	}
+	return 0, fmt.Errorf("schedule: %q is not a time of day; write it as HH:MM", at)
+}
+
+// ParseWeekday reads a weekday name, in the spelling [time.Weekday] writes and
+// in the lowercase one an API sends.
+func ParseWeekday(name string) (time.Weekday, error) {
+	for d := time.Sunday; d <= time.Saturday; d++ {
+		if strings.EqualFold(name, d.String()) {
+			return d, nil
+		}
+	}
+	return 0, fmt.Errorf("schedule: %q is not a day of the week", name)
 }

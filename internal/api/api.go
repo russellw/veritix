@@ -110,6 +110,9 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("DELETE /api/v1/datasets/{datasetId}", s.handleDeleteDataset)
 	authed.HandleFunc("GET /api/v1/datasets/{datasetId}/rules", s.handleGetDatasetRules)
 	authed.HandleFunc("POST /api/v1/datasets/{datasetId}/rules", s.handleAcceptProposal)
+	authed.HandleFunc("GET /api/v1/datasets/{datasetId}/schedule", s.handleGetSchedule)
+	authed.HandleFunc("PUT /api/v1/datasets/{datasetId}/schedule", s.handleSetSchedule)
+	authed.HandleFunc("DELETE /api/v1/datasets/{datasetId}/schedule", s.handleDeleteSchedule)
 
 	authed.HandleFunc("GET /api/v1/runs", s.handleListRuns)
 	authed.HandleFunc("POST /api/v1/runs", s.handleCreateRun)

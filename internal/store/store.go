@@ -157,6 +157,31 @@ var migrations = []string{
 		created_at TEXT NOT NULL,
 		PRIMARY KEY (run_id, id)
 	);`,
+
+	// A dataset's standing instruction to audit itself. It is a table of its
+	// own rather than columns on datasets because a dataset without a schedule
+	// has no row, which is the same shape traces and proposals have, and
+	// because ON DELETE CASCADE then makes deleting the dataset delete the
+	// commitment to keep auditing it.
+	//
+	// The columns are schedule.Schedule's fields spelled out rather than an
+	// opaque blob, unlike the document columns above: this is a handful of
+	// small values that an operator may want to read with sqlite3 when a
+	// nightly audit did not happen, and "why did it not fire" is a question
+	// answered by looking at next_due_at.
+	`CREATE TABLE schedules (
+		dataset_id  TEXT PRIMARY KEY REFERENCES datasets(id) ON DELETE CASCADE,
+		kind        TEXT NOT NULL,
+		at_minute   INTEGER NOT NULL DEFAULT 0,
+		weekday     INTEGER NOT NULL DEFAULT 0,
+		every_ms    INTEGER NOT NULL DEFAULT 0,
+		location    TEXT NOT NULL DEFAULT '',
+		notify      INTEGER NOT NULL DEFAULT 0,
+		next_due_at TEXT NOT NULL,
+		last_run_id TEXT NOT NULL DEFAULT '',
+		last_error  TEXT NOT NULL DEFAULT '',
+		created_at  TEXT NOT NULL
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
