@@ -48,6 +48,11 @@
 #   PROBE_TIMEOUT default 900 (seconds for the probe; a model paging its
 #                              weights from disk needs minutes, not seconds)
 #   START_TIMEOUT default 600 (seconds to wait for a server started here)
+#   CONTEXT     default auto  (serve $DATASET/context over MCP when that
+#                             directory exists, so a fixture whose defects are
+#                             not in the data gets the documents that explain
+#                             them; `off` is the unaided control, or name a
+#                             directory of documents of your own)
 #   OUT_DIR     default ./local-runs
 #   ADDR        default 127.0.0.1:8080   (--serve only)
 set -euo pipefail
@@ -96,6 +101,13 @@ PROBE_TIMEOUT="${PROBE_TIMEOUT:-900}"
 # Waiting for a server this script started to answer. mmap makes the load itself
 # quick, but the file is 63GB and the first pages come off the disk.
 START_TIMEOUT="${START_TIMEOUT:-600}"
+# Four of dirty-meters' six agent targets are invisible in the export and become
+# visible only when the customer's own dictionary or catalog is read, so a run
+# against that fixture with no context server measures the control half and not
+# the feature. `auto` wires scripts/context-server to $DATASET/context when the
+# dataset has one, which is the same instrument `veritix eval` is scored with;
+# `off` is how to run the control deliberately rather than by forgetting.
+CONTEXT="${CONTEXT:-auto}"
 OUT_DIR="${OUT_DIR:-$repo_root/local-runs}"
 ADDR="${ADDR:-127.0.0.1:8080}"
 
@@ -370,6 +382,110 @@ fi
 say "Building"
 make build >/dev/null
 
+# ── the customer's own documents ───────────────────────────────────────────
+#
+# Some defects are not in the data. Four of dirty-meters' six agent targets are
+# invisible in the export — a status vocabulary, a tariff lifecycle date, what
+# register_value *means*, and how site_ref joins to upn — and a run with no
+# context server cannot find them however good the model is. That run is worth
+# having, but it is the control, and a control taken by accident reads as a
+# model that failed.
+#
+# scripts/context-server is the instrument the eval's aided half is measured
+# with, so using it here means the run by hand and the scorecard are asking the
+# same question. It is not part of the product: a real deployment connects to
+# the dictionary the customer already has.
+context_dir=
+context_args=()
+context_config=
+
+# A server named on the command line is the caller saying what they want, and
+# --no-context is the control asked for outright. Either one settles it — the
+# same precedence resolveContext applies inside veritix, for the same reason.
+for arg in "${extra[@]}"; do
+	case "$arg" in
+	--context-server | --context-server=* | --no-context)
+		CONTEXT=off
+		echo "context: left to the flags after --"
+		;;
+	esac
+done
+
+case "$CONTEXT" in
+off | none | no | "") ;;
+auto)
+	if [ -d "$DATASET/context" ]; then context_dir="$DATASET/context"; fi
+	;;
+*)
+	context_dir="$CONTEXT"
+	if [ ! -d "$context_dir" ]; then
+		echo "CONTEXT=$CONTEXT is not a directory (set CONTEXT=off to run unaided)" >&2
+		exit 1
+	fi
+	;;
+esac
+
+if [ -n "$context_dir" ]; then
+	context_dir="$(cd "$context_dir" && pwd)"
+	context_bin="$repo_root/bin/context-server"
+	# --context-server splits its command on whitespace, deliberately: it is a
+	# flag for driving a run by hand, and the config file is where a path with a
+	# space in it belongs. Say so here rather than letting the parser take the
+	# first half of the path as the command.
+	case "$context_bin$context_dir" in
+	*[[:space:]]*)
+		warn "a path here contains whitespace, which --context-server cannot express"
+		echo "  write context.servers into a config file instead, or move the fixture" >&2
+		exit 1
+		;;
+	esac
+
+	say "Serving $context_dir over MCP"
+	go build -o "$context_bin" ./scripts/context-server
+	printf 'documents: '
+	for doc in "$context_dir"/*; do
+		if [ -f "$doc" ]; then printf '%s ' "$(basename "$doc")"; fi
+	done
+	printf '\n'
+	context_args=(--context-server "docs:$context_bin -dir $context_dir")
+
+	# `serve` takes its context servers from the configuration file alone —
+	# they name programs Veritix will start, which is not a decision to make in
+	# an environment variable — so the flag the audit uses is not available here
+	# and a file has to exist. Writing one is only safe where there is not one
+	# already: a generated file that shadowed somebody's own configuration would
+	# turn every other setting off silently.
+	if [ "$mode" = serve ]; then
+		existing="${VERITIX_CONFIG:-}"
+		for c in "$repo_root/veritix.yaml" "$repo_root/veritix.yml" \
+			"${XDG_CONFIG_HOME:-$HOME/.config}/veritix/config.yaml" \
+			"${XDG_CONFIG_HOME:-$HOME/.config}/veritix/config.yml"; do
+			if [ -z "$existing" ] && [ -f "$c" ]; then existing="$c"; fi
+		done
+		if [ -n "$existing" ]; then
+			warn "$existing is already this run's configuration, so none was generated"
+			echo "  add the documents to it by hand if the UI should offer them:" >&2
+			printf '    context:\n      servers:\n        - name: docs\n          command: %s\n          args: ["-dir", "%s"]\n' \
+				"$context_bin" "$context_dir" >&2
+			context_dir=
+		else
+			mkdir -p "$OUT_DIR"
+			context_config="$OUT_DIR/context-config.yaml"
+			cat >"$context_config" <<-EOF
+				# Generated by scripts/local-model.sh, because context servers are
+				# configured in a file and never in the environment. Overwritten on
+				# every --serve run; edit the script rather than this.
+				context:
+				  servers:
+				    - name: docs
+				      command: $context_bin
+				      args: ["-dir", "$context_dir"]
+			EOF
+			echo "config:    $context_config"
+		fi
+	fi
+fi
+
 if [ "$mode" = serve ]; then
 	say "Serving on http://$ADDR with the agent available"
 	echo "The agent is per-run: tick it when starting an audit, or POST /runs with"
@@ -379,6 +495,11 @@ if [ "$mode" = serve ]; then
 	# it with nothing left to stop it.
 	serve=(env)
 	[ -n "$server_pid" ] || serve=(exec env)
+	if [ -n "$context_config" ]; then
+		echo "The documents in $context_dir are offered to the agent; the trace's"
+		echo "context section is rendered beside the egress panel."
+		serve+=(VERITIX_CONFIG="$context_config")
+	fi
 	"${serve[@]}" \
 		VERITIX_LLM_PROVIDER=openai-compatible \
 		VERITIX_LLM_BASE_URL="$BASE_URL" \
@@ -415,6 +536,7 @@ VERITIX_LLM_REQUEST_TIMEOUT="$TIMEOUT" \
 	--llm-effort "$EFFORT" \
 	--trace-out "$trace" \
 	--log-level debug \
+	"${context_args[@]}" \
 	"${extra[@]}" >"$report" 2> >(tee "$log" >&2) || status=$?
 elapsed=$(($(date +%s) - started))
 
@@ -446,6 +568,40 @@ if [ -s "$trace" ]; then
   ' "$trace"
 fi
 
+# ── what left toward the customer's own servers ────────────────────────────
+#
+# The trace answers two questions now, and this is the second: what did Veritix
+# ask for, and of whom. Every request is a listing or a read of a URI that came
+# out of a listing, which is the property that makes "no text the model wrote
+# leaves the process" checkable by reading rather than by trusting.
+#
+# The figure to read is reads against documents offered. A run that listed three
+# and read none is a model that did not look — gpt-oss-120b did exactly that on
+# three runs of dirty-meters while finding, unaided, the very join one of those
+# documents explains — and a recall score cannot tell that apart from a client
+# that is broken. This can.
+if [ -s "$trace" ] && jq -e '.context != null' "$trace" >/dev/null 2>&1; then
+	say "Context"
+	jq -r '
+    .context as $c
+    | "servers:      " + ([$c.servers[] | .name + " (" + (.documents | tostring) + " documents"
+        + (if .error != null and .error != "" then ", " + .error else "" end) + ")"] | join(", ")),
+      "offered:      \($c.documents | length) — \([$c.documents[].id] | join(", "))",
+      "requests:     \([$c.requests[]? | select(.method == "resources/list")] | length) list,"
+        + " \([$c.requests[]? | select(.method == "resources/read")] | length) read"
+        + " (\([$c.requests[]? | select(.error != null and .error != "")] | length) failed)",
+      "admitted:     \($c.documents_read) documents, \($c.bytes_admitted) bytes verbatim"
+  ' "$trace"
+	if [ "$(jq -r '[.context.requests[]? | select(.method == "resources/read")] | length' "$trace")" -eq 0 ]; then
+		warn "the model read none of the documents it was offered"
+		echo "  It was connected, the catalog was enumerated and the documents were" >&2
+		echo "  named in the brief, so this is a model that did not reach for a tool" >&2
+		echo "  rather than a client that failed. On a fixture whose defects live in" >&2
+		echo "  those documents it scores the same as the unaided control — which is" >&2
+		echo "  what the control is for. docs/local-model.md has the measured run." >&2
+	fi
+fi
+
 # The egress check from docs/local-model.md, against a real model rather than
 # llmtest's scripted one. These are verbatim contents of the fixture; none of
 # them may appear in a payload that left the process.
@@ -473,6 +629,24 @@ case "$DATASET" in
 		"Aeroline Freight" "Baltic Haulage" "Corvex Logistics"
 		"London Bermondsey" "Manchester Trafford" "Dublin Docklands"
 		"Madrid Vallecas" "Frankfurt Ost"
+	)
+	;;
+*dirty-meters)
+	# This fixture has a second reason to prefer some values over others, and it
+	# is the opposite of the first: its context/ documents go to the model
+	# *verbatim*, which is M5b's one deliberate exception, so anything they quote
+	# would appear in the trace legitimately and read here as a leak. The data
+	# dictionary quotes `UPN-4471` while explaining how site_ref joins, names the
+	# status vocabulary and the four regions, and the catalog names every tariff
+	# code and Economy Seven — so none of those can be on this list. Addresses,
+	# postcodes and the remaining tariff names appear in no document, which leaves
+	# them exactly what this check wants: contents of the export and nothing else.
+	raw_values=(
+		"12 Alder Road" "88 Kestrel Way" "3 Marchmont Terrace"
+		"207 Foundry Lane" "41 Quarry Rise" "9 Wharf Court"
+		"64 Beacon Hill" "15 Priory Gardens"
+		"BS1 4TH" "EH9 1HZ" "CF10 5PS" "NE2 1XN"
+		"Standard Domestic A" "Standard Domestic B" "Commercial Single Rate"
 	)
 	;;
 esac

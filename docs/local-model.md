@@ -303,14 +303,62 @@ BASE_URL=http://localhost:11434/v1 MODEL=qwen3:4b-instruct-2507-q4_K_M \
 ```
 
 `MODEL`, `MODEL_GGUF`, `SERVE_SCRIPT`, `BASE_URL`, `DATASET`, `MAX_STEPS`,
-`EFFORT`, `TIMEOUT`, `PROBE_TIMEOUT`, `START_TIMEOUT`, `OUT_DIR` and `ADDR`
-override the defaults, which are the ones this document arrived at — including
-`EFFORT=low`, because gpt-oss quietly ignores anything that is not
+`EFFORT`, `TIMEOUT`, `PROBE_TIMEOUT`, `START_TIMEOUT`, `CONTEXT`, `OUT_DIR` and
+`ADDR` override the defaults, which are the ones this document arrived at —
+including `EFFORT=low`, because gpt-oss quietly ignores anything that is not
 `low`/`medium`/`high`, and `TIMEOUT=60m`, because the first step of a paged run
 is nearly half its wall clock. Traces, logs and reports
 land in `local-runs/`, timestamped and named after the model, because the
 interesting comparison is against the previous run rather than against nothing.
 The rest of this section is what the script does and why each part is there.
+
+### The documents, on a fixture that has them
+
+Some defects are not in the data. Four of `dirty-meters`' six agent targets are
+invisible in the export and become visible only when the customer's own
+dictionary or catalog is read, so a run against that fixture with no context
+server is measuring the control half and not the feature — and a control taken
+by accident reads as a model that failed.
+
+`CONTEXT` defaults to `auto`, which means: if the dataset has a `context/`
+directory, build `scripts/context-server` and serve it. That is the same
+instrument `veritix eval` scores the aided half with, so the run by hand and the
+scorecard ask the same question, and it does nothing at all on a fixture without
+such a directory — `dirty-retail` and `dirty-logistics` are unchanged.
+
+```sh
+DATASET=testdata/dirty-meters scripts/local-model.sh              # aided
+DATASET=testdata/dirty-meters CONTEXT=off scripts/local-model.sh  # the control
+CONTEXT=~/my-docs scripts/local-model.sh          # a folder of your own
+```
+
+A `--context-server` or `--no-context` after `--` settles it instead, which is
+the precedence `resolveContext` applies inside Veritix for the same reason: the
+control is only a control if asking for it cannot be quietly overridden.
+
+`--serve` needs a file rather than a flag, because context servers name programs
+Veritix will start and that is not a decision to take in an environment
+variable. The script writes one to `$OUT_DIR/context-config.yaml` and points
+`VERITIX_CONFIG` at it — but only where there is no configuration already, since
+a generated file that shadowed somebody's own would turn every other setting off
+silently. Where there is one it prints the stanza to paste and carries on
+unaided.
+
+The trace summary then has a second section, and the figure to read is reads
+against documents offered:
+
+```
+==> Context
+servers:      docs (3 documents)
+offered:      3 — data-dictionary, ticket-4482, warehouse-catalog
+requests:     1 list, 0 read (0 failed)
+admitted:     0 documents, 0 bytes verbatim
+warning: the model read none of the documents it was offered
+```
+
+That is the measured `gpt-oss-120b` failure below, in four lines: connected,
+enumerated, listed in the brief, and neither context tool called. A recall score
+cannot tell it apart from a client that is broken; this can.
 
 From the CLI:
 

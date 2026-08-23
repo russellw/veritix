@@ -1065,7 +1065,13 @@ nothing answers `BASE_URL`. One that is already up is left alone and left
 running, which is how to keep a model warm across runs. A small model is an
 override away (`BASE_URL=…:11434/v1 MODEL=qwen3:4b-instruct-2507-q4_K_M
 EFFORT=none TIMEOUT=30m`) and is still the cheap way to exercise a change to the
-loop rather than to the auditing.
+loop rather than to the auditing. **`CONTEXT` defaults to `auto`**: a dataset
+with a `context/` directory gets `scripts/context-server` wired to it, so
+`DATASET=testdata/dirty-meters` measures the aided half rather than silently
+measuring the control, and `CONTEXT=off` is how to ask for the control on
+purpose. `--serve` cannot take the flag — context servers are file-only — so it
+generates a config and points `VERITIX_CONFIG` at it, unless there is a
+configuration already, which it will not shadow.
 - Ollama sizes its context window from VRAM and picks **4096 tokens** when there
   is no GPU. Veritix's first agent prompt is ~4080 since the profile moved into
   the brief, so it does not fit at all; even when it did, llama.cpp discarded
@@ -1154,7 +1160,8 @@ loop rather than to the auditing.
   already taught. Verify with the trace's `context` section rather than the
   score: `resources/list` with no `resources/read` is a model that did not
   look, and is not distinguishable from a broken client by the recall figure
-  alone.
+  alone. `scripts/local-model.sh` prints that section after every run and warns
+  on exactly that shape, because it is the one failure the score cannot name.
 - **A clean `check_referential_integrity` is evidence about that pair, not about
   that column**, and a model reads it as the latter. gpt-oss-120b has found each
   of `dirty-retail`'s two unresolved references on a different run and never
