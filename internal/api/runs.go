@@ -150,6 +150,16 @@ func (s *Server) writeRunError(w http.ResponseWriter, err error) {
 	writeError(w, re.status, "%s", re.message)
 }
 
+// startOptions are the things a caller that is not a request can ask for.
+// A request cannot: a notification exists because nobody was watching, and
+// somebody who just pressed Run is watching.
+type startOptions struct {
+	// Notify sends this run's regressions to the configured sink when it
+	// finishes. Only the clock sets it, and only for a dataset whose schedule
+	// asked for it.
+	Notify bool
+}
+
 func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	var req createRunRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -157,7 +167,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := s.startRun(r.Context(), req)
+	run, err := s.startRun(r.Context(), req, startOptions{})
 	if err != nil {
 		s.writeRunError(w, err)
 		return
@@ -175,7 +185,9 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 // audit.Options for itself is how two entry points come to disagree about what
 // an audit of the same dataset does. The handler's whole job either side of
 // this is to decode the request and turn the error into a status code.
-func (s *Server) startRun(ctx context.Context, req createRunRequest) (*store.Run, error) {
+func (s *Server) startRun(
+	ctx context.Context, req createRunRequest, start startOptions,
+) (*store.Run, error) {
 	if req.DatasetID == "" {
 		return nil, newRunError(http.StatusBadRequest, "dataset_id is required")
 	}
@@ -263,6 +275,7 @@ func (s *Server) startRun(ctx context.Context, req createRunRequest) (*store.Run
 			Profile:      profile.Options{TopValues: topValues},
 		},
 		report.Options{IncludeValues: req.IncludeValues},
+		start,
 	)
 
 	return run, nil

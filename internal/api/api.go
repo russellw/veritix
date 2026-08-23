@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/russellw/veritix/internal/config"
+	"github.com/russellw/veritix/internal/notify"
 	"github.com/russellw/veritix/internal/store"
 )
 
@@ -54,6 +55,10 @@ type Server struct {
 	runs    *runner
 	// sched is the clock, nil when this build or this operator has it off.
 	sched *scheduler
+	// notify is where a scheduled audit's regressions are sent, nil when no
+	// webhook is configured — which is the default and the shipped
+	// configuration.
+	notify *notify.Sink
 	// stopping is closed by Close. Event streams watch it: they stay open by
 	// design, so without a signal they would hold a graceful shutdown open
 	// until its timeout expired.
@@ -78,6 +83,7 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		version:  opts.Version,
 		log:      log,
 		web:      opts.Web,
+		notify:   notify.New(opts.Config.Notify, log),
 		stopping: make(chan struct{}),
 	}
 	s.runs = newRunner(s)

@@ -82,6 +82,30 @@ schedule:
   enabled: true
   tick: 30s
 
+# Where a scheduled audit's regressions are sent. Off by default, for the reason
+# llm.provider and otel.enabled are: a webhook is a network egress from a
+# process holding data the customer declined to send to a vendor. Setting a URL
+# here is Veritix's switch; which datasets use it is a flag on each schedule.
+#
+# A message carries the report's own comparison — counts, and for each finding
+# that got worse its rule, severity, title, table and column. Never a cell
+# value, never an offending row. That titles and locations are admissible here
+# where a span refuses even a table name is a decision about audiences: this
+# goes to the people whose data it is, and "3 new errors" with no location is
+# not something anybody can act on. detail: summary drops them for a channel
+# wider than the data's audience.
+#
+# The NetworkPolicy denies egress by default, so a webhook outside the cluster
+# needs a rule of its own alongside the model and collector exceptions.
+notify:
+  webhook_url: ""
+  # webhook_url: https://example.webhook.office.com/webhookb2/...  # from a Secret
+  on: regression # regression | failure | any
+  min_severity: error
+  detail: findings # findings | summary
+  # base_url: https://veritix.example.com   # so a message can link to the run
+  timeout: 10s
+
 # OpenTelemetry is off by default, for the same reason the model provider is:
 # an OTLP endpoint is a network egress, and this process holds data the
 # customer will not send to a vendor. Spans carry counts, stage names and

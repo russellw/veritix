@@ -35,7 +35,70 @@ type Config struct {
 	OTel    OTel    `yaml:"otel"`
 	// Schedule is the clock that starts the audits nobody pressed.
 	Schedule Schedule `yaml:"schedule"`
+	// Notify is how somebody finds out about those audits.
+	Notify Notify `yaml:"notify"`
 }
+
+// Notify configures where Veritix tells somebody that a scheduled audit found
+// something.
+//
+// Off by default, for the reason llm.provider and otel.enabled are: a webhook
+// is a network egress from a process holding data the customer declined to
+// send to a vendor. Setting a URL here is Veritix's switch; which datasets use
+// it is a flag on each schedule, so that turning it on does not sign every
+// dataset up at once.
+//
+// What may be in a message is the decision this section rests on. A span
+// carries counts and never names, because a collector is an access log leaving
+// the machine; a notification is not that. It goes to the audit's own
+// audience, and "3 new errors" with no location is not something anybody can
+// act on, which makes it another thing nobody reads. So a message carries the
+// same titles, rules and locations the report's own comparison section
+// carries — and never a cell value, never an offending row. See
+// internal/notify for what that rests on.
+type Notify struct {
+	// WebhookURL receives a JSON POST. Empty is off, and is the default.
+	//
+	// Webhook and not email, deliberately: Teams, Slack, PagerDuty and a
+	// two-line script all take one, where email means credentials, TLS modes,
+	// sender identity, recipient lists, retries and bounces, to reimplement a
+	// bridge every customer already has.
+	WebhookURL string `yaml:"webhook_url"`
+	// On is what makes a message: regression, failure, or any.
+	On string `yaml:"on"`
+	// MinSeverity is how bad a new or worsened finding has to be to count as a
+	// regression. It is the same threshold --fail-on-regression uses.
+	MinSeverity string `yaml:"min_severity"`
+	// Detail is findings or summary. Summary drops the titles and locations,
+	// for an operator posting into a channel wider than the data's audience.
+	Detail string `yaml:"detail"`
+	// BaseURL is where this instance is reachable, e.g.
+	// https://veritix.example.com, so that a message can link to the run.
+	// Empty leaves the link out rather than guessing from the listen address,
+	// which behind any proxy would be wrong.
+	BaseURL string `yaml:"base_url"`
+	// Timeout bounds one delivery attempt.
+	Timeout time.Duration `yaml:"timeout"`
+}
+
+// The values Notify.On takes.
+const (
+	// NotifyOnRegression is a run that found new or worsened findings at or
+	// above the severity threshold, and also a run that could not complete: a
+	// run with no report cannot be shown not to have regressed, which is
+	// rule.never_applied's argument about a check that never ran.
+	NotifyOnRegression = "regression"
+	// NotifyOnFailure is only a run that could not complete.
+	NotifyOnFailure = "failure"
+	// NotifyOnAny is every scheduled run, including a clean one.
+	NotifyOnAny = "any"
+)
+
+// The values Notify.Detail takes.
+const (
+	NotifyDetailFindings = "findings"
+	NotifyDetailSummary  = "summary"
+)
 
 // Schedule configures the clock, not the schedules themselves.
 //
@@ -284,6 +347,12 @@ func Default() Config {
 			Enabled: true,
 			Tick:    30 * time.Second,
 		},
+		Notify: Notify{
+			On:          NotifyOnRegression,
+			MinSeverity: "error",
+			Detail:      NotifyDetailFindings,
+			Timeout:     10 * time.Second,
+		},
 		OTel: OTel{
 			Enabled:       false,
 			ServiceName:   "veritix",
@@ -396,6 +465,13 @@ func applyEnv(cfg *Config) {
 	boolean(&cfg.Schedule.Enabled, "SCHEDULE_ENABLED")
 	dur(&cfg.Schedule.Tick, "SCHEDULE_TICK")
 
+	str(&cfg.Notify.WebhookURL, "NOTIFY_WEBHOOK_URL")
+	str(&cfg.Notify.On, "NOTIFY_ON")
+	str(&cfg.Notify.MinSeverity, "NOTIFY_MIN_SEVERITY")
+	str(&cfg.Notify.Detail, "NOTIFY_DETAIL")
+	str(&cfg.Notify.BaseURL, "NOTIFY_BASE_URL")
+	dur(&cfg.Notify.Timeout, "NOTIFY_TIMEOUT")
+
 	boolean(&cfg.OTel.Enabled, "OTEL_ENABLED")
 	str(&cfg.OTel.Endpoint, "OTEL_ENDPOINT")
 	str(&cfg.OTel.ServiceName, "OTEL_SERVICE_NAME")
@@ -411,6 +487,41 @@ func applyEnv(cfg *Config) {
 			cfg.LLM.APIKey = os.Getenv("OPENAI_API_KEY")
 		}
 	}
+}
+
+func (n Notify) validate() error {
+	// The same refusal server.source_url gets, for a weaker but real reason:
+	// this URL is one Veritix posts customer-derived text to, and a scheme
+	// that is not http or https is a mistake nobody meant to make.
+	if !strings.HasPrefix(n.WebhookURL, "https://") && !strings.HasPrefix(n.WebhookURL, "http://") {
+		return fmt.Errorf("notify.webhook_url: want an http or https URL, got %q", n.WebhookURL)
+	}
+	switch n.On {
+	case NotifyOnRegression, NotifyOnFailure, NotifyOnAny:
+	default:
+		return fmt.Errorf("notify.on: want %q, %q or %q, got %q",
+			NotifyOnRegression, NotifyOnFailure, NotifyOnAny, n.On)
+	}
+	switch n.MinSeverity {
+	case "info", "warning", "error":
+	default:
+		return fmt.Errorf("notify.min_severity: want info, warning or error, got %q", n.MinSeverity)
+	}
+	switch n.Detail {
+	case NotifyDetailFindings, NotifyDetailSummary:
+		// ok
+	default:
+		return fmt.Errorf("notify.detail: want %q or %q, got %q",
+			NotifyDetailFindings, NotifyDetailSummary, n.Detail)
+	}
+	if n.BaseURL != "" &&
+		!strings.HasPrefix(n.BaseURL, "https://") && !strings.HasPrefix(n.BaseURL, "http://") {
+		return fmt.Errorf("notify.base_url: want an http or https URL, got %q", n.BaseURL)
+	}
+	if n.Timeout <= 0 {
+		return fmt.Errorf("notify.timeout: want a positive duration, got %s", n.Timeout)
+	}
+	return nil
 }
 
 func str(dst *string, key string) {
@@ -484,6 +595,11 @@ func (c Config) Validate() error {
 		return fmt.Errorf(
 			"server.retain_databases: want a duration or 0 to keep everything, got %s",
 			c.Server.RetainDatabases)
+	}
+	if c.Notify.WebhookURL != "" {
+		if err := c.Notify.validate(); err != nil {
+			return err
+		}
 	}
 	if c.Schedule.Enabled {
 		// A tick faster than a second is a busy loop over the run store, and

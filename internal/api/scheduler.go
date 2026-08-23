@@ -137,7 +137,14 @@ func (sc *scheduler) sweep(ctx context.Context) {
 			continue
 		}
 
-		run, err := sc.srv.startRun(ctx, createRunRequest{DatasetID: s.DatasetID})
+		// No model and no cell values: createRunRequest's zero value is the
+		// deterministic auditor, which is what a nightly audit has to be.
+		// Sending a dataset's metadata to a model unattended, every night,
+		// forever is exactly the decision the per-run switch exists to make
+		// deliberately.
+		run, err := sc.srv.startRun(ctx,
+			createRunRequest{DatasetID: s.DatasetID},
+			startOptions{Notify: s.Notify})
 		if err != nil {
 			// A dataset whose path has gone, or one that cannot be prepared.
 			// Recording it is the point: a schedule that has been failing

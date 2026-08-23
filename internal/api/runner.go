@@ -161,7 +161,9 @@ func (rn *runner) shutdown() {
 // soon as the run is accepted, and an audit that died because the browser that
 // started it navigated away would be worse than useless. Cancellation is an
 // explicit act, through POST /runs/{id}/cancel or shutdown.
-func (rn *runner) start(run *store.Run, opts audit.Options, reportOpts report.Options) {
+func (rn *runner) start(
+	run *store.Run, opts audit.Options, reportOpts report.Options, start startOptions,
+) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	a := &activeRun{cancel: cancel}
@@ -200,5 +202,13 @@ func (rn *runner) start(run *store.Run, opts audit.Options, reportOpts report.Op
 		delete(rn.active, run.ID)
 		rn.mu.Unlock()
 		a.close()
+
+		// After the stream has closed, so that a browser watching this run is
+		// not held open for the length of somebody else's webhook, and on the
+		// run's own context, so that a shutdown cancels a delivery that is
+		// retrying rather than waiting it out.
+		if start.Notify {
+			rn.srv.notifyRun(ctx, run)
+		}
 	}()
 }

@@ -533,18 +533,27 @@ func writeTableDeltasText(p *printer, ts []TableDelta) {
 // three hundred is not the same problem at a different size, it is a problem
 // that got away from somebody.
 func (d *Delta) Regressions(minSeverity string) int {
+	return len(d.Regressed(minSeverity))
+}
+
+// Regressed is those findings themselves, in the document's own order.
+//
+// Regressions counts exactly these, so anything that reports what got worse —
+// a build gate, a notification — is working from one definition rather than
+// its own copy of the predicate.
+func (d *Delta) Regressed(minSeverity string) []FindingDelta {
 	if d == nil {
-		return 0
+		return nil
 	}
 	want := severityRank(minSeverity)
-	var n int
+	var out []FindingDelta
 	for _, f := range d.Findings {
 		if f.Status != DeltaNew && f.Status != DeltaWorsened {
 			continue
 		}
 		if severityRank(f.Severity) <= want {
-			n++
+			out = append(out, f)
 		}
 	}
-	return n
+	return out
 }
