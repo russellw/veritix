@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -110,30 +112,85 @@ type createRunRequest struct {
 	AllowSampleValues bool `json:"allow_sample_values"`
 }
 
+// runError is a reason a run could not be started, carrying the status a
+// caller over HTTP should be answered with.
+//
+// It holds only what the caller is told. Anything that is Veritix's own
+// failure rather than theirs is logged where it happens, because that is where
+// the dataset and run ids are, and a 500 must not disclose the diagnostic.
+type runError struct {
+	status  int
+	message string
+}
+
+func (e *runError) Error() string { return e.message }
+
+func newRunError(status int, format string, args ...any) *runError {
+	return &runError{status: status, message: fmt.Sprintf(format, args...)}
+}
+
+// storeRunError maps a store failure the way writeStoreError does: a missing
+// id is the caller's mistake and says so, anything else is ours and is logged
+// rather than disclosed.
+func (s *Server) storeRunError(err error, what string) *runError {
+	if errors.Is(err, store.ErrNotFound) {
+		return &runError{status: http.StatusNotFound, message: err.Error()}
+	}
+	s.log.Error(what, "error", err)
+	return &runError{status: http.StatusInternalServerError, message: what}
+}
+
+func (s *Server) writeRunError(w http.ResponseWriter, err error) {
+	var re *runError
+	if !errors.As(err, &re) {
+		s.log.Error("could not start the run", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not start the run")
+		return
+	}
+	writeError(w, re.status, "%s", re.message)
+}
+
 func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	var req createRunRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "%s", err)
 		return
 	}
-	if req.DatasetID == "" {
-		writeError(w, http.StatusBadRequest, "dataset_id is required")
+
+	run, err := s.startRun(r.Context(), req)
+	if err != nil {
+		s.writeRunError(w, err)
 		return
+	}
+
+	writeJSON(w, http.StatusAccepted, toRunJSON(run))
+}
+
+// startRun turns a request for an audit into a run executing in the
+// background, and is the only path to one.
+//
+// It is separate from the handler because a request is not the only thing that
+// will ever ask for an audit: something firing on a clock has no
+// ResponseWriter and no request context, and a second caller assembling
+// audit.Options for itself is how two entry points come to disagree about what
+// an audit of the same dataset does. The handler's whole job either side of
+// this is to decode the request and turn the error into a status code.
+func (s *Server) startRun(ctx context.Context, req createRunRequest) (*store.Run, error) {
+	if req.DatasetID == "" {
+		return nil, newRunError(http.StatusBadRequest, "dataset_id is required")
 	}
 
 	topValues := 10
 	if req.TopValues != nil {
 		if *req.TopValues < 0 || *req.TopValues > 100 {
-			writeError(w, http.StatusBadRequest, "top_values must be between 0 and 100")
-			return
+			return nil, newRunError(http.StatusBadRequest, "top_values must be between 0 and 100")
 		}
 		topValues = *req.TopValues
 	}
 
-	ds, err := s.store.Dataset(r.Context(), req.DatasetID)
+	ds, err := s.store.Dataset(ctx, req.DatasetID)
 	if err != nil {
-		s.writeStoreError(w, err, "could not read the dataset")
-		return
+		return nil, s.storeRunError(err, "could not read the dataset")
 	}
 
 	// Rules are loaded now rather than inside the run, so that a typo in a
@@ -142,8 +199,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	var ruleFile *rules.File
 	if req.Rules != "" {
 		if ruleFile, err = rules.Load(req.Rules); err != nil {
-			writeError(w, http.StatusBadRequest, "could not read the rules: %s", err)
-			return
+			return nil, newRunError(http.StatusBadRequest, "could not read the rules: %s", err)
 		}
 	}
 
@@ -154,12 +210,10 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	accepted, err := runs.AcceptedRules(s.cfg.Server.DataDir, ds.ID)
 	if err != nil {
 		s.log.Error("could not read the accepted rules", "dataset", ds.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "could not read the rules in force")
-		return
+		return nil, newRunError(http.StatusInternalServerError, "could not read the rules in force")
 	}
 	if ruleFile, err = runs.Merge(ruleFile, accepted); err != nil {
-		writeError(w, http.StatusBadRequest, "%s", err)
-		return
+		return nil, newRunError(http.StatusBadRequest, "%s", err)
 	}
 
 	// The agent is configured before the run is created, so that a
@@ -168,37 +222,33 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	var agentOpts *agent.Options
 	if req.Agent {
 		if s.cfg.LLM.Provider == "" || s.cfg.LLM.Provider == config.ProviderNone {
-			writeError(w, http.StatusBadRequest,
+			return nil, newRunError(http.StatusBadRequest,
 				"no model is configured; set llm.provider to anthropic or openai-compatible")
-			return
 		}
 		cfg := s.cfg.LLM
 		if req.AllowSampleValues {
 			cfg.AllowSampleValues = true
 		}
 		if agentOpts, err = agent.Configure(cfg); err != nil {
-			writeError(w, http.StatusBadRequest, "the model is not configured correctly: %s", err)
-			return
+			return nil, newRunError(http.StatusBadRequest,
+				"the model is not configured correctly: %s", err)
 		}
 		agentOpts.UseEngineLimits(s.cfg.Engine)
 	}
 
-	run, err := s.store.CreateRun(r.Context(), ds.ID, s.version, "")
+	run, err := s.store.CreateRun(ctx, ds.ID, s.version, "")
 	if err != nil {
-		s.writeStoreError(w, err, "could not create the run")
-		return
+		return nil, s.storeRunError(err, "could not create the run")
 	}
 
 	dbPath, err := runs.DatabasePath(s.cfg.Server.DataDir, run.ID)
 	if err != nil {
 		s.log.Error("could not prepare the run directory", "run", run.ID, "error", err)
-		_ = s.store.StopRun(r.Context(), run.ID, store.StatusFailed, err.Error())
-		writeError(w, http.StatusInternalServerError, "could not prepare the run")
-		return
+		_ = s.store.StopRun(ctx, run.ID, store.StatusFailed, err.Error())
+		return nil, newRunError(http.StatusInternalServerError, "could not prepare the run")
 	}
-	if err := s.store.SetRunDatabase(r.Context(), run.ID, dbPath); err != nil {
-		s.writeStoreError(w, err, "could not create the run")
-		return
+	if err := s.store.SetRunDatabase(ctx, run.ID, dbPath); err != nil {
+		return nil, s.storeRunError(err, "could not create the run")
 	}
 	run.DatabasePath = dbPath
 
@@ -215,7 +265,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		report.Options{IncludeValues: req.IncludeValues},
 	)
 
-	writeJSON(w, http.StatusAccepted, toRunJSON(run))
+	return run, nil
 }
 
 func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
