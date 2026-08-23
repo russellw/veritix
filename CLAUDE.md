@@ -1034,17 +1034,24 @@ positives, both commented in place:
   which is why `Guard.Derived` can wrap a profiler shape without re-shaping it.
   The delimiters go on afterwards, at the boundary, so the property still holds
   of the bare pattern.
-- **`noteRepeat` is defeated by an empty field, and this is a known gap rather
-  than a fixed one.** `canonical()` normalizes key order and whitespace, so the
-  same call reworded by a serializer still hashes the same; it does not
-  normalize content. gpt-oss-120b re-sent a refused `propose_rule` with
-  `"where": ""` added and nothing else changed, which is a different key, so
-  the repeat note did not fire and the model was told nothing to distinguish
-  the second refusal from the first — the exact failure `noteRepeat` was
-  written for. The fix is to drop empty-valued keys before hashing, and it
-  wants care: an empty string is meaningless in `where` and is not necessarily
-  meaningless in every parameter. Measured on `dirty-meters`, twice in three
-  runs, at about eight minutes a step.
+- **`noteRepeat` used to be defeated by an empty field**, and what fixed it is
+  a rule about what the *tool* can read. `canonical()` normalized key order and
+  whitespace, so the same call reworded by a serializer still hashed the same;
+  it did not normalize content. gpt-oss-120b re-sent a refused `propose_rule`
+  with `"where": ""` added and nothing else changed — a different key, so a
+  different hash, so no repeat note and nothing to distinguish the second
+  refusal from the first, which is the exact failure `noteRepeat` was written
+  for. Measured on `dirty-meters`, twice in three runs, at about eight minutes
+  a step. `canonical` now drops object keys whose value is `null`, `""`, `[]`
+  or `{}` before hashing, because every tool decodes into a plain struct where
+  those are indistinguishable from an absent key: a key the tool cannot read is
+  not a change to the call. **Not `0` and not `false`** — those are values the
+  model asserted, and `affected_count` and `violations_now` are pointers
+  precisely so a claimed zero is not an absent claim. Not a whitespace-only
+  string either: `propose_rule` puts `where` straight into a probe, so `""` and
+  `" "` are refused by different things. Array elements are pruned within but
+  never removed, since `["region", ""]` is not the call that names one column.
+  `TestAnEmptyKeyDoesNotDisguiseARepeat` pins all three edges.
 
 **Local models** — `scripts/local-model.sh` runs one by hand (probe, audit,
 trace summary, egress check; `--probe`, `--serve`, `-- <veritix flags>`), and

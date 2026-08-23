@@ -926,6 +926,63 @@ func TestAnIdenticalRefusedCallIsCalledOut(t *testing.T) {
 	}
 }
 
+// TestAnEmptyKeyDoesNotDisguiseARepeat is the same livelock, wearing a hat.
+//
+// canonical() normalizes key order and spacing, so a call reworded by a
+// serializer still hashes the same. It did not normalize content, and a model
+// found that: on dirty-meters, gpt-oss-120b re-sent a refused propose_rule
+// with "where": "" added and nothing else changed. A different key is a
+// different hash, so the repeat note did not fire and the second refusal read
+// exactly like the first — which is the one thing noteRepeat exists to
+// prevent, at about eight minutes a step.
+//
+// A key with nothing in it is a key the tool never sees: every tool decodes
+// into a plain struct, where an empty string and an absent one are the same
+// value. So it is the same call, and it is told so.
+func TestAnEmptyKeyDoesNotDisguiseARepeat(t *testing.T) {
+	in := fixture(t)
+
+	args := func(extra map[string]any) map[string]any {
+		out := map[string]any{
+			"rule": "status_domain", "description": "status is a fixed vocabulary",
+			"table": "customers_csv", "expect": "one_of", "violations_now": 0,
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+
+	script := llmtest.New(
+		llmtest.Turn{Calls: []llmtest.Call{{Name: "propose_rule", Input: args(nil)}}},
+		// The same rule, with empty padding: nothing the tool can read.
+		llmtest.Turn{Calls: []llmtest.Call{{Name: "propose_rule", Input: args(map[string]any{
+			"where": "", "pattern": "", "rationale": "",
+		})}}},
+		// A column is what the refusal asked for, so this one is not a repeat
+		// however it is refused.
+		llmtest.Turn{Calls: []llmtest.Call{{Name: "propose_rule", Input: args(map[string]any{
+			"column": "status",
+		})}}},
+		llmtest.Turn{Text: "Proposed."},
+	)
+
+	res, err := Run(t.Context(), in, Options{Provider: script, MaxSteps: 6}, nil)
+	if err != nil {
+		t.Fatalf("a repeated mistake must not fail the run: %v", err)
+	}
+
+	if got := res.Trace.Steps[0].Calls[0].Result; strings.Contains(got, "attempt 2") {
+		t.Errorf("the first attempt was described as a repeat: %s", got)
+	}
+	if got := res.Trace.Steps[1].Calls[0].Result; !strings.Contains(got, "attempt 2") {
+		t.Errorf("padding a refused call with empty keys hid the repeat: %s", got)
+	}
+	if got := res.Trace.Steps[2].Calls[0].Result; strings.Contains(got, "attempt 3") {
+		t.Errorf("a call that changed something was called a repeat: %s", got)
+	}
+}
+
 // The engine's query timeout has to be sized for Veritix's own measurements —
 // profiling one column of a twenty-million-row table takes minutes, and a
 // limit below that silently drops the column. That leaves the model's SQL,

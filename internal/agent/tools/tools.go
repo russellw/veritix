@@ -319,10 +319,10 @@ func (r *Registry) Invoke(ctx context.Context, name string, args json.RawMessage
 // call has now failed.
 //
 // The arguments are canonicalized before hashing so that the same call reworded
-// by the serializer — a different key order, different spacing — is still the
-// same call. Anything that will not parse is compared as written, which is the
-// safe direction: two unparseable calls that differ only in whitespace are
-// still two attempts at the same thing.
+// by the serializer — a different key order, different spacing, a key added
+// with nothing in it — is still the same call. Anything that will not parse is
+// compared as written, which is the safe direction: two unparseable calls that
+// differ only in whitespace are still two attempts at the same thing.
 func (r *Registry) noteRepeat(name string, args json.RawMessage) int {
 	key := name + "\x00" + canonical(args)
 	r.failed[key]++
@@ -335,11 +335,64 @@ func canonical(args json.RawMessage) string {
 		return string(args)
 	}
 	// Go sorts map keys, so this is stable for any object the model sends.
-	out, err := json.Marshal(v)
+	out, err := json.Marshal(prune(v))
 	if err != nil {
 		return string(args)
 	}
 	return string(out)
+}
+
+// prune drops object keys whose value cannot change how the call is read:
+// null, "", [] and {}. Every tool decodes its arguments into a plain struct,
+// so a key carrying one of those yields exactly the struct an absent key
+// yields — {"where": ""} is the same propose_rule as one with no where at all,
+// and is refused for the same reason.
+//
+// It is there because a model will find this gap on its own. gpt-oss-120b
+// re-sent a refused propose_rule on dirty-meters with "where": "" added and
+// nothing else changed: a different key, so a different hash, so no repeat
+// note — the exact livelock noteRepeat exists to break, at about eight minutes
+// a step.
+//
+// Deliberately not 0, and not false: those are values the model asserted
+// rather than keys it left out, and record_finding's affected_count and
+// propose_rule's violations_now are pointers precisely so that a claimed zero
+// is not an absent claim. Nor is a whitespace-only string empty — propose_rule
+// puts where straight into a probe, so "" and " " are refused by different
+// things. Array elements are pruned within but never removed: ["region", ""]
+// names two columns, one of them blank, which is not the call that names one.
+func prune(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			if e = prune(e); !emptyValue(e) {
+				out[k] = e
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = prune(e)
+		}
+		return out
+	}
+	return v
+}
+
+func emptyValue(v any) bool {
+	switch v := v.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	}
+	return false
 }
 
 // repeatNote is what a model is told when it sends a call that has already been
