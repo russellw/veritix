@@ -60,6 +60,14 @@ func newStubModel(t *testing.T, replies ...string) *stubModel {
 	return m
 }
 
+// count is how many requests reached the model, read under the lock the
+// handler writes it under.
+func (m *stubModel) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
 func (m *stubModel) sent() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

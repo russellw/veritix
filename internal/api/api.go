@@ -52,6 +52,8 @@ type Server struct {
 	log     *slog.Logger
 	web     fs.FS
 	runs    *runner
+	// sched is the clock, nil when this build or this operator has it off.
+	sched *scheduler
 	// stopping is closed by Close. Event streams watch it: they stay open by
 	// design, so without a signal they would hold a graceful shutdown open
 	// until its timeout expired.
@@ -88,6 +90,13 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 		return nil, err
 	} else if n > 0 {
 		log.Warn("closed out runs interrupted by a previous shutdown", "runs", n)
+	}
+
+	// After MarkInterrupted, so that the first sweep cannot mistake a run
+	// belonging to a process that is gone for one that is in flight here.
+	if s.cfg.Schedule.Enabled {
+		s.sched = newScheduler(s)
+		s.sched.start(ctx)
 	}
 
 	return s, nil
@@ -153,6 +162,11 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) Close() error {
 	s.closeOnce.Do(func() {
 		close(s.stopping)
+		// The clock stops before the runs do: one still ticking could start an
+		// audit after they had all been shut down.
+		if s.sched != nil {
+			s.sched.wait()
+		}
 		s.runs.shutdown()
 	})
 	return nil

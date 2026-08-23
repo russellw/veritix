@@ -33,6 +33,27 @@ type Config struct {
 	// llm.provider: none makes.
 	Context Context `yaml:"context"`
 	OTel    OTel    `yaml:"otel"`
+	// Schedule is the clock that starts the audits nobody pressed.
+	Schedule Schedule `yaml:"schedule"`
+}
+
+// Schedule configures the clock, not the schedules themselves.
+//
+// A dataset is audited on a clock only if somebody asked for it, and that
+// request is a row in the run store rather than a setting here: schedules are
+// per dataset, and datasets are registered at runtime with ids no config file
+// can name. What lives here is whether this process runs the clock at all,
+// which matters because a data directory may be shared — a veritix mcp beside
+// a veritix serve must not both be firing the same windows, and only serve
+// does.
+type Schedule struct {
+	// Enabled runs the clock. Turning it off leaves every schedule stored and
+	// fires none of them.
+	Enabled bool `yaml:"enabled"`
+	// Tick is how often due schedules are looked for. It is not how precisely
+	// an audit starts on time: at most one audit is started per tick, which is
+	// what staggers a restart where several datasets are due at once.
+	Tick time.Duration `yaml:"tick"`
 }
 
 // Context configures the MCP servers Veritix reads the customer's own
@@ -244,6 +265,10 @@ func Default() Config {
 			MaxSteps:       40,
 			RequestTimeout: 10 * time.Minute,
 		},
+		Schedule: Schedule{
+			Enabled: true,
+			Tick:    30 * time.Second,
+		},
 		OTel: OTel{
 			Enabled:       false,
 			ServiceName:   "veritix",
@@ -352,6 +377,9 @@ func applyEnv(cfg *Config) {
 	num(&cfg.LLM.TokenBudget, "LLM_TOKEN_BUDGET")
 	dur(&cfg.LLM.RequestTimeout, "LLM_REQUEST_TIMEOUT")
 
+	boolean(&cfg.Schedule.Enabled, "SCHEDULE_ENABLED")
+	dur(&cfg.Schedule.Tick, "SCHEDULE_TICK")
+
 	boolean(&cfg.OTel.Enabled, "OTEL_ENABLED")
 	str(&cfg.OTel.Endpoint, "OTEL_ENDPOINT")
 	str(&cfg.OTel.ServiceName, "OTEL_SERVICE_NAME")
@@ -435,6 +463,15 @@ func (c Config) Validate() error {
 	if u := c.Server.SourceURL; u != "" &&
 		!strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
 		return fmt.Errorf("server.source_url: want an http or https URL, got %q", u)
+	}
+	if c.Schedule.Enabled {
+		// A tick faster than a second is a busy loop over the run store, and
+		// one slower than a few minutes makes "02:00" mean "some time after
+		// 02:00" by more than anybody would expect.
+		if c.Schedule.Tick < time.Second || c.Schedule.Tick > 10*time.Minute {
+			return fmt.Errorf(
+				"schedule.tick: want between 1s and 10m, got %s", c.Schedule.Tick)
+		}
 	}
 	if c.Engine.MaxResultRows < 1 {
 		return fmt.Errorf("engine.max_result_rows: want a positive count, got %d", c.Engine.MaxResultRows)

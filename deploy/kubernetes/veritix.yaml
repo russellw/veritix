@@ -59,6 +59,18 @@ llm:
   max_steps: 40
   request_timeout: 10m
 
+# The clock that starts the audits nobody pressed. A dataset is audited on one
+# only if somebody asked for it — that is a row in the run store, set from the
+# dataset screen — so what this turns off is the clock itself, which is what a
+# second process sharing this volume would need. At most one audit starts per
+# tick, which is what staggers a restart with several datasets due at once.
+#
+# It agrees with replicas: 1 for the same reason everything else here does: two
+# replicas would fire every window twice.
+schedule:
+  enabled: true
+  tick: 30s
+
 # OpenTelemetry is off by default, for the same reason the model provider is:
 # an OTLP endpoint is a network egress, and this process holds data the
 # customer will not send to a vendor. Spans carry counts, stage names and

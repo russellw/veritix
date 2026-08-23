@@ -35,6 +35,9 @@ type testServer struct {
 	// set up or inspect state the API does not expose — a schedule's record of
 	// what its last window did, for one.
 	st *store.Store
+	// srv is the server behind the httptest one, for the tests that drive
+	// something it does on its own rather than something a request asks for.
+	srv *Server
 }
 
 func newTestServer(t *testing.T, token string) *testServer {
@@ -47,6 +50,15 @@ func newTestServer(t *testing.T, token string) *testServer {
 // into it is a real configuration rather than a contrivance.
 func newTestServerWith(t *testing.T, token string, webFS fs.FS) *testServer {
 	t.Helper()
+	return newTestServerTuned(t, token, webFS, nil)
+}
+
+// newTestServerTuned is the same, with a hand on the configuration for the
+// tests that are about a setting rather than about a request.
+func newTestServerTuned(
+	t *testing.T, token string, webFS fs.FS, tune func(*config.Config),
+) *testServer {
+	t.Helper()
 
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "veritix.db"))
@@ -58,6 +70,9 @@ func newTestServerWith(t *testing.T, token string, webFS fs.FS) *testServer {
 	cfg := config.Default()
 	cfg.Server.DataDir = dir
 	cfg.Server.AuthToken = token
+	if tune != nil {
+		tune(&cfg)
+	}
 
 	srv, err := New(context.Background(), Options{Store: st, Config: cfg, Version: "test", Web: webFS})
 	if err != nil {
@@ -68,7 +83,7 @@ func newTestServerWith(t *testing.T, token string, webFS fs.FS) *testServer {
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
 
-	return &testServer{Server: hs, token: token, t: t, st: st}
+	return &testServer{Server: hs, token: token, t: t, st: st, srv: srv}
 }
 
 // response is a request's outcome, already read and closed. Returning this

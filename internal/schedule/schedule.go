@@ -125,6 +125,28 @@ func (s Schedule) nextWallClock(after time.Time) time.Time {
 	return next
 }
 
+// Window is the nominal gap between this schedule's windows.
+//
+// It is what "one period" means for a window that was missed: a server that
+// was off over its 02:00 audit and came back at 09:00 has missed it by less
+// than a day and should run one now, and a server that has been off for a week
+// has not missed one window but seven, and running an audit of week-old state
+// the moment it starts is not what "daily at 02:00" asked for. It is nominal
+// because a daily schedule's real gap is 23 or 25 hours twice a year, which is
+// not a distinction this comparison needs.
+func (s Schedule) Window() time.Duration {
+	switch s.Kind {
+	case KindDaily:
+		return 24 * time.Hour
+	case KindWeekly:
+		return 7 * 24 * time.Hour
+	case KindInterval:
+		return s.Every
+	default:
+		return 0
+	}
+}
+
 // Loc is the zone this schedule's times are read in.
 func (s Schedule) Loc() *time.Location {
 	if s.Location == nil {

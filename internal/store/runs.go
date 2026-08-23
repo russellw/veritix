@@ -438,6 +438,30 @@ func (s *Store) PreviousRun(ctx context.Context, runID string) (*Run, error) {
 	return r, nil
 }
 
+// ActiveRun returns a run of this dataset that has not finished, or
+// ErrNotFound when none has.
+//
+// The store is the authority rather than the runner's own map of what is
+// executing here, because a run recorded as in flight by another process
+// sharing this data directory is just as good a reason not to start a second
+// audit of the same files. MarkInterrupted is what keeps that honest across a
+// restart.
+func (s *Store) ActiveRun(ctx context.Context, datasetID string) (*Run, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+runColumns+` FROM runs
+		 WHERE dataset_id = ? AND status IN (?, ?)
+		 ORDER BY created_at DESC LIMIT 1`,
+		datasetID, string(StatusPending), string(StatusRunning))
+	r, err := scanRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("no run of dataset %s is in flight: %w", datasetID, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read active run: %w", err)
+	}
+	return r, nil
+}
+
 // Runs lists run history, most recent first. An empty datasetID lists every
 // dataset's runs.
 func (s *Store) Runs(ctx context.Context, datasetID string, limit int) ([]*Run, error) {
