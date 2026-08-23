@@ -897,6 +897,96 @@ components:
                     is_error: { type: boolean }
                     duration_ms: { type: integer }
 
+    Comparison:
+      type: object
+      description: |
+        What changed since the previous successful audit of the same dataset.
+
+        Present on every run that has one to compare against, and absent from a
+        dataset's first audit. Nothing has to ask for it: it is derived from
+        report documents already stored, so unlike the agent there is no egress
+        decision here for a caller to take.
+
+        Findings are matched by their id, which names what a finding is about
+        rather than where it landed in a list. That is also the limit — a
+        column that leaves the export takes its findings with it and they are
+        reported as resolved, which is what `notes` warns about.
+      required: [baseline, summary]
+      properties:
+        baseline:
+          type: object
+          description: The run being compared against.
+          properties:
+            run_id: { type: string }
+            source:
+              type: string
+              description: Where the baseline came from when it was a file
+                rather than a stored run, which is how the CLI supplies one.
+            started_at: { type: string, format: date-time }
+            veritix_version: { type: string }
+            root: { type: string }
+        summary:
+          type: object
+          properties:
+            new: { type: integer }
+            worsened: { type: integer }
+            resolved: { type: integer }
+            improved: { type: integer }
+            unchanged: { type: integer }
+            new_errors: { type: integer }
+            new_warnings: { type: integer }
+        findings:
+          type: array
+          description: |
+            What moved. A finding that is unchanged in both count and severity
+            is counted in `summary.unchanged` and not repeated here: it is
+            already in the report's own `findings`, and listing every one of
+            them again would double the document to say nothing happened.
+          items:
+            type: object
+            required: [id, rule, status]
+            properties:
+              id: { type: string }
+              rule: { type: string }
+              status:
+                type: string
+                enum: [new, worsened, resolved, improved, unchanged]
+              severity: { type: string, enum: [info, warning, error] }
+              severity_before:
+                type: string
+                description: Set only when the severity moved, which happens
+                  when a rule's severity was edited between the two runs.
+              title: { type: string }
+              table: { type: string }
+              source: { type: string }
+              column: { type: string }
+              affected_count_before: { type: integer }
+              affected_count_after: { type: integer }
+        tables:
+          type: array
+          description: |
+            Volume and schema drift: a table that appeared or vanished, a row
+            count that moved, a column that is no longer in the export. No
+            check that looks at one run can see any of it, and an export that
+            quietly lost a third of its rows is a worse problem than anything
+            in the findings.
+          items:
+            type: object
+            required: [name, change]
+            properties:
+              name: { type: string }
+              source: { type: string }
+              change: { type: string, enum: [added, removed, changed] }
+              row_count_before: { type: integer }
+              row_count_after: { type: integer }
+              columns_added: { type: array, items: { type: string } }
+              columns_removed: { type: array, items: { type: string } }
+        notes:
+          type: array
+          description: Caveats about the comparison itself, for a reader
+            deciding how much to trust it.
+          items: { type: string }
+
     Report:
       type: object
       description: |
@@ -914,6 +1004,8 @@ components:
         findings:
           type: array
           items: { $ref: "#/components/schemas/Finding" }
+        comparison:
+          $ref: "#/components/schemas/Comparison"
         tables: { type: array, items: { type: object } }
         skipped_files: { type: array, items: { type: object } }
         redaction:

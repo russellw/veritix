@@ -183,6 +183,67 @@ export interface ProposalDetail {
   values_note?: string
 }
 
+/**
+ * What changed since the previous successful audit of the same dataset.
+ *
+ * Nothing asks for it: a run carries one when there is something to compare
+ * against, and a dataset's first audit does not. This is the question a
+ * business user actually has on every audit after the first — three errors is
+ * a number, three errors that were two last week is a direction.
+ */
+export type DeltaStatus = 'new' | 'worsened' | 'resolved' | 'improved' | 'unchanged'
+
+export interface FindingDelta {
+  id: string
+  rule: string
+  status: DeltaStatus
+  severity: Severity
+  /** Set only when the severity moved, which a count cannot show. */
+  severity_before?: Severity
+  title: string
+  table?: string
+  source?: string
+  column?: string
+  affected_count_before: number
+  affected_count_after: number
+}
+
+export interface TableDelta {
+  name: string
+  source?: string
+  change: 'added' | 'removed' | 'changed'
+  row_count_before: number
+  row_count_after: number
+  columns_added?: string[]
+  columns_removed?: string[]
+}
+
+export interface Comparison {
+  baseline: {
+    run_id?: string
+    source?: string
+    started_at: string
+    veritix_version?: string
+    root?: string
+  }
+  summary: {
+    new: number
+    worsened: number
+    resolved: number
+    improved: number
+    unchanged: number
+    new_errors: number
+    new_warnings: number
+  }
+  /**
+   * Only what moved. An unchanged finding is counted in the summary and left
+   * out here, because it is already in the report's own findings list.
+   */
+  findings?: FindingDelta[]
+  tables?: TableDelta[]
+  notes?: string[]
+}
+
 export interface Report {
   schema: string
   veritix_version?: string
@@ -197,6 +258,7 @@ export interface Report {
   }
   finding_summary: FindingCounts
   findings?: Finding[]
+  comparison?: Comparison
   rule_proposals?: ProposalInfo[]
   tables?: Table[]
   skipped_files?: { file: string; reason: string }[]

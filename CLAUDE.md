@@ -33,6 +33,7 @@ Everything is on `main`. M0 through M3 are done.
 | M5b | MCP client: the agent pulls the customer's own context | done |
 | M6a | The eval harness: defect manifests, `veritix eval`, a second fixture | done |
 | M6b | Rule proposal, OpenTelemetry, deployment, docs | done |
+| M7a | Run-over-run comparison: what changed since the last audit | done |
 
 M4 is off by default: `llm.provider: none` is the complete deterministic
 auditor, and over HTTP the agent is per-run (`"agent": true`) rather than a
@@ -51,6 +52,11 @@ make audit          # typecheck, pnpm audit, go mod verify, govulncheck
 ./bin/veritix audit testdata/dirty-retail --format html -o /tmp/report.html
 ./bin/veritix audit testdata/dirty-retail --format sarif
 ./bin/veritix audit testdata/dirty-retail --fail-on error   # exits 1
+
+./bin/veritix audit testdata/dirty-retail --format json -o last.json
+./bin/veritix audit testdata/dirty-retail --baseline last.json   # what changed
+./bin/veritix audit testdata/dirty-retail --baseline last.json \
+    --fail-on-regression error   # exits 1 only on what this run introduced
 
 make eval                                    # score the checks against the manifest
 go run ./scripts/gen-dataset -out /var/tmp/vx-big -scale 1   # 2 GB and a manifest
@@ -177,7 +183,8 @@ internal/
   checks/              profile → findings (column, table, cross-file relationships)
   rules/               customer-authored YAML expectations
   finding/             the finding model, severity, evidence, Set.Verify
-  report/              text, JSON, SARIF, self-contained HTML
+  report/              text, JSON, SARIF, self-contained HTML; compare.go is
+                       the run-over-run delta
   audit/               the orchestrator every entry point drives
   eval/                score an audit against a dataset whose defects are known
   runs/                one recorded run: audit.Run plus the store bookkeeping
@@ -205,6 +212,7 @@ deploy/kubernetes/     a kustomize base; one replica, and egress denied
 docs/frontend-stack.md the front end's dependency and supply-chain policy
 docs/eval.md           the defect manifest format and what a score means
 docs/scale.md          what happens on two gigabytes, and what it changed
+docs/comparison.md     what changed since the last audit, and the CI gate on it
 docs/mcp.md            wiring an assistant to `veritix mcp`, and what it may ask
 docs/rules-proposal.md propose, review, accept: coverage turned into recall
 docs/deployment.md     binary, container, cluster — and what each one promises
@@ -219,6 +227,62 @@ MCP server all call it. Three entry points assembling the pipeline slightly
 differently is how a tool ends up reporting different results depending on how
 it was invoked — and `internal/runs` is the same argument one layer up, for the
 bookkeeping that wraps a run rather than the run itself.
+
+## How the comparison is put together
+
+`internal/report/compare.go` answers the question every audit after the first
+is really asking. `docs/comparison.md` is the whole of it; these are the
+decisions.
+
+- **It compares two `report.Document`s, not two sets of rows in the store.**
+  The document is what every entry point produces and what the store keeps
+  whole, so a diff computed from it cannot disagree with the report it sits in
+   — the argument that has the API serve the stored document verbatim. It is
+  also why the CLI can do this with no store: `--baseline` takes the JSON
+  report from a previous run, which is what a CI job already keeps as an
+  artifact. **No migration was needed**, and one that added counts to the
+  `findings` table would have created a second answer to the same question.
+- **The join key is `finding.Finding.ID`.** It has named what a finding is
+  about rather than where it landed in a list since M3a, and this is the
+  feature that was for. It is also the limit: a renamed column is a resolved
+  finding and a new one, and guessing otherwise would put an inference nobody
+  can check at the bottom of the report.
+- **Volume and schema drift is in the comparison, not a section of its own.**
+  A table that vanished, a row count that moved, a column no longer in the
+  export: no check in Veritix can see any of it, because every check reads one
+  audit and the rows that remain are as clean as they ever were. It is also
+  the honest limit of the finding half — a removed column takes its findings
+  with it and they read as resolved — so the two are reported together and a
+  note says to read the table changes first.
+- **`--fail-on-regression` gates on the direction, `--fail-on` on the state.**
+  A team that has just pointed Veritix at fifteen years of data cannot fix all
+  of it today, and a gate that fails on all of it gets switched off in a week;
+  they can still refuse to make it worse. It counts **new and worsened**,
+  because three orphan references becoming three hundred is not the same
+  problem at a different size. `Delta.Regressions` is the one definition of a
+  regression. Without `--baseline` it is refused rather than passing silently,
+  which is `rule.never_applied`'s argument about a check that never ran.
+- **Over HTTP and MCP nobody asks for it.** `runs.Execute` finds the previous
+  successful run of the same dataset and passes it as the baseline, so the
+  browser and an assistant get the same comparison without a switch. Unlike
+  the agent there is no egress decision here — it is derived from documents
+  already on the customer's machine — and a per-run switch would only let two
+  entry points disagree. Nothing about it can fail a run: an unreadable
+  baseline is a comparison nobody sees.
+- **The baseline is the last run that produced a report.** `store.PreviousRun`
+  skips failed and canceled runs, because a comparison that reset itself every
+  time an audit crashed would be worse than none — the week it silently
+  stopped comparing is the week nobody notices.
+- **An unchanged finding is counted and not listed.** It is already in the
+  document's own findings list, and repeating every one would double the
+  report to say nothing happened. The exception is a finding whose *severity*
+  moved, which a count cannot show and somebody edited a rule to cause.
+- **Each format has a `Render` beside its `Write` now.** The CLI builds the
+  document once and renders from it, because the gate and the report have to
+  be reading the same document. That turned up a real discrepancy: the text
+  report's headline duration is truncated to whole milliseconds rather than
+  rounded, because whole milliseconds is the precision the document has, and
+  `TestATextReportFromADocumentMatchesTheRun` pins the rest of the line.
 
 ## How the server is put together
 
@@ -1332,6 +1396,13 @@ loop, the guard, the store and the handler are all on the tested path — that i
 `stubModel` in `agent_test.go`, and the browser tests use the same idea through
 `e2e/stub-model.mjs`. No test calls a real model: they are about what Veritix
 does with what a model said.
+
+`e2e/tests/changes.spec.ts` is the one spec that does not upload its fixture.
+An upload lands in a new directory and so registers a new dataset, and two runs
+of two datasets have no history between them; the comparison is about one
+folder audited twice with the data moving underneath. It owns a directory,
+registers it by path, and edits it between runs — which is also what an
+operator does with data already on the server.
 
 `e2e/` covers what happens once a browser executes it: Playwright against the Go
 binary serving the embedded build. `make e2e` builds, serves on a throwaway data

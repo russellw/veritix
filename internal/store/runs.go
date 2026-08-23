@@ -409,6 +409,35 @@ func (s *Store) Run(ctx context.Context, id string) (*Run, error) {
 	return r, nil
 }
 
+// PreviousRun returns the most recent successful audit of the same dataset
+// started before this one, or ErrNotFound when this is the first.
+//
+// It is what a run is compared against. "The previous audit" has to mean the
+// previous *successful* one: a failed run has no report to compare with, and
+// skipping over it silently is right — a comparison that reset itself every
+// time an audit crashed would be worse than no comparison at all.
+//
+// The bound is on created_at rather than on the id alone, because a run that
+// started earlier can finish later and "the previous audit" is about when the
+// data was looked at.
+func (s *Store) PreviousRun(ctx context.Context, runID string) (*Run, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+runColumns+` FROM runs
+		 WHERE dataset_id = (SELECT dataset_id FROM runs WHERE id = ?)
+		   AND status = ?
+		   AND created_at < (SELECT created_at FROM runs WHERE id = ?)
+		 ORDER BY created_at DESC LIMIT 1`,
+		runID, string(StatusSucceeded), runID)
+	r, err := scanRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("no earlier run of this dataset: %w", ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read previous run: %w", err)
+	}
+	return r, nil
+}
+
 // Runs lists run history, most recent first. An empty datasetID lists every
 // dataset's runs.
 func (s *Store) Runs(ctx context.Context, datasetID string, limit int) ([]*Run, error) {

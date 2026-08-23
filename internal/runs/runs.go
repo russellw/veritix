@@ -16,6 +16,7 @@ package runs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -108,7 +109,9 @@ func Execute(ctx context.Context, o Options) error {
 	// The document is built, and then the engine is released, before anything
 	// is stored: the DuckDB file has to be closed and flushed before the rows
 	// endpoint can reopen it read-only.
-	doc := report.Build(res, o.Version, o.Report)
+	reportOpts := o.Report
+	reportOpts.Baseline = baseline(recordCtx, o.Store, o.RunID, log)
+	doc := report.Build(res, o.Version, reportOpts)
 	trace := res.Trace
 	if err := res.Close(); err != nil {
 		log.Warn("could not close the run's engine", "run", o.RunID, "error", err)
@@ -165,6 +168,44 @@ func Execute(ctx context.Context, o Options) error {
 	// caller's terminal event carries the counts. Two "finished" lines in a row
 	// is how a progress display ends up looking broken.
 	return nil
+}
+
+// baseline finds the previous successful audit of the same dataset, so that
+// every recorded run says what changed since the last one.
+//
+// It is not a caller's option. A comparison is derived from documents already
+// in the store, so unlike the agent there is no egress decision here for
+// anybody to take; making it a per-run switch would mean the browser and an
+// assistant over MCP could disagree about whether a run has a comparison, for
+// no gain. A dataset's first audit simply has nothing to compare against.
+//
+// Nothing here fails the run. A baseline that cannot be read is a comparison
+// nobody sees; the audit itself is unaffected, and reporting no findings
+// because last week's document would not decode would be absurd.
+func baseline(ctx context.Context, st *store.Store, runID string, log *slog.Logger) *report.Baseline {
+	prev, err := st.PreviousRun(ctx, runID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Warn("could not look up the previous run to compare against",
+				"run", runID, "error", err)
+		}
+		return nil
+	}
+
+	body, err := st.Document(ctx, prev.ID)
+	if err != nil {
+		log.Warn("the previous run has no report to compare against",
+			"run", runID, "previous", prev.ID, "error", err)
+		return nil
+	}
+
+	var doc report.Document
+	if err := json.Unmarshal(body, &doc); err != nil {
+		log.Warn("the previous run's report could not be read",
+			"run", runID, "previous", prev.ID, "error", err)
+		return nil
+	}
+	return &report.Baseline{Document: &doc, RunID: prev.ID}
 }
 
 // storeFindings reduces findings to what the store keeps: identity, plus the

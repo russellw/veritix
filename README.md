@@ -90,6 +90,10 @@ veritix audit ./data --format sarif -o veritix.sarif   # for code scanning
 veritix audit ./data --rules my-expectations.yaml
 veritix audit ./data --fail-on error                   # non-zero exit for CI
 
+# What changed since the last audit (see docs/comparison.md)
+veritix audit ./data --baseline last-report.json
+veritix audit ./data --baseline last-report.json --fail-on-regression error
+
 # Serve it to an assistant over MCP (see docs/mcp.md)
 veritix mcp --data-dir ~/.veritix
 
@@ -119,6 +123,7 @@ enabled.
 | | |
 |---|---|
 | [docs/deployment.md](docs/deployment.md) | running it: binary, container, cluster, CI, telemetry |
+| [docs/comparison.md](docs/comparison.md) | what changed since the last audit, and failing a build on the direction rather than the state |
 | [docs/rules-proposal.md](docs/rules-proposal.md) | the model proposes a rule, a person accepts it, every later audit enforces it |
 | [docs/eval.md](docs/eval.md) | scoring an audit against known defects, and why one run is not a measurement |
 | [docs/scale.md](docs/scale.md) | what a two-gigabyte dataset costs, and the four things it found |

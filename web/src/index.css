@@ -650,6 +650,88 @@ tbody tr:hover {
 
 /* ── tabs ─────────────────────────────────────────────────────────────── */
 
+/*
+The comparison. Two shapes: a strip under the counts that somebody reads
+without deciding to, and a list in its own tab. Worse news is the error color
+and better news the info color, so a glance at the strip carries the direction
+before any of the words are read.
+*/
+.change-strip {
+  margin: 1rem 0 0;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 0.9rem;
+}
+
+.change-strip .since {
+  color: var(--muted);
+}
+
+.change-strip > span + span::before {
+  content: " · ";
+  color: var(--muted);
+}
+
+.change-strip .worse {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.change-strip .better {
+  color: var(--info);
+  font-weight: 600;
+}
+
+.change-strip .quiet {
+  color: var(--muted);
+}
+
+.change-strip .btn.link {
+  margin-left: 0.5rem;
+}
+
+.changes h3 {
+  margin-top: 2rem;
+}
+
+.change-list {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+
+.change-list .change {
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.change-list .change:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.change-list .title {
+  font-weight: 600;
+}
+
+.change-list a.title {
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.change-list a.title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.change-list .where {
+  margin-top: 0.2rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .tabs {
   display: flex;
   gap: 0.25rem;

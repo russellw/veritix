@@ -49,7 +49,7 @@ its findings, its report, and its offending rows. That is the intended setup.
 | `list_runs` | Past audits, most recent first. |
 | `get_run` | One audit's status and counts. |
 | `list_findings` | An audit's findings, filterable by severity and pageable. |
-| `get_report` | The full report: findings plus the profile of every table and column. |
+| `get_report` | The full report: findings plus the profile of every table and column, and what changed since the last audit of the same dataset. |
 
 `audit_dataset` is synchronous. An assistant asked a question and is waiting
 for the answer, and a tool that returned an id to poll would spend the caller's
@@ -58,7 +58,10 @@ stops the audit.
 
 Everything is read back from the stored `report.Document` — the same one the
 JSON report writes and the web interface displays — so what an assistant is
-told and what a person sees cannot drift apart.
+told and what a person sees cannot drift apart. That includes the `comparison`
+section, so "has this got better since last week" is a question an assistant
+can answer without a second tool ([comparison.md](comparison.md)). A dataset's
+first audit does not carry one.
 
 ## What the caller may decide, and what it may not
 

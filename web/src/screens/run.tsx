@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import * as api from '../api'
 import type { Report, Run } from '../api'
+import { ChangeStrip, Changes } from '../components/changes'
 import { Findings } from '../components/findings'
 import { Profile } from '../components/profile'
 import { Proposals } from '../components/proposals'
@@ -9,7 +10,7 @@ import { Trace } from '../components/trace'
 import { count, duration, when } from '../format'
 import { onLinkClick } from '../router'
 
-type Tab = 'findings' | 'proposals' | 'tables' | 'trace'
+type Tab = 'findings' | 'changes' | 'proposals' | 'tables' | 'trace'
 
 export function RunScreen({ runId, findingId }: { runId: string; findingId?: string }) {
   const [run, setRun] = useState<Run | null>(null)
@@ -92,6 +93,13 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
 
   const active = run.status === 'pending' || run.status === 'running'
   const proposals = report?.rule_proposals ?? []
+  const comparison = report?.comparison
+  const moved = comparison
+    ? comparison.summary.new +
+      comparison.summary.worsened +
+      comparison.summary.resolved +
+      comparison.summary.improved
+    : 0
 
   return (
     <>
@@ -162,6 +170,15 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
           </div>
 
           {/*
+            What changed since the last audit goes directly under the counts,
+            because it is the thing that turns those counts into a direction.
+            A dataset's first audit has no comparison and this is absent.
+          */}
+          {comparison && (
+            <ChangeStrip comparison={comparison} onOpen={() => setTab('changes')} />
+          )}
+
+          {/*
             Say what was withheld. The difference between "this column has no
             notable values" and "values were not included in this report" is the
             whole point of the redaction note.
@@ -182,6 +199,14 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
             >
               Findings ({report.finding_summary.total})
             </button>
+            {comparison && (
+              <button
+                className={tab === 'changes' ? 'current' : ''}
+                onClick={() => setTab('changes')}
+              >
+                Changes ({moved})
+              </button>
+            )}
             {proposals.length > 0 && (
               <button
                 className={tab === 'proposals' ? 'current' : ''}
@@ -208,6 +233,13 @@ export function RunScreen({ runId, findingId }: { runId: string; findingId?: str
 
           {tab === 'findings' && (
             <Findings runId={runId} findings={report.findings ?? []} openId={findingId} />
+          )}
+          {tab === 'changes' && comparison && (
+            <Changes
+              runId={runId}
+              comparison={comparison}
+              onOpenFinding={() => setTab('findings')}
+            />
           )}
           {tab === 'proposals' && (
             <Proposals
