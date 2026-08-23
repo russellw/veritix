@@ -786,6 +786,24 @@ known. `docs/eval.md` is the whole of it; these are the decisions.
   zero. The gap is in what makes a model reach for a tool it was not pushed
   toward — the same thing the check tools' `note` fixed — and not in
   `internal/mcpclient`. `docs/local-model.md` has the run.
+
+  **Measured again, with `claude-opus-5`: 100% aided, and the control is where
+  the information is.** Same two command lines, three runs each. Aided: every
+  one of the six targets 3/3, all three documents read in the *first* step,
+  every run stopping voluntarily at 20-26 steps of 40. The aided runs report 4
+  `site_ref` orphans and name the reason — the `UPN-` prefix, a sentence that
+  exists only in the dictionary — where `gpt-oss-120b` reported 14. So the
+  client works and the earlier zero was a measurement of that model. The
+  control scored 67% overall: **50% on the four aided targets and 100% on the
+  unaided pair**, because two of the four are reconstructible from the export
+  by a strong model — the join from the shape of the values on both sides, the
+  cumulative register from a series that climbs everywhere else. The two that
+  held are the ones with nothing to guess from: a permitted vocabulary, where
+  the control produced a wrong count and a claim about spelling conventions
+  instead, and a lifecycle date that is not in the export at all. `needs_context:`
+  therefore means *depends on the document unless the model can rebuild the
+  rule*, which is a weaker claim than the fixture was built on and is now
+  written down in `docs/eval.md`.
 - **No two targets in one table may share a count.** `MatchesTarget` lets a
   table-scoped finding cover any column in that table, deliberately. The price
   is that three targets in one table all measuring 2 would credit a table-scoped
@@ -1162,6 +1180,11 @@ configuration already, which it will not shadow.
   look, and is not distinguishable from a broken client by the recall figure
   alone. `scripts/local-model.sh` prints that section after every run and warns
   on exactly that shape, because it is the one failure the score cannot name.
+  It is a property of the model and not of the offer: `claude-opus-5`, given
+  the identical brief and tool surface, read all three documents in its first
+  step on all three runs and scored the aided half 100%. So a nudge here would
+  be a local-model affordance, and the control pair is what would say whether
+  it cost anything.
 - **A clean `check_referential_integrity` is evidence about that pair, not about
   that column**, and a model reads it as the latter. gpt-oss-120b has found each
   of `dirty-retail`'s two unresolved references on a different run and never

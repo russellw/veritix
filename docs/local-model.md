@@ -1614,6 +1614,16 @@ Until something like that is tried, the honest statement of the aided half is
 that **the client works and this model does not use it**. 0% is a measurement
 of the model, not of M5b.
 
+**Confirmed the next day**, by taking the same two command lines to
+`claude-opus-5`: all six targets 3/3 on the aided half, all three documents
+read in the *first* step of every run, and 4 `site_ref` orphans rather than 14.
+Nothing about the brief, the tool surface, the catalog or the client differed —
+only the model. That retires the lever above from a fix to an option: what
+would be nudged is a model like this one, not M5b, and the unaided control pair
+is still what would say whether the nudge cost anything. `docs/eval.md` has
+that scorecard, and what its control half says about which targets
+`needs_context:` can honestly claim.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,

@@ -395,15 +395,72 @@ go build -o /tmp/ctx ./scripts/context-server
 run a control rather than a different experiment. `docs/mcp.md` has the client
 half in full: what leaves the process, and what does not.
 
-**Measured once, and both halves scored zero.** Three aided runs and three
-`--no-context` controls of `gpt-oss-120b` found none of the six agent targets;
-the deterministic half was 8 of 8 with no false positives in all six. The aided
-half is worth reading with the trace beside it, which recorded three
-`resources/list` requests and no `resources/read` at all: the documents were
-fetched, cataloged and listed in the brief, and the model never asked for one.
-Every run found the `site_ref` → `premises.upn` pair by itself and reported 14
-orphans against an answer of 4 — the number this fixture's `clean:` list was
-written to guard. `docs/local-model.md` has the runs.
+### Measured twice, and the two runs disagree about the model
+
+**`gpt-oss-120b`: both halves zero.** Three aided runs and three `--no-context`
+controls found none of the six agent targets; the deterministic half was 8 of 8
+with no false positives in all six. The aided half is worth reading with the
+trace beside it, which recorded three `resources/list` requests and no
+`resources/read` at all: the documents were fetched, cataloged and listed in
+the brief, and the model never asked for one. Every run found the `site_ref`
+→ `premises.upn` pair by itself and reported 14 orphans against an answer of 4
+— the number this fixture's `clean:` list was written to guard.
+`docs/local-model.md` has the runs.
+
+**`claude-opus-5`, the same two command lines, 23 Aug 2026: full marks aided.**
+
+| | aided | control |
+|---|---|---|
+| mean recall / coverage | **100% / 100%** | 67% / 67% |
+| with context, 4 targets | **100%** | 50% |
+| unaided, 2 targets | 100% | 100% |
+| checks | 8 of 8, no false positives | 8 of 8, no false positives |
+| steps, of 40 | 20, 23, 26 | 23, 28, 27 |
+| `resources/list` → `read` | 1 → **3**, every run | none configured |
+
+Every target 3/3 aided. All three documents were read in the first step,
+`ticket-4482` included, and every run then stopped voluntarily well inside its
+budget — so nothing here is bounded by the step count. The sharpest line in it
+is the one the other model got wrong: the aided runs report **4** `site_ref`
+orphans, and run 3's title says where the number comes from — *"once the
+`UPN-` prefix is stripped"*, which is a sentence that exists only in the data
+dictionary.
+
+That settles what the first measurement could not. The client works, and 0% was
+a measurement of `gpt-oss-120b` rather than of M5b.
+
+### What the documents bought, and what `needs_context` can honestly claim
+
+The control is what makes that readable, and it says the four aided targets are
+not alike. Two scored 3/3 **without any document**:
+
+- `meters.site_ref_orphans`, reconstructed from shape alone — the control's own
+  finding says *"all 14 values share one 3-letter prefix and a 4-digit suffix,
+  and 8 of the 12 distinct suffixes are exactly a upn in premises.csv"*, and it
+  reported 4.
+- `readings.register_went_backwards`, reconstructed from the column's own
+  monotonicity: a series that climbs everywhere except four places reads as an
+  odometer without being told it is one.
+
+The other two scored 0/3, and the manner of the miss is the point:
+
+- `meters.undocumented_status`. The control saw something every run and got it
+  wrong every run — *"5 of 14 meters carry a status value used exactly once, in
+  5 different spellings/conventions"*. Five against a true three, and a claim
+  about naming conventions rather than about three states the dictionary does
+  not permit. No credit, correctly: that is what the guess looks like without
+  the vocabulary.
+- `meters.retired_tariff`. Nothing, in any run. The lifecycle dates are in the
+  warehouse catalog and nowhere else, so there is no guess to make.
+
+So `needs_context:` marks a target as depending on a document, and what it can
+honestly assert after this run is *depends on the document, unless the model
+can reconstruct the rule from the data*. Two of these four are reconstructible
+by a strong model. That does not damage the split — the aided half is 100% and
+the control's own unaided pair is also 100%, so nothing regressed — but the
+aided half of this fixture is carrying less weight than four targets suggest,
+and the next fixture with context should pick targets the export cannot
+rebuild.
 
 A run that scores worse unaided with the documents loaded than without them has
 found a regression, not a feature, and without the second number that would
@@ -426,6 +483,16 @@ scoring:
   defect and stopped".
 - **Targets of different kinds**, so a model that only knows how to check
   referential integrity scores differently from one that reads a profile.
+- **A `needs_context` target the export cannot rebuild.** A defect is only
+  measuring the context if the document is the only way to it. Two of
+  `dirty-meters`' four were reconstructed unaided by `claude-opus-5` — a join
+  from the shape of the values on both sides, a cumulative register from the
+  series climbing everywhere else — so on that model they score the same with
+  the documents and without. The two that held are the shape to copy: a
+  permitted vocabulary, where every value in the column looks equally ordinary,
+  and a lifecycle date that is not in the export in any form. Ask of a
+  candidate whether a careful reader with only the CSVs could talk themselves
+  into the rule; if they could, it belongs in the unaided half.
 - **A `clean` list that is honestly hard** — places that look wrong and are
   not, and especially the neighbor of something that is wrong. A check that
   generalized from `dest_site` to `origin_site` would catch every planted
