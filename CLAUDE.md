@@ -34,6 +34,7 @@ Everything is on `main`. M0 through M3 are done.
 | M6a | The eval harness: defect manifests, `veritix eval`, a second fixture | done |
 | M6b | Rule proposal, OpenTelemetry, deployment, docs | done |
 | M7a | Run-over-run comparison: what changed since the last audit | done |
+| M7b | Scheduled audits, the notification, and run-data retention | done |
 
 M4 is off by default: `llm.provider: none` is the complete deterministic
 auditor, and over HTTP the agent is per-run (`"agent": true`) rather than a
@@ -108,6 +109,12 @@ curl -s  localhost:8080/api/v1/runs/$ID/proposals | jq .        # rules suggeste
 curl -s  localhost:8080/api/v1/runs/$ID/proposals/<pid>          # the gated one
 curl -s -XPOST localhost:8080/api/v1/datasets/$DS/rules -H 'Content-Type: application/json' \
      -d "{\"run_id\":\"$ID\",\"proposal_id\":\"<pid>\",\"values\":[\"Active\",\"Closed\"]}"
+
+# Audit it every night, and say so when it gets worse (docs/scheduling.md)
+curl -s -XPUT localhost:8080/api/v1/datasets/$DS/schedule -H 'Content-Type: application/json' \
+     -d '{"kind":"daily","at":"02:00","timezone":"Europe/London","notify":true}'
+curl -s localhost:8080/api/v1/datasets/$DS/schedule | jq .next_due_at
+curl -s -XDELETE localhost:8080/api/v1/datasets/$DS/schedule
 ```
 
 ## Four ideas the design rests on
@@ -188,6 +195,9 @@ internal/
   audit/               the orchestrator every entry point drives
   eval/                score an audit against a dataset whose defects are known
   runs/                one recorded run: audit.Run plus the store bookkeeping
+  schedule/            when an audit is next due: windows, zones, and the two
+                       nights a year the clocks move. Pure, no I/O.
+  notify/              the webhook a scheduled audit's regressions go to
   store/               SQLite: datasets, runs, findings — the audit trail
   api/                 REST + SSE over audit.Run; openapi.yaml is the contract
   mcp/                 the Model Context Protocol server: `veritix mcp`
@@ -213,6 +223,7 @@ docs/frontend-stack.md the front end's dependency and supply-chain policy
 docs/eval.md           the defect manifest format and what a score means
 docs/scale.md          what happens on two gigabytes, and what it changed
 docs/comparison.md     what changed since the last audit, and the CI gate on it
+docs/scheduling.md     auditing on a clock, being told about it, and the disk
 docs/mcp.md            wiring an assistant to `veritix mcp`, and what it may ask
 docs/rules-proposal.md propose, review, accept: coverage turned into recall
 docs/deployment.md     binary, container, cluster — and what each one promises
@@ -283,6 +294,118 @@ decisions.
   report's headline duration is truncated to whole milliseconds rather than
   rounded, because whole milliseconds is the precision the document has, and
   `TestATextReportFromADocumentMatchesTheRun` pins the rest of the line.
+
+## How scheduling is put together
+
+`docs/scheduling.md` is the operator's half. These are the decisions.
+
+- **A schedule is what makes the comparison worth having.** M7a answers "what
+  changed since the last audit" and nothing ran the last audit: a business user
+  on Windows is not going to press Run every morning, so the comparison only
+  fired when somebody already suspected a problem — the one case where they did
+  not need telling.
+- **A schedule and not a watcher, and that ordering is the point.** A watcher
+  fires while the export is still being written; deciding a 900 MB CSV has
+  stopped being copied means guessing at quiescence, and a wrong guess is a
+  confident audit of a truncated file — the failure `column.not_profiled`
+  exists to refuse. "Daily at 02:00" is the customer asserting the export lands
+  by 01:00, which is knowledge Veritix cannot derive and they already have.
+- **`internal/schedule` is pure.** A description of windows and one function
+  from an instant to the next window after it, with no store, no server and no
+  clock of its own — which is what makes a year of daylight saving testable in
+  three milliseconds. **No cron syntax**: a parser is a dependency to justify
+  and the people the interface exists for cannot write one. Cron would be a
+  fourth `Kind` on the same struct.
+- **The zone belongs to the schedule, not the server**, because "overnight" is
+  a fact about the business whose export this is. Three things fall out, each
+  pinned: windows step by whole days in that zone rather than by 24 hours, so
+  "03:00 daily" is 03:00 on the 23-hour night too (an interval schedule does
+  the opposite, deliberately); a wall clock time that does not exist resolves
+  to the next instant that does, and one that happens twice fires once, which
+  `Next` being *strictly* after its argument is what guarantees; and
+  `schedule.LoadLocation("")` is the server's own zone, where the standard
+  library's is UTC — that difference would move every unconfigured schedule by
+  an hour for half the year, silently, in exactly the countries that observe
+  summer time. The blank `time/tzdata` import lives in that package because a
+  distroless image carries no zone database.
+- **A scheduled run is an ordinary run.** The clock calls the same
+  `Server.startRun` that `POST /runs` does — extracted from the handler for
+  exactly this — so it streams on the same events, cancels from the same
+  screen, has the same accepted rules in force and the same baseline. A second
+  caller assembling `audit.Options` for itself is `internal/runs`' argument one
+  layer up.
+- **At most one audit starts per tick**, and that is the whole of the stagger:
+  fifteen datasets due after a weekend start one every thirty seconds, and
+  nothing starves because a schedule that fires moves its window on while the
+  one left behind stays due. A missed window fires **once**, not once per tick
+  that finds it, because whatever happens to a window the next one is the first
+  in the future. A window missed by more than its own period (`Schedule.Window`)
+  is not caught up at all — a week off is not one missed window but seven, and
+  auditing week-old state the moment the server starts is not what was asked
+  for.
+- **A window that could not start a run still advances, and records why.** A
+  schedule failing quietly for a month is worse than no schedule, and one that
+  did not advance would retry the same failure every tick forever. Whether an
+  audit is already in flight is asked of the *store*, not of the runner's map:
+  a run another process recorded as in flight is just as good a reason not to
+  start a second, which is what `MarkInterrupted` keeps honest across a restart.
+- **A scheduled audit runs no model and includes no cell values**, even where a
+  provider is configured, and `TestAScheduledAuditRunsNoModel` pins it. Sending
+  a dataset's metadata to a model unattended, nightly, forever is exactly the
+  decision the per-run switch exists to make deliberately. If nightly agentic
+  audits are ever wanted, that is a field on the schedule somebody set, not
+  something inherited from a config file.
+- **Only a dataset registered by path.** An upload is a copy of the data as it
+  was, so a nightly audit of it produces the same report forever and a
+  comparison that never says anything — which looks exactly like a schedule
+  that works.
+- **The notification is egress, and gets `llm.provider`'s treatment.** Off by
+  default; the URL is the operator's switch and the checkbox on each schedule
+  is which datasets use it. Webhook and not email deliberately: email is
+  credentials, TLS modes, recipient lists and bounces, to reimplement a bridge
+  every customer has. The trigger is `Delta.Regressions`, the same definition
+  `--fail-on-regression` uses — and `Delta.Regressed` is new so that a message
+  and a build gate cannot keep separate copies of the predicate. **A failed run
+  counts as a regression whatever `notify.on` says**: a run with no report
+  cannot be shown not to have regressed, which is `rule.never_applied`'s
+  argument. There is no "every night regardless" default, because a nightly
+  message saying nothing changed is how a channel gets muted along with the one
+  that mattered.
+- **A message carries titles and locations where a span carries neither.** That
+  is a decision about audiences, not a relaxation: a span is an access log
+  leaving for a collector, and this goes to the people whose data it is, where
+  "3 new errors" with no location is one more thing nobody reads.
+  `notify.detail: summary` drops them. **The promise that no cell value reaches
+  a sink does not rest on care in `internal/notify`** — it rests on two
+  decisions above: only a scheduled run notifies, and a scheduled run passes
+  neither `--include-values` nor a model, so the document behind a message is a
+  deterministic report with values off.
+  `TestNoNotificationCarriesCustomerData` reads what actually left.
+- **Delivery cannot fail a run.** Three attempts a second and five seconds
+  apart, on the run's own context and after the event stream has closed, so a
+  browser is not held open for somebody else's webhook and a shutdown cancels a
+  retry rather than waiting it out. A failure is a log line and not a mark
+  against the schedule's window, which is about windows.
+- **Retention is not optional once audits are scheduled.** Every run leaves a
+  DuckDB copy at about a third of the dataset's size; nightly on two gigabytes
+  is 700 MB a night. `server.retain_databases` (14 days, `0` keeps everything)
+  discards the ingested copy and keeps the run, the report, the findings and
+  the trace — the audit trail, which is small. **The comparison reads the
+  stored document and never the file**, which is what makes the split possible:
+  a run whose data was discarded is still a baseline. The most recent run of
+  each dataset keeps its data whatever the cutoff says, and asking for a
+  discarded run's rows is **410 Gone** with a sentence saying so rather than a
+  500 that reads as a broken server.
+- **It is `server.retain_databases`, not `schedule.`**, and the ticker runs if
+  either job has work. Retention is about what lives under `data_dir`, and an
+  operator who turned the clock off because another process owns it has not
+  asked for the disk to fill up.
+- **The interface offers what will work.** `/capabilities` says whether this
+  process runs the clock and whether a sink is configured, so a schedule panel
+  on a server with the clock off, or a "tell me" checkbox with nowhere to tell,
+  is never shown — the argument the agent's checkbox already makes. The zone
+  field defaults to the *browser's* zone, since the person setting 02:00 means
+  02:00 where the business is and cannot see the server's.
 
 ## How the server is put together
 
@@ -1408,6 +1531,14 @@ loop, the guard, the store and the handler are all on the tested path — that i
 `stubModel` in `agent_test.go`, and the browser tests use the same idea through
 `e2e/stub-model.mjs`. No test calls a real model: they are about what Veritix
 does with what a model said.
+
+`e2e/tests/schedule.spec.ts` and `e2e/tests/changes.spec.ts` are the two specs
+that do not upload their fixtures, for the same reason one layer apart: an
+upload lands in a new directory and cannot be scheduled at all. The schedule
+spec ends by setting a one-minute window through the API — a minute is the
+product's own floor and the interface offers hours — and waiting for the
+shipped binary to audit the dataset with nobody pressing anything.
+`run-local.sh` sets `VERITIX_SCHEDULE_TICK=5s` so that wait is about a minute.
 
 `e2e/tests/changes.spec.ts` is the one spec that does not upload its fixture.
 An upload lands in a new directory and so registers a new dataset, and two runs

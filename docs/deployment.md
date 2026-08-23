@@ -67,6 +67,13 @@ offending rows would land on the pod that does not have them. So: `replicas: 1`,
 an instance, not by adding replicas to one — which is also the licensing shape
 and the data-locality shape, so this is a constraint that agrees with itself.
 
+A schedule adds a second reason, since M7b: two replicas would both find the
+same window due and both start an audit of the same dataset. If a process must
+not run the clock, `schedule.enabled: false` stops it firing anything without
+touching a single stored schedule — and expired run databases are still
+discarded, because an operator who turned the clock off has not asked for the
+disk to fill up. `docs/scheduling.md` is the whole of it.
+
 If that is genuinely too small, the next instance is another namespace with
 another volume, not another replica.
 
@@ -125,8 +132,10 @@ process can reach at all. They answer different questions and are worth having
 together — one is a design a reviewer has to read, the other is a control an
 auditor can check.
 
-Two commented blocks are where a real deployment opens it back up: a model
-endpoint, and an OpenTelemetry collector. A model endpoint *inside the cluster*
+Three commented blocks are where a real deployment opens it back up: a model
+endpoint, an OpenTelemetry collector, and — since M7b — a notification webhook,
+which is the only one of the three that a deterministic install with no model
+and no telemetry might still want. A model endpoint *inside the cluster*
 is the case this product is built for. Reaching `api.anthropic.com` means
 opening egress to the internet, and that is a different decision — one worth
 making explicitly, with the trace as the record of what actually left.
@@ -143,6 +152,11 @@ as a control.
 | `runs/<id>/dataset.duckdb` | the loaded data for one run, so rows can be shown later |
 | `datasets/<id>/` | uploaded files |
 | `datasets/<id>/rules.yaml` | rules accepted from the agent's proposals, applied to every later audit of that dataset |
+
+`runs/<id>/dataset.duckdb` is the one that grows without bound once audits are
+scheduled — roughly a third of the dataset's size, every run.
+`server.retain_databases` discards the old ones and keeps everything else; see
+`docs/scheduling.md`.
 
 Back up `veritix.db` and `datasets/`. The DuckDB files are re-creatable from
 the sources; the SQLite store is the thing somebody wants six months later, and
@@ -171,6 +185,13 @@ The settings a deployment usually touches:
 | `VERITIX_ENGINE_MEMORY_LIMIT` | keep it under the container's limit |
 | `VERITIX_LLM_PROVIDER` | `none` by default. Setting it offers the agent per run. |
 | `VERITIX_OTEL_ENABLED` | off by default |
+| `VERITIX_SCHEDULE_ENABLED` | on by default. It runs the clock; a schedule still has to exist. |
+| `VERITIX_RETAIN_DATABASES` | how long a run's ingested data is kept. `336h` (14 days) by default. |
+| `VERITIX_NOTIFY_WEBHOOK_URL` | empty by default. Where a scheduled audit's regressions are sent. |
+
+A duration here is a Go duration, which has **no day unit**: `336h`, not `14d`.
+In the config file `14d` is a startup error; in the environment it is worse,
+because a value that will not parse is ignored and the default silently stands.
 
 ### The source offer
 

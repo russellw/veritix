@@ -100,6 +100,9 @@ veritix mcp --data-dir ~/.veritix
 # Run the server and web interface (loopback by default)
 veritix serve
 veritix serve --addr 0.0.0.0:8080 --auth-token "$TOKEN"
+
+# From there, a dataset can audit itself every night and say when it got
+# worse — set it on the dataset screen, or see docs/scheduling.md
 ```
 
 Configuration comes from `./veritix.yaml`, then `VERITIX_*` environment
@@ -115,8 +118,8 @@ kubectl apply -k deploy/kubernetes    # one replica, egress denied by default
 `docs/deployment.md` covers all three shapes — a binary on a desktop, a
 container, a cluster — and why the Kubernetes base runs one replica and denies
 egress. Nothing here reaches a network Veritix was not told about: the model
-provider is `none` until configured, and OpenTelemetry export is off until
-enabled.
+provider is `none` until configured, OpenTelemetry export is off until enabled,
+and a scheduled audit tells nobody until a webhook is set.
 
 ## Documentation
 
@@ -124,6 +127,7 @@ enabled.
 |---|---|
 | [docs/deployment.md](docs/deployment.md) | running it: binary, container, cluster, CI, telemetry |
 | [docs/comparison.md](docs/comparison.md) | what changed since the last audit, and failing a build on the direction rather than the state |
+| [docs/scheduling.md](docs/scheduling.md) | auditing on a clock, being told when the export gets worse, and keeping the disk |
 | [docs/rules-proposal.md](docs/rules-proposal.md) | the model proposes a rule, a person accepts it, every later audit enforces it |
 | [docs/eval.md](docs/eval.md) | scoring an audit against known defects, and why one run is not a measurement |
 | [docs/scale.md](docs/scale.md) | what a two-gigabyte dataset costs, and the four things it found |

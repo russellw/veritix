@@ -65,3 +65,22 @@ spec:
     #   ports:
     #     - port: 4318
     #       protocol: TCP
+
+    # A notification webhook, when a scheduled audit has somewhere to report a
+    # regression to. This is the one exception a deterministic install with no
+    # model and no telemetry might still want — an audit nobody was watching is
+    # worth nothing if nobody is told what it found.
+    #
+    # A chat webhook is usually outside the cluster, so this is egress to the
+    # internet and should be narrowed to the address that receives it. What
+    # leaves is the report's own comparison — counts, and for each finding that
+    # got worse its rule, severity, title, table and column. Never a cell
+    # value; notify.detail: summary drops the names too. See
+    # docs/scheduling.md.
+    #
+    # - to:
+    #     - ipBlock:
+    #         cidr: 203.0.113.7/32
+    #   ports:
+    #     - port: 443
+    #       protocol: TCP
