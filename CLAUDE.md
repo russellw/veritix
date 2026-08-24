@@ -1576,7 +1576,14 @@ configuration already, which it will not shadow.
 **Web build**
 - Vite's `emptyOutDir` wipes `web/dist/.gitkeep`, and without that placeholder
   `//go:embed all:dist` stops compiling on a clean checkout. `make web`
-  re-`touch`es it; do not remove that line.
+  re-`touch`es it; do not remove that line. **The placeholder is a tracked
+  file, so a build that does not put it back leaves the tree modified** —
+  which is invisible until something reads `git describe --dirty`. The first
+  ever release did exactly that: the Windows job has no make by design, ran
+  `pnpm build` directly, and shipped `veritix_v0.1.0-dirty_windows_amd64.zip`
+  with `-dirty` baked into `buildinfo.Version` by ldflags, where the Linux job
+  went through `make release` and was clean. Both release jobs now refuse to
+  build from a modified tree rather than describing one.
 - `//go:embed all:dist` needs the `all:` prefix. A plain `dist` pattern skips
   files starting with `.`, which is exactly the placeholder.
 - `web/.npmrc` sets `frozen-lockfile=true`, so the very first install with no

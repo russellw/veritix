@@ -45,8 +45,29 @@ jobs:
         working-directory: web
 
       - name: Build the web interface
-        run: corepack pnpm build
+        # Vite's emptyOutDir wipes web/dist/.gitkeep, which is a tracked file:
+        # without it `//go:embed all:dist` stops compiling on a checkout with
+        # no build in it. `make web` re-creates it, and this job has no make
+        # by design, so it has to say so itself. Leaving it deleted modifies
+        # the tree, and `git describe --dirty` below then bakes that into the
+        # version of everything this job ships.
+        run: |
+          corepack pnpm build
+          New-Item -ItemType File -Path dist/.gitkeep -Force | Out-Null
         working-directory: web
+
+      # A release is built from a tag, so the tree has to be the tag. Anything
+      # a build step leaves behind ends up in the version string as -dirty,
+      # which is baked into the binary by ldflags and into the archive's name:
+      # v0.1.0 shipped that way, from the deleted placeholder above, and the
+      # only thing that noticed was the file name on the releases page.
+      - name: Refuse to ship a modified tree
+        run: |
+          $dirty = git status --porcelain
+          if ($dirty) {
+            Write-Host $dirty
+            throw "the working tree is modified; the version would ship as -dirty"
+          }
 
       - name: Build
         run: |
@@ -118,6 +139,18 @@ jobs:
         run: |
           ./bin/veritix version --json | grep -q '"web": true'
           ./bin/veritix eval testdata/dirty-retail
+
+      # The same assertion the Windows job makes, for the same reason. Here
+      # `make web` puts the placeholder back, so this job has never shipped a
+      # -dirty version; that is a property of the Makefile rather than of this
+      # workflow, and the version is computed in the next step either way.
+      - name: Refuse to ship a modified tree
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "the working tree is modified; the version would ship as -dirty" >&2
+            exit 1
+          fi
 
       - name: Package
         run: |
