@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -406,4 +407,95 @@ func dirExists(t *testing.T, dir string) bool {
 	t.Helper()
 	_, err := os.Stat(dir)
 	return err == nil
+}
+
+// blockRemoval makes dir impossible to delete, the way each platform does it.
+//
+// The two mechanisms are not the same thing wearing different names. On
+// Windows an open file cannot be deleted, which is the case this exists for
+// and the reason the bug is Windows-only: a rows request in flight or a virus
+// scanner reading a large database is enough. Elsewhere a directory cannot be
+// removed from a parent that is not writable, which reaches the same code path
+// from the one direction Unix offers.
+func blockRemoval(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		f, err := os.Open(filepath.Join(dir, filepath.Base(dir)+".lock"))
+		if err != nil {
+			// Nothing to hold open means nothing to hold: make one.
+			f, err = os.Create(filepath.Join(dir, "held")) //nolint:gosec // a path this test just made
+			if err != nil {
+				t.Fatalf("could not hold a file open in %s: %v", dir, err)
+			}
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		return
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root, which ignores the permissions this depends on")
+	}
+	parent := filepath.Dir(dir)
+	info, err := os.Stat(parent)
+	if err != nil {
+		t.Fatalf("stat %s: %v", parent, err)
+	}
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatalf("chmod %s: %v", parent, err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, info.Mode()) })
+}
+
+// Retention is the one job whose entire purpose is that the disk does not fill
+// up, so a discard it only *recorded* is the worst outcome available: the run
+// leaves the discardable list forever, the bytes stay, and asking for its rows
+// answers 410 Gone — the data retained and unreachable at once, silently.
+//
+// On Linux removing a file always succeeds and this can never happen. On
+// Windows a file something holds open cannot be removed at all.
+func TestARunThatCouldNotBeDiscardedIsNotRecordedAsDiscarded(t *testing.T) {
+	ts := newTestServerTuned(t, "", nil, retention(time.Hour))
+	ctx := context.Background()
+	ds := ts.registerFixture()
+
+	run := ts.startRun(map[string]any{"dataset_id": ds})
+	// A second run, so the first is not the most recent one — which is kept
+	// whatever the cutoff says and would never be a candidate.
+	ts.startRun(map[string]any{"dataset_id": ds})
+	ts.srv.sched.now = func() time.Time { return time.Now().Add(48 * time.Hour) }
+
+	stored, err := ts.st.Run(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	dir := filepath.Dir(stored.DatabasePath)
+	blockRemoval(t, dir)
+
+	ts.srv.sched.tickOnce(ctx)
+
+	after, err := ts.st.Run(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if after.DatabasePath == "" {
+		t.Fatal("the store says the data was discarded, but removing it failed")
+	}
+	if !dirExists(t, dir) {
+		t.Fatal("the directory went after all, so this tested nothing")
+	}
+
+	// And the run is still a candidate, so the next sweep tries again rather
+	// than leaving the bytes on the disk forever.
+	again, err := ts.st.DiscardableRunDatabases(ctx, time.Now().Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("list discardable: %v", err)
+	}
+	found := false
+	for _, r := range again {
+		if r.ID == run.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the run will never be offered for discarding again")
+	}
 }

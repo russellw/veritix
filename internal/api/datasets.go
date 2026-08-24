@@ -274,7 +274,7 @@ func (s *Server) handleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 
 	for _, run := range history {
 		s.runs.cancel(run.ID)
-		s.removeRunFiles(run)
+		_ = s.removeRunFiles(run) // already logged; deleting a dataset carries on regardless
 	}
 	// The rules accepted for this dataset go with it. They are a file Veritix
 	// wrote, under its own data directory, and leaving them behind would leave
@@ -300,15 +300,24 @@ func (s *Server) handleDeleteDataset(w http.ResponseWriter, r *http.Request) {
 
 // removeRunFiles deletes the DuckDB database a run left behind, and only if it
 // sits where the server puts them.
-func (s *Server) removeRunFiles(run *store.Run) {
+//
+// It reports whether the files are gone, which is not the same question as
+// whether anything went wrong: a run that never had a database, or one whose
+// path is not somewhere this server would have written, is already in the
+// state the caller wants. Deleting is what can fail, and on Windows it fails
+// for a reason Linux does not have — a file something else holds open cannot
+// be removed at all, where unlink succeeds regardless.
+func (s *Server) removeRunFiles(run *store.Run) error {
 	if run.DatabasePath == "" {
-		return
+		return nil
 	}
 	dir := filepath.Dir(run.DatabasePath)
 	if !strings.HasPrefix(dir, filepath.Join(s.cfg.Server.DataDir, "runs")+string(filepath.Separator)) {
-		return
+		return nil
 	}
 	if err := os.RemoveAll(dir); err != nil { //nolint:gosec // confined to DataDir/runs by the check above
 		s.log.Warn("could not remove run database", "run", run.ID, "path", dir, "error", err)
+		return err
 	}
+	return nil
 }

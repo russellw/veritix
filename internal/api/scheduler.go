@@ -228,7 +228,19 @@ func (sc *scheduler) discard(ctx context.Context) {
 
 		// removeRunFiles refuses anything that is not under DataDir/runs, so a
 		// row edited by hand cannot make this delete something else.
-		sc.srv.removeRunFiles(run)
+		//
+		// The store is not told the data is gone unless it is gone. On Windows
+		// a file something holds open cannot be deleted — a rows request in
+		// flight, or a virus scanner reading a 700 MB database — where on
+		// Linux the unlink succeeds regardless and this can never fail.
+		// Recording a discard that did not happen would take the run out of
+		// this list forever and leave the bytes on the disk: retained and
+		// unreachable at once, which is both halves wrong, and silent, in the
+		// one job whose whole purpose is that the disk does not fill up. The
+		// next sweep tries again, because a held file is a transient thing.
+		if err := sc.srv.removeRunFiles(run); err != nil {
+			continue
+		}
 
 		if err := sc.srv.store.ClearRunDatabase(ctx, run.ID); err != nil {
 			sc.srv.log.Error("could not record a discarded run database",

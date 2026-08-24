@@ -408,7 +408,16 @@ decisions.
   a run whose data was discarded is still a baseline. The most recent run of
   each dataset keeps its data whatever the cutoff says, and asking for a
   discarded run's rows is **410 Gone** with a sentence saying so rather than a
-  500 that reads as a broken server.
+  500 that reads as a broken server. **The store is not told the data is gone
+  unless it is gone**: on Windows a file something holds open cannot be deleted
+  at all — a rows request in flight, or a virus scanner reading a 700 MB
+  database — where on Linux the unlink succeeds regardless and the failure
+  cannot arise. Recording a discard that did not happen takes the run out of
+  the discardable list forever and leaves the bytes there: retained and
+  unreachable at once, silently, in the one job whose whole purpose is that the
+  disk does not fill up. The next sweep retries, because a held file is
+  transient. `TestARunThatCouldNotBeDiscardedIsNotRecordedAsDiscarded` blocks
+  the removal the way each platform can.
 - **It is `server.retain_databases`, not `schedule.`**, and the ticker runs if
   either job has work. Retention is about what lives under `data_dir`, and an
   operator who turned the clock off because another process owns it has not
@@ -1532,6 +1541,12 @@ configuration already, which it will not shadow.
   Windows job is what runs it.
 - **`os.MkdirAll(dir, 0o700)` silently ignores the mode.** Nothing fails, and
   the data directory is protected by whatever its parent's ACL says instead.
+- **A file that something holds open cannot be deleted**, where on Linux the
+  unlink succeeds and the last handle closes later. Every `os.RemoveAll` of
+  something a run may still have open is a place where Linux cannot fail and
+  Windows can, and the bug is never the failed delete — it is the bookkeeping
+  that recorded it as having worked. Retention was exactly that; see "How
+  scheduling is put together".
 
 **MCP**
 - **Raw JSON-RPC piped in from the shell does not smoke-test it.** The pipe

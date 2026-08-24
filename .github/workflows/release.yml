@@ -143,7 +143,7 @@ jobs:
     permissions:
       contents: write # the one job that needs it, and only on a tag
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
