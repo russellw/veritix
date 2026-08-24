@@ -409,24 +409,22 @@ func dirExists(t *testing.T, dir string) bool {
 	return err == nil
 }
 
-// blockRemoval makes dir impossible to delete, the way each platform does it.
+// blockRemoval makes the directory holding path impossible to delete, the way
+// each platform can.
 //
 // The two mechanisms are not the same thing wearing different names. On
-// Windows an open file cannot be deleted, which is the case this exists for
-// and the reason the bug is Windows-only: a rows request in flight or a virus
-// scanner reading a large database is enough. Elsewhere a directory cannot be
-// removed from a parent that is not writable, which reaches the same code path
-// from the one direction Unix offers.
-func blockRemoval(t *testing.T, dir string) {
+// Windows the database file is simply held open, which is the case this exists
+// for and is exactly what a rows request in flight does — the reason the bug
+// is Windows-only, since the same handle stops nothing on Linux. Elsewhere a
+// directory cannot be removed from a parent that is not writable, which
+// reaches the same code path from the one direction Unix offers.
+func blockRemoval(t *testing.T, path string) {
 	t.Helper()
+	dir := filepath.Dir(path)
 	if runtime.GOOS == "windows" {
-		f, err := os.Open(filepath.Join(dir, filepath.Base(dir)+".lock"))
+		f, err := os.Open(path) //nolint:gosec // the database path this run recorded
 		if err != nil {
-			// Nothing to hold open means nothing to hold: make one.
-			f, err = os.Create(filepath.Join(dir, "held")) //nolint:gosec // a path this test just made
-			if err != nil {
-				t.Fatalf("could not hold a file open in %s: %v", dir, err)
-			}
+			t.Fatalf("could not hold %s open: %v", path, err)
 		}
 		t.Cleanup(func() { _ = f.Close() })
 		return
@@ -468,7 +466,7 @@ func TestARunThatCouldNotBeDiscardedIsNotRecordedAsDiscarded(t *testing.T) {
 		t.Fatalf("read run: %v", err)
 	}
 	dir := filepath.Dir(stored.DatabasePath)
-	blockRemoval(t, dir)
+	blockRemoval(t, stored.DatabasePath)
 
 	ts.srv.sched.tickOnce(ctx)
 
