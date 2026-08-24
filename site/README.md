@@ -83,32 +83,54 @@ static-site subset, which is all this needs.
 
 ### First time
 
-Copy the files up and put them in place:
+Everything in this section needs `sudo` and is done **once**, by hand, from a
+machine that already has a login on the box. Everything after it does not need
+`sudo` at all — that is the point of the `chown`.
+
+Authorize whichever machine will publish the page. Per-machine keys, never a
+copy of one key: a key that exists in one place is revoked by deleting one line
+here, and a copied one is not.
 
 ```sh
-tar cz -C site --exclude=README.md --exclude=veritix.Caddyfile . | ssh vps 'cat > /tmp/veritix-site.tgz'
-ssh vps 'sudo mkdir -p /srv/www/veritix && sudo tar xz -C /srv/www/veritix -f /tmp/veritix-site.tgz && \
-         sudo chown -R root:root /srv/www/veritix && rm /tmp/veritix-site.tgz'
+ssh vps 'cat >> ~/.ssh/authorized_keys' < path/to/that-machine/veritix-deploy.pub
 ```
 
-Append the contents of `veritix.Caddyfile` to `/etc/caddy/Caddyfile` on the
-box, then — **always in this order**, since a bad Caddyfile takes down every
-site sharing the machine:
+Create the document root and hand it to the deploy account, so publishing is an
+unprivileged write to one directory of static files rather than something that
+needs root on a box that also serves another app:
+
+```sh
+ssh vps 'sudo mkdir -p /srv/www/veritix && sudo chown debian:debian /srv/www/veritix'
+```
+
+Append the contents of `veritix.Caddyfile` to `/etc/caddy/Caddyfile`, then —
+**always in this order**, since a bad Caddyfile takes down every site sharing
+the machine:
 
 ```sh
 ssh vps 'sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy'
 ```
 
-Caddy obtains the Let's Encrypt certificate on the first request. Verify:
+Caddy obtains the Let's Encrypt certificate on the first request. Then publish
+and verify:
 
 ```sh
+make site-deploy
 curl -fsSI https://veritix.belunaro.com/ | head -1
 ```
 
 ### Afterwards
 
-`make site-deploy` from the repo root is the same copy without the Caddy step.
-Nothing needs restarting — Caddy serves whatever is on disk.
+`make site-deploy` is the whole of it — a tar over ssh into a directory the
+deploy account owns. No `sudo`, and nothing to restart: Caddy serves whatever
+is on disk.
+
+**What the deploy key can do, stated rather than assumed.** It is a login to
+the `debian` account, which is in `sudo`. Nothing in the deploy path uses that,
+but the account has it, so the key is worth the same care as any other login to
+the box. If you want it genuinely confined to this one job, the two ways are a
+`command=` restriction in `authorized_keys` pinning it to the extract, or a
+separate unprivileged user owning `/srv/www/veritix`. Neither is done here.
 
 ## Rules for a shared box
 

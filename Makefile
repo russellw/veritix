@@ -162,12 +162,16 @@ e2e-test:
 # nothing but HTML on that host — site/README.md says why that matters and how
 # the vhost was set up the first time. Caddy serves whatever is on disk, so
 # there is nothing to restart.
+#
+# Deliberately no sudo. The one-time setup hands /srv/www/veritix to the deploy
+# account, so routine publishing is an unprivileged write to one directory of
+# static files. A deploy key that needed root to do its job would have to be
+# trusted with everything else on a box that also serves another app.
 .PHONY: site-deploy
 site-deploy:
-	tar cz -C $(SITE) --exclude=README.md --exclude=veritix.Caddyfile . | ssh vps 'cat > /tmp/veritix-site.tgz'
-	ssh vps 'sudo mkdir -p /srv/www/veritix && sudo tar xz -C /srv/www/veritix -f /tmp/veritix-site.tgz && \
-	         sudo chown -R root:root /srv/www/veritix && rm /tmp/veritix-site.tgz'
-	curl -fsSI https://veritix.belunaro.com/ | head -1
+	tar cz -C $(SITE) --exclude=README.md --exclude=veritix.Caddyfile . | \
+		ssh vps 'tar xz --no-same-owner -C /srv/www/veritix'
+	curl -fsS -o /dev/null -w 'https://veritix.belunaro.com/ %{http_code}\n' https://veritix.belunaro.com/
 
 .PHONY: clean
 clean:
