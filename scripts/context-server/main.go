@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -150,7 +151,7 @@ func discover(root string) ([]document, error) {
 		}
 		out = append(out, document{
 			rel:      filepath.ToSlash(rel),
-			uri:      "file://" + filepath.ToSlash(path),
+			uri:      fileURI(path),
 			mime:     mime,
 			size:     info.Size(),
 			headline: headline(path),
@@ -179,6 +180,47 @@ func headline(path string) string {
 	return filepath.Base(path)
 }
 
+// fileURI renders a path on this machine as a file URL.
+//
+// Windows is the awkward half, and it is not cosmetic: `D:\docs\x.md`
+// concatenated onto "file://" parses as a host of `D:` with everything after
+// the colon read as a port, which url.Parse refuses outright — and the MCP SDK
+// parses every resource URI it is given and panics on one it cannot. So the
+// separators are turned around and a leading slash goes on, which is what puts
+// the drive letter in the path where it belongs. Building the URL through
+// net/url rather than by concatenation also escapes a document whose name has
+// a space in it, which a customer's documentation folder certainly does.
+func fileURI(path string) string {
+	slashed := filepath.ToSlash(path)
+	if !strings.HasPrefix(slashed, "/") {
+		slashed = "/" + slashed
+	}
+	return (&url.URL{Scheme: "file", Path: slashed}).String()
+}
+
+// filePath is fileURI backwards: the path a file URL names on this machine.
+//
+// It reports false for anything that is not a local file URL, because the only
+// URIs this server can serve are ones it advertised itself. url.Parse has
+// already undone the escaping by the time Path is read.
+func filePath(uri string) (string, bool) {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "file" {
+		return "", false
+	}
+	if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
+		return "", false
+	}
+	p := u.Path
+	// "/D:/docs/x.md" is a Windows path still wearing the URL's leading
+	// slash. Nothing on a Unix path can look like this: a drive letter is one
+	// character and the colon is the second.
+	if len(p) > 2 && p[0] == '/' && p[2] == ':' {
+		p = p[1:]
+	}
+	return filepath.FromSlash(p), true
+}
+
 // read serves one document, refusing anything outside the served directory.
 //
 // The URI comes off the wire, so it is checked against the root even though
@@ -188,7 +230,7 @@ func headline(path string) string {
 func read(root string) sdk.ResourceHandler {
 	return func(_ context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
 		uri := req.Params.URI
-		path, ok := strings.CutPrefix(uri, "file://")
+		path, ok := filePath(uri)
 		if !ok {
 			return nil, fmt.Errorf("unsupported URI scheme in %q", uri)
 		}

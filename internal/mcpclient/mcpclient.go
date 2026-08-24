@@ -246,10 +246,15 @@ func Connect(ctx context.Context, opts Options) (*Library, error) {
 }
 
 // attach connects one server and adds its resources to the catalog.
-func (l *Library) attach(ctx context.Context, srv Server, seen map[string]bool, conn *Connection) error {
+func (l *Library) attach(ctx context.Context, srv Server, seen map[string]bool, conn *Connection) (err error) {
 	if srv.Name == "" {
 		return errors.New("a context server needs a name")
 	}
+
+	// Whatever a subprocess printed on the way down is folded into whatever
+	// went wrong, because on its own "connecting: EOF" says only that it did.
+	var said *tail
+	defer func() { err = said.explain(err) }()
 
 	transport := srv.Transport
 	if transport == nil {
@@ -262,6 +267,8 @@ func (l *Library) attach(ctx context.Context, srv Server, seen map[string]bool, 
 		// end; this is what stops one outliving the audit if it does not.
 		cmd := exec.CommandContext(ctx, srv.Command, srv.Args...) //nolint:gosec // the operator's own configured command
 		cmd.Env = append(cmd.Environ(), srv.Env...)
+		said = &tail{}
+		cmd.Stderr = said
 		transport = &sdk.CommandTransport{Command: cmd}
 	}
 

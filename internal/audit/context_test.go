@@ -35,12 +35,15 @@ func serveContext(dir string) {
 		os.Exit(1)
 	}
 	for _, e := range entries {
+		// A handle the server chose, not a path: see the same server in
+		// internal/mcpclient's tests for why a file path concatenated onto
+		// "file://" is a URI that kills this process on Windows.
 		path := filepath.Join(dir, e.Name())
 		srv.AddResource(&sdk.Resource{
-			URI:  "file://" + path,
+			URI:  "docs:///" + e.Name(),
 			Name: strings.TrimSuffix(e.Name(), ".md"),
 		}, func(_ context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
-			data, err := os.ReadFile(strings.TrimPrefix(req.Params.URI, "file://"))
+			data, err := os.ReadFile(path) //nolint:gosec // a fixture path
 			if err != nil {
 				return nil, err
 			}
@@ -82,7 +85,10 @@ func TestThePipelineConnectsTheContextServersForTheAgent(t *testing.T) {
 		t.Fatal("the run recorded no context, so the servers were never connected")
 	}
 	if len(ct.Documents) != 3 {
-		t.Errorf("the catalog has %d documents, want the fixture's 3", len(ct.Documents))
+		// The servers' own reasons, not just the count: a server that would
+		// not start produces an empty catalog and says why exactly once.
+		t.Errorf("the catalog has %d documents, want the fixture's 3; servers: %+v",
+			len(ct.Documents), ct.Servers)
 	}
 	if ct.Read != 1 {
 		t.Errorf("the model read %d documents, want 1", ct.Read)

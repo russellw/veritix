@@ -33,11 +33,17 @@ func serveDirectory(dir string) {
 		os.Exit(1)
 	}
 	for _, e := range entries {
+		// The URI is a handle the server chose and the client only ever hands
+		// back, so it names the document rather than the file: a path
+		// concatenated onto "file://" is "file://D:\\dir\\x.md" on Windows,
+		// which url.Parse refuses and AddResource panics on. What a real
+		// server does with a real path is scripts/context-server's business,
+		// and it has a test for exactly that.
 		path := filepath.Join(dir, e.Name())
 		srv.AddResource(
-			&sdk.Resource{URI: "file://" + path, Name: e.Name(), MIMEType: "text/markdown"},
+			&sdk.Resource{URI: "docs:///" + e.Name(), Name: e.Name(), MIMEType: "text/markdown"},
 			func(_ context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
-				data, err := os.ReadFile(strings.TrimPrefix(req.Params.URI, "file://"))
+				data, err := os.ReadFile(path) //nolint:gosec // a path this test just made
 				if err != nil {
 					return nil, err
 				}
@@ -326,7 +332,9 @@ func TestAStdioServerIsSpokenToAsASubprocess(t *testing.T) {
 
 	cat := lib.Catalog()
 	if len(cat) != 1 {
-		t.Fatalf("catalog is %+v", cat)
+		// Connections carries why a server contributed nothing, which is the
+		// half of this failure worth reading.
+		t.Fatalf("catalog is %+v; connections: %+v", cat, lib.Connections())
 	}
 	got, err := lib.Read(t.Context(), cat[0].ID)
 	if err != nil {
