@@ -25,6 +25,10 @@ type env struct {
 	cfg  config.Config
 	log  *slog.Logger
 	otel *telemetry.Telemetry
+
+	// openBrowser is serve --open, kept here rather than passed down because
+	// runServe already takes the env and nothing else needs to know.
+	openBrowser bool
 }
 
 // Execute builds the command tree and runs it.

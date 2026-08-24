@@ -25,6 +25,7 @@ func newServeCmd(e *env) *cobra.Command {
 		addr      string
 		authToken string
 		dataDir   string
+		open      bool
 	)
 
 	cmd := &cobra.Command{
@@ -45,6 +46,7 @@ func newServeCmd(e *env) *cobra.Command {
 			if cmd.Flags().Changed("data-dir") {
 				e.cfg.Server.DataDir = dataDir
 			}
+			e.openBrowser = open
 
 			if !config.IsLoopback(e.cfg.Server.Addr) && e.cfg.Server.AuthToken == "" {
 				return fmt.Errorf(
@@ -59,6 +61,7 @@ func newServeCmd(e *env) *cobra.Command {
 	f.StringVar(&addr, "addr", "127.0.0.1:8080", "listen address")
 	f.StringVar(&authToken, "auth-token", "", "bearer token required on every API request")
 	f.StringVar(&dataDir, "data-dir", "", "directory for the run store, datasets, and reports")
+	f.BoolVar(&open, "open", false, "open the interface in the default browser once the server is listening")
 
 	return cmd
 }
@@ -116,7 +119,17 @@ func runServe(ctx context.Context, e *env) error {
 		"addr", ln.Addr().String(),
 		"data_dir", dir,
 		"auth", e.cfg.Server.AuthToken != "")
-	fmt.Fprintf(os.Stderr, "\n  Veritix is running at http://%s\n  Press Ctrl-C to stop.\n\n", ln.Addr())
+	url := browseURL(ln.Addr())
+	fmt.Fprintf(os.Stderr, "\n  Veritix is running at %s\n  Press Ctrl-C to stop.\n\n", url)
+
+	if e.openBrowser {
+		// A warning and not an error: a machine with no desktop is a normal
+		// place to run this, and a server that refused to start because
+		// nothing could show it would be worse than one nobody looked at.
+		if err := openBrowser(url); err != nil {
+			e.log.Warn("could not open a browser", "url", url, "error", err)
+		}
+	}
 
 	// Ctrl-C and the signal a container runtime sends both mean the same
 	// thing: finish what you can, then stop.

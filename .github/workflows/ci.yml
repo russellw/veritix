@@ -117,11 +117,21 @@ jobs:
           $v = ./veritix.exe version --json | ConvertFrom-Json
           if (-not $v.web) { throw "the interface did not make it into the binary" }
 
-      - name: Audit a fixture
-        run: |
-          $r = ./veritix.exe audit testdata/dirty-retail --format json | ConvertFrom-Json
-          if (-not $r.finding_summary) { throw "no findings section in the report" }
-          $r.finding_summary | Format-List
+      # eval and not audit: the question is not whether the pipeline runs on
+      # Windows but whether it reaches the same answers, and the manifest is
+      # what says so. It exits non-zero on a planted defect the checks missed
+      # or a false positive on clean data, unasked and with no model
+      # configured. Measured when this job was written: the same 14 errors,
+      # 14 warnings and 9 info the Linux job produces.
+      - name: Score a fixture against its manifest
+        run: ./veritix.exe eval testdata/dirty-retail
+
+      # The second fixture is the one whose defects need reasoning rather than
+      # a tool, so its checks half exercises different code — and it is the
+      # one carrying a workbook, which is the reader most likely to have an
+      # opinion about line endings.
+      - name: Score the second fixture
+        run: ./veritix.exe eval testdata/dirty-logistics
 
   browser:
     name: Browser tests
