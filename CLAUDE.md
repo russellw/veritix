@@ -35,6 +35,7 @@ Everything is on `main`. M0 through M3 are done.
 | M6b | Rule proposal, OpenTelemetry, deployment, docs | done |
 | M7a | Run-over-run comparison: what changed since the last audit | done |
 | M7b | Scheduled audits, the notification, and run-data retention | done |
+| M8 | Windows: built, tested and shipped on the platform the interface is for | done |
 
 M4 is off by default: `llm.provider: none` is the complete deterministic
 auditor, and over HTTP the agent is per-run (`"agent": true`) rather than a
@@ -78,6 +79,7 @@ go build -o /tmp/ctx ./scripts/context-server                # something to fetc
     --propose-rules-out proposed.yaml   # rules to review, then load with --rules
 
 ./bin/veritix serve                          # loopback, no token
+./bin/veritix serve --open                   # and put a browser on it
 ./bin/veritix serve --addr 0.0.0.0:8080 --auth-token "$(openssl rand -hex 16)"
 VERITIX_LLM_PROVIDER=anthropic ./bin/veritix serve   # offers the agent in the UI
 
@@ -222,6 +224,8 @@ scripts/smoke-image.sh runs the built image and talks to it: the checks that
                        need a container rather than a test binary
 deploy/Dockerfile      three stages: the interface, the binary, distroless
 deploy/kubernetes/     a kustomize base; one replica, and egress denied
+deploy/windows/        what a release archive ships so the desktop story is a
+                       double-click rather than a terminal
 docs/frontend-stack.md the front end's dependency and supply-chain policy
 docs/eval.md           the defect manifest format and what a score means
 docs/scale.md          what happens on two gigabytes, and what it changed
@@ -230,6 +234,8 @@ docs/scheduling.md     auditing on a clock, being told about it, and the disk
 docs/mcp.md            wiring an assistant to `veritix mcp`, and what it may ask
 docs/rules-proposal.md propose, review, accept: coverage turned into recall
 docs/deployment.md     binary, container, cluster — and what each one promises
+docs/windows.md        the platform the interface is for, both halves: getting
+                       started, and what the platform silently does not do
 LICENSING.md           the dual license: AGPL, or commercial terms
 CLA.md                 the contributor agreement that makes the second possible
 CONTRIBUTING.md        how to work on it, and the four things a patch must not do
@@ -699,6 +705,63 @@ is the operator's half; these are the decisions.
   `go.opentelemetry.io/proto/otlp` carries the collector's gRPC service
   definition alongside the message types. All Apache-2.0 or BSD-3-Clause, so
   nothing here is a term the commercial license could not deliver.
+
+## How Windows is handled
+
+The interface exists because the users are business people on Windows
+desktops, and until M8 nothing had ever been compiled for Windows.
+`docs/windows.md` is the user's half and the operator's; these are the
+decisions.
+
+- **The runner is the rig, because nothing else can be.** DuckDB means CGO,
+  and CGO means a Windows binary needs a Windows toolchain, so there is no
+  cross-build from a development machine and no way to run the result if
+  there were. `Build and test (Windows)` in `.github/workflows/ci.yml` is
+  therefore not a nice-to-have on the side: it is the only place the claim is
+  ever tested. The release archives are built there too, which is also what
+  builds the interface that goes into them.
+- **It asks whether the answers agree, not whether the program runs.** The job
+  finishes by scoring both fixtures with `veritix eval`, which exits non-zero
+  on a planted defect the checks missed or a check firing on clean data, with
+  no model configured. Measured when it was written: the same 14 errors, 14
+  warnings and 9 info as the Linux job, on `dirty-retail`. A step asserting
+  only that a report has a findings section would have passed on an auditor
+  that had quietly stopped looking, which is `column.not_profiled`'s argument
+  in a different place.
+- **No `make` and no `-race`, both deliberately.** A Windows developer has no
+  make, so a job that needed one would be testing a path they cannot take. A
+  data race is not platform-specific and is already caught on Linux, where it
+  costs a fraction as much.
+- **`.gitattributes` came first, and it is not tidiness.** Git for Windows
+  turns on `core.autocrlf`, and `testdata/` is data rather than source: a CSV
+  whose line endings changed on checkout is a different file to audit, and a
+  check counting something in it would disagree across platforms for a reason
+  nobody would look for. Every text file is stored and checked out LF. The one
+  exception is `*.cmd`, forced to CRLF everywhere including on the Linux
+  machine that never runs it, because a batch file is read by `cmd.exe`.
+- **`serve --open` is the desktop story, and it is a flag.** Without it the
+  shortest path from a downloaded zip to a working screen runs through a
+  terminal, which is the thing these users do not have; `deploy/windows/Start
+  Veritix.cmd` is what a release archive ships so that path is a double-click.
+  It is not a default because starting somebody else's program is not
+  something a server should do because it seemed helpful, and a browser that
+  will not open is a warning rather than a failed start, since a machine with
+  no desktop is a normal place to run this. `browseURL` is the part worth a
+  test: a listener bound to `0.0.0.0` reports an address no browser can open.
+- **What the platform silently does not do.** `os.MkdirAll(dir, 0o700)` is how
+  the data directory is created and the mode is *ignored* on Windows — the
+  directory inherits its parent's ACL, which under `%AppData%` is the user
+  profile and is not the same promise. `docs/windows.md` says so rather than
+  letting the Linux comment stand for both. The releases are unsigned, so
+  SmartScreen will say what it says, and the zip carries a mark of the web
+  that has to be cleared before unzipping; that is documented rather than
+  worked around, because the way around it is a certificate.
+- **The zone database is the one thing that was already right.**
+  `internal/schedule` imports `time/tzdata` because Windows ships no IANA zone
+  source at all, so a named zone would be an error on the platform the
+  interface is for. That decision was taken in M7b and defended by a container
+  smoke test standing in for a platform nobody had compiled for. It now runs
+  where it was aimed.
 
 ## How it is deployed
 
@@ -1441,6 +1504,34 @@ configuration already, which it will not shadow.
 - Cobra's `PersistentPostRun` **does not run when a command returns an error**,
   so a flush hung on it loses the telemetry of exactly the runs somebody wants.
   It is called from `Execute` after `ExecuteContext` returns instead.
+
+**Windows**
+- **A file path concatenated onto `file://` is a URI that kills a process.**
+  On Windows that is `file://D:\dir\x.md`, where the drive letter reads as a
+  host and everything after the colon as a port; `url.Parse` refuses it, and
+  the MCP SDK's `AddResource` parses every resource URI it is given and
+  **panics** on one it cannot. The two in-process context servers in the tests
+  did exactly that, so each died before it spoke — and because a context
+  server that will not answer is a warning rather than an error, the failure
+  presented as an empty catalog with no reason attached. That was the whole of
+  the first Windows test failure, in two packages at once. A resource URI is a
+  handle the server chose and the client only hands back, so the test servers
+  name the document; `scripts/context-server` is the one that genuinely has to
+  turn a path into a URI and back, and its `fileURI`/`filePath` pair has a
+  round-trip test over `t.TempDir` so the platform's own separator is what is
+  exercised.
+- **A subprocess's standard error is the only account of why it died**, and it
+  used to be discarded: "connecting: EOF" names the symptom and stops.
+  `internal/mcpclient` keeps a bounded tail of it and folds it into the
+  connection's reason, which reaches the trace and the operator and not the
+  model.
+- **`filepath.ToSlash` is a no-op on Linux**, so a helper that turns paths into
+  URLs cannot be meaningfully unit-tested for Windows on a Linux machine by
+  passing it a literal backslash path. Build the path with `filepath.Join` and
+  assert the round trip; the platform is what supplies the separator, and the
+  Windows job is what runs it.
+- **`os.MkdirAll(dir, 0o700)` silently ignores the mode.** Nothing fails, and
+  the data directory is protected by whatever its parent's ACL says instead.
 
 **MCP**
 - **Raw JSON-RPC piped in from the shell does not smoke-test it.** The pipe

@@ -20,8 +20,10 @@ Early development. See `.claude/plans/` for the build plan; the milestones are:
 | M3 | HTTP server and React web interface — **done** |
 | M4 | Agentic LLM auditor with a strict data-egress guard — **done** |
 | M5a | MCP server: audit datasets from Claude Code or Claude Desktop — **done** |
-| M5b | MCP client: pull your own context into an audit |
-| M6 | Hardening, evals, deployment |
+| M5b | MCP client: pull your own context into an audit — **done** |
+| M6 | Hardening, evals, deployment, rule proposal — **done** |
+| M7 | Run-over-run comparison and scheduled audits — **done** |
+| M8 | Windows: built, tested and shipped on the platform the interface is for — **done** |
 
 ## Design in one page
 
@@ -54,6 +56,22 @@ Afterwards you can read every payload that left the machine, verbatim, on the
 run's trace. A local model (Ollama, vLLM, LM Studio) is a first-class option
 for customers who want no network egress at all, and no model at all is the
 default: Veritix without one is a complete deterministic auditor.
+
+## Installing
+
+Download the archive for your platform from the releases page, unzip it, and
+run it — there is no installer, no runtime to install alongside it, and
+nothing to register.
+
+On **Windows**, double-click **Start Veritix**: it starts the server and opens
+your browser on the interface, which is the whole of the setup.
+[docs/windows.md](docs/windows.md) is the rest — where your data lives, what
+SmartScreen will say about an unsigned executable, and why a scheduled audit
+knows what `Europe/London` means on a platform that does not ship the zone
+database.
+
+On **Linux**, `veritix serve --open` does the same thing, and
+[docs/deployment.md](docs/deployment.md) covers the container and the cluster.
 
 ## Building
 
@@ -134,6 +152,7 @@ and a scheduled audit tells nobody until a webhook is set.
 | [docs/mcp.md](docs/mcp.md) | wiring an assistant to `veritix mcp` |
 | [docs/local-model.md](docs/local-model.md) | running the agent against a model on your own hardware |
 | [docs/frontend-stack.md](docs/frontend-stack.md) | the dependency and supply-chain policy, both sides of the build |
+| [docs/windows.md](docs/windows.md) | the platform the interface is for: getting started, where the data lives, and what is not there |
 
 ## License
 

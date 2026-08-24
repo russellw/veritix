@@ -14,3 +14,10 @@
 # goes the other way cannot corrupt a committed binary on somebody's checkout.
 *.xlsx binary
 *.xls  binary
+
+# The exception, and it is the one file the LF rule would break: a batch file
+# is read by cmd.exe, which is entitled to its own line endings. Checked out
+# with CRLF everywhere, including on the Linux machine that never runs it, so
+# what goes into a release archive is the same file wherever it was built.
+*.cmd text eol=crlf
+*.bat text eol=crlf

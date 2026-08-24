@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os/exec"
@@ -34,18 +35,30 @@ func browseURL(addr net.Addr) string {
 // downloaded zip to a working screen runs through a terminal, which is the
 // thing those users do not have.
 func openBrowser(url string) error {
-	var cmd *exec.Cmd
+	var name string
+	var args []string
 	switch runtime.GOOS {
 	case "windows":
 		// rundll32 rather than `cmd /c start`, which reads a quoted first
 		// argument as a window title and treats & in a URL as a command
 		// separator.
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		name, args = "rundll32", []string{"url.dll,FileProtocolHandler", url}
 	case "darwin":
-		cmd = exec.Command("open", url)
+		name, args = "open", []string{url}
 	default:
-		cmd = exec.Command("xdg-open", url)
+		name, args = "xdg-open", []string{url}
 	}
+	// The program is a constant. The only variable is the URL, and browseURL
+	// derives that from the address this process is itself listening on: a
+	// host that parsed as an IP and a port that parsed as a number, or it
+	// would not have been possible to listen on it. It is passed as one argv
+	// element with no shell in the way.
+	//
+	// context.Background and not the server's context, which is the whole
+	// reason this says CommandContext at all: a context-bound child is killed
+	// when its context ends, so serve shutting down would close the window
+	// the user is reading. A browser outlives the server that launched it.
+	cmd := exec.CommandContext(context.Background(), name, args...) //nolint:gosec // the guard is the paragraph above
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("could not open a browser: %w", err)
 	}

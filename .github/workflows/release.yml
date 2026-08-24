@@ -1,0 +1,163 @@
+name: Release
+
+# A tag is what makes a release; the manual trigger is how to check that this
+# workflow still works without minting a version number to do it.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: "1"
+
+jobs:
+  # Two jobs rather than a matrix. They differ in shell, in archive format and
+  # in what goes in the archive, which is most of a job, and a matrix that has
+  # to branch on the runner at every step is harder to read than saying it
+  # twice. Both build the interface first: `go build` alone produces a working
+  # API and a page saying the interface is missing, which is right for a
+  # developer and wrong for something somebody downloads.
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # git describe needs the tags
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Enable the pinned pnpm
+        run: corepack enable
+
+      - name: Install web dependencies (frozen)
+        run: corepack pnpm install --frozen-lockfile
+        working-directory: web
+
+      - name: Build the web interface
+        run: corepack pnpm build
+        working-directory: web
+
+      - name: Build
+        run: |
+          $version = git describe --tags --always --dirty
+          $commit  = git rev-parse HEAD
+          $date    = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $pkg     = "github.com/russellw/veritix"
+          $ldflags = "-s -w " +
+            "-X $pkg/internal/buildinfo.Version=$version " +
+            "-X $pkg/internal/buildinfo.Commit=$commit " +
+            "-X $pkg/internal/buildinfo.Date=$date"
+          go build -trimpath -ldflags $ldflags -o veritix.exe ./cmd/veritix
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # The assertion the Dockerfile makes about the image, made here about the
+      # archive: a release whose interface silently did not make it in is a
+      # blank page for the people this build exists for.
+      - name: Check what shipped
+        run: |
+          $v = ./veritix.exe version --json | ConvertFrom-Json
+          if (-not $v.web) { throw "the interface did not make it into the binary" }
+          ./veritix.exe eval testdata/dirty-retail
+
+      - name: Package
+        run: |
+          $name = "veritix_${env:VERSION}_windows_amd64"
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item veritix.exe, LICENSE, LICENSING.md, README.md -Destination $name
+          Copy-Item "deploy/windows/Start Veritix.cmd" -Destination $name
+          Copy-Item docs/windows.md -Destination "$name/README-WINDOWS.md"
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" |
+            Out-File -Encoding ascii "$name.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64
+          path: |
+            *.zip
+            *.zip.sha256
+
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Enable the pinned pnpm
+        run: corepack enable
+
+      - name: Install web dependencies (frozen)
+        run: make web-install
+
+      - name: Build a release binary
+        run: make release
+
+      - name: Check what shipped
+        run: |
+          ./bin/veritix version --json | grep -q '"web": true'
+          ./bin/veritix eval testdata/dirty-retail
+
+      - name: Package
+        run: |
+          version=$(git describe --tags --always --dirty)
+          name="veritix_${version}_linux_amd64"
+          mkdir "$name"
+          cp bin/veritix LICENSE LICENSING.md README.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-amd64
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+
+  publish:
+    name: Publish
+    needs: [windows, linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the one job that needs it, and only on a tag
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A draft rather than a published release: the archives are built by a
+        # machine and the notes are not, and a release is the one thing here
+        # that cannot be taken back once somebody has downloaded it.
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --draft \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            dist/*
