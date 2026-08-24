@@ -103,13 +103,68 @@ needs root on a box that also serves another app:
 ssh vps 'sudo mkdir -p /srv/www/veritix && sudo chown debian:debian /srv/www/veritix'
 ```
 
-Append the contents of `veritix.Caddyfile` to `/etc/caddy/Caddyfile`, then —
-**always in this order**, since a bad Caddyfile takes down every site sharing
-the machine:
+Add the vhost. `/etc/caddy/Caddyfile` is the one hand-edited file shared by
+every site on the box, so this is done as a guarded script rather than by hand
+in an editor: it refuses to append twice, backs the file up first, and puts the
+backup back if `caddy validate` rejects the result. **Validate before reload,
+always** — a bad Caddyfile takes down every site sharing the machine, tadmor
+included.
 
 ```sh
-ssh vps 'sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy'
+ssh vps 'bash -s' <<'REMOTE'
+set -euo pipefail
+CF=/etc/caddy/Caddyfile
+
+# Caddy refuses a duplicate site address, so a second run would break
+# validation rather than doing nothing. Check first.
+if grep -q '^veritix\.belunaro\.com' "$CF"; then
+  echo "vhost already present; nothing to do"; exit 0
+fi
+
+BACKUP="$CF.bak.$(date +%Y%m%d-%H%M%S)"
+sudo cp -p "$CF" "$BACKUP"
+echo "backed up to $BACKUP"
+
+sudo tee -a "$CF" > /dev/null <<'VHOST'
+
+veritix.belunaro.com {
+	root * /srv/www/veritix
+	file_server
+	log {
+		output file /var/log/caddy/veritix.access.log {
+			roll_size 20MiB
+			roll_keep 12
+			roll_keep_for 90d
+		}
+		format json
+	}
+}
+VHOST
+
+if sudo caddy validate --config "$CF"; then
+  sudo systemctl reload caddy
+  echo "validated and reloaded"
+else
+  sudo cp -p "$BACKUP" "$CF"
+  echo "INVALID - rolled back, caddy not reloaded" >&2
+  exit 1
+fi
+REMOTE
 ```
+
+Keep `veritix.Caddyfile` and the block above in step: the file in this repo is
+what the box is supposed to be running, and it is the only record of that.
+
+A reload that fails after a successful validate leaves the site up on the old
+configuration — Caddy checks again on reload and keeps what it has if the new
+config is bad. The rollback above is for the validate case, which is the one
+that would otherwise leave a broken file on disk for the next person to reload.
+
+**On a box that accumulates apps, `import` is the better shape.** Adding
+`import /etc/caddy/conf.d/*.caddy` to the shared file once, and giving each app
+its own `conf.d/<app>.caddy`, means no later app ever edits the shared file
+again. That is a change to how the box is organized rather than to this site,
+so it is not done here — but it is the version to reach for at the third app.
 
 Caddy obtains the Let's Encrypt certificate on the first request. Then publish
 and verify:
