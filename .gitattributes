@@ -1,0 +1,16 @@
+# Veritix is built and tested on Linux and on Windows, and testdata/ is data
+# rather than source: a CSV whose line endings changed on checkout is a
+# different file to audit, and a check that counts something in it would pass
+# on one platform and fail on the other for a reason nobody would look for.
+# Git for Windows enables core.autocrlf by default, so without this file a
+# Windows checkout is not the tree CI measured.
+#
+# Every text file is stored and checked out with LF, whatever the platform
+# does by convention, so a working tree is byte-identical everywhere.
+* text=auto eol=lf
+
+# The workbook fixtures are opaque: never normalized, never diffed as text.
+# text=auto guesses this correctly today, and saying it means a guess that
+# goes the other way cannot corrupt a committed binary on somebody's checkout.
+*.xlsx binary
+*.xls  binary

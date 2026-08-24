@@ -66,6 +66,63 @@ jobs:
       - name: Build
         run: make build
 
+  windows:
+    name: Build and test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Enable the pinned pnpm
+        run: corepack enable
+
+      # The Makefile is not used here, and that is the point as much as it is a
+      # convenience: a Windows developer has no make, so this job is also the
+      # check that the build is reachable without one.
+      - name: Install web dependencies (frozen)
+        run: corepack pnpm install --frozen-lockfile
+        working-directory: web
+
+      - name: Build the web interface
+        run: corepack pnpm build
+        working-directory: web
+
+      - name: Vet
+        run: go vet ./...
+
+      # Without -race, unlike the Linux job. What this job is asking is whether
+      # Veritix runs on the platform its users are on: paths, file locking, the
+      # zone database, a C toolchain for DuckDB. A data race is not
+      # platform-specific and is already caught where it costs less.
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build -o veritix.exe ./cmd/veritix
+
+      # Everything below runs the binary rather than the tree, because the
+      # things that break on Windows break at run time: a path with a drive
+      # letter reaching DuckDB, a file that cannot be deleted while it is open,
+      # a zone name the operating system has never heard of.
+      - name: Check what shipped
+        run: |
+          $v = ./veritix.exe version --json | ConvertFrom-Json
+          if (-not $v.web) { throw "the interface did not make it into the binary" }
+
+      - name: Audit a fixture
+        run: |
+          $r = ./veritix.exe audit testdata/dirty-retail --format json | ConvertFrom-Json
+          if (-not $r.finding_summary) { throw "no findings section in the report" }
+          $r.finding_summary | Format-List
+
   browser:
     name: Browser tests
     runs-on: ubuntu-latest
