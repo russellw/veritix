@@ -1,0 +1,395 @@
+/*
+The palette is lifted verbatim from web/src/index.css, which lifted it from
+internal/report/templates/report.html.tmpl. The product page, the interface and
+the report a customer downloads are one product; three palettes would drift
+apart within a milestone.
+
+Hand-written, no framework and no JavaScript, for the reason the interface has
+three runtime dependencies: every byte served from this domain is a
+supply-chain surface, and a marketing page has no excuse for one at all.
+*/
+
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #5c5c5c;
+  --line: #e2e2e2;
+  --panel: #f7f7f5;
+  --error: #b3261e;
+  --warning: #9a6700;
+  --accent: #3d5a80;
+  --accent-ink: #ffffff;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --fg: #e6e6e6;
+    --muted: #9aa0a6;
+    --line: #2c3038;
+    --panel: #1d2026;
+    --error: #f2705f;
+    --warning: #e0b341;
+    --accent: #7fb0e0;
+    --accent-ink: #16181c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 var(--sans);
+  -webkit-text-size-adjust: 100%;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+
+pre {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  margin: 0;
+}
+
+pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+/* ── shell ────────────────────────────────────────────────────────────── */
+
+.wrap {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+header.top {
+  border-bottom: 1px solid var(--line);
+  padding: 1.1rem 0;
+}
+
+header.top .wrap {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wordmark {
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  color: var(--fg);
+}
+
+.wordmark .v {
+  color: var(--accent);
+}
+
+nav.top-nav {
+  display: flex;
+  gap: 1.25rem;
+  font-size: 0.9rem;
+}
+
+section {
+  padding: 3.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+section:last-of-type {
+  border-bottom: 0;
+}
+
+section > .wrap > h2 {
+  font-size: 1.5rem;
+  margin: 0 0 0.6rem;
+}
+
+.lede {
+  color: var(--muted);
+  max-width: 44rem;
+  margin: 0 0 2rem;
+}
+
+/* ── hero ─────────────────────────────────────────────────────────────── */
+
+.hero {
+  padding: 4.5rem 0 3rem;
+  border-bottom: 0;
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 2.9rem);
+  margin: 0 0 1.1rem;
+  /* Breaks as "Audit your data / where it lives." A wider box orphans the
+     last word on a line of its own. */
+  max-width: 15ch;
+}
+
+.hero p {
+  font-size: 1.1rem;
+  max-width: 46rem;
+  margin: 0 0 1.1rem;
+}
+
+.hero .stand {
+  font-weight: 600;
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 2rem 0 0.9rem;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.7rem 1.3rem;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.btn:hover {
+  text-decoration: none;
+  filter: brightness(1.08);
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn.ghost {
+  background: none;
+  color: var(--accent);
+}
+
+.fineprint {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin: 0;
+}
+
+/* ── figures ──────────────────────────────────────────────────────────── */
+
+figure {
+  margin: 0;
+}
+
+figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+figcaption {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin-top: 0.7rem;
+}
+
+.shot {
+  padding: 0 0 3.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ── cards ────────────────────────────────────────────────────────────── */
+
+.cards {
+  display: grid;
+  /* 19rem rather than 15rem so four cards land as 2x2 rather than 3+1, which
+     leaves an orphan of a different width to the row above it. */
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: 1.25rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1.2rem 1.3rem;
+}
+
+.card h3 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.card p {
+  margin: 0;
+  font-size: 0.93rem;
+  color: var(--muted);
+}
+
+.card p + p {
+  margin-top: 0.6rem;
+}
+
+/* ── two-column prose ─────────────────────────────────────────────────── */
+
+.split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: 2rem;
+  align-items: start;
+}
+
+.split h3 {
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+}
+
+.split p {
+  margin: 0 0 0.8rem;
+}
+
+/* ── license panels ───────────────────────────────────────────────────── */
+
+.license {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1.4rem 1.5rem;
+  background: var(--panel);
+}
+
+.license.commercial {
+  border-color: var(--accent);
+}
+
+.license h3 {
+  font-size: 1.05rem;
+  margin: 0 0 0.15rem;
+}
+
+.license .tag {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 0.9rem;
+}
+
+.license ul {
+  margin: 0 0 1rem;
+  padding-left: 1.1rem;
+  font-size: 0.93rem;
+}
+
+.license li {
+  margin-bottom: 0.4rem;
+}
+
+/* ── docs list ────────────────────────────────────────────────────────── */
+
+.docs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 0.35rem 2rem;
+}
+
+.docs li {
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.93rem;
+}
+
+.docs .what {
+  color: var(--muted);
+}
+
+/* ── run-it list ──────────────────────────────────────────────────────── */
+
+.ways {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.way h3 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+
+.way p {
+  margin: 0 0 0.6rem;
+  color: var(--muted);
+  font-size: 0.93rem;
+}
+
+/* ── footer ───────────────────────────────────────────────────────────── */
+
+footer {
+  border-top: 1px solid var(--line);
+  padding: 2rem 0 3rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+footer .wrap > p {
+  margin: 0 0 0.5rem;
+}
+
+footer a {
+  color: var(--accent);
+}
+
+@media (max-width: 34rem) {
+  nav.top-nav {
+    gap: 0.9rem;
+    font-size: 0.85rem;
+  }
+
+  section {
+    padding: 2.5rem 0;
+  }
+
+  .hero {
+    padding: 3rem 0 2rem;
+  }
+}

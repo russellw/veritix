@@ -22,6 +22,10 @@ export CGO_ENABLED := 1
 WEB  := web
 PNPM := corepack pnpm
 
+# The product page. Static files served by Caddy on the belunaro box; it is not
+# part of any binary and nothing builds it. See site/README.md.
+SITE := site
+
 .PHONY: all
 all: lint test build
 
@@ -153,6 +157,17 @@ e2e: e2e-install
 .PHONY: e2e-test
 e2e-test:
 	cd $(E2E) && $(PNPM) test
+
+# The product page at veritix.belunaro.com. Static files, no build step, and
+# nothing but HTML on that host — site/README.md says why that matters and how
+# the vhost was set up the first time. Caddy serves whatever is on disk, so
+# there is nothing to restart.
+.PHONY: site-deploy
+site-deploy:
+	tar cz -C $(SITE) --exclude=README.md --exclude=veritix.Caddyfile . | ssh vps 'cat > /tmp/veritix-site.tgz'
+	ssh vps 'sudo mkdir -p /srv/www/veritix && sudo tar xz -C /srv/www/veritix -f /tmp/veritix-site.tgz && \
+	         sudo chown -R root:root /srv/www/veritix && rm /tmp/veritix-site.tgz'
+	curl -fsSI https://veritix.belunaro.com/ | head -1
 
 .PHONY: clean
 clean:

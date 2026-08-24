@@ -1,0 +1,417 @@
+<!doctype html>
+<!--
+  The product page for Veritix, served as static files from /srv/www/veritix on
+  the belunaro box. No build step, no JavaScript, no third-party asset: see
+  site/README.md for why, and for how it gets deployed.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Veritix — audit your data where it lives</title>
+    <meta
+      name="description"
+      content="Veritix audits datasets. Point it at a folder of CSV files or an Excel workbook and it profiles every column, checks that the files join the way they claim to, and reports what is wrong — with the query that proves each finding. It runs on your hardware; your data never goes to a vendor."
+    />
+    <link rel="stylesheet" href="/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%233d5a80'/><path d='M3.6 4.6h2l2.4 6 2.4-6h2L9 12.4H7z' fill='%23fff'/></svg>"
+    />
+    <meta property="og:title" content="Veritix — audit your data where it lives" />
+    <meta
+      property="og:description"
+      content="An auditor for CSV and Excel exports that runs on your own hardware. Every finding carries the query that proves it."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://veritix.belunaro.com/" />
+    <meta property="og:image" content="https://veritix.belunaro.com/report.png" />
+  </head>
+
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <span class="wordmark"><span class="v">Veri</span>tix</span>
+        <nav class="top-nav">
+          <a href="#what">What it finds</a>
+          <a href="#evidence">Evidence</a>
+          <a href="#egress">Your data</a>
+          <a href="#licensing">Licensing</a>
+          <a href="https://github.com/russellw/veritix">Source</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="wrap">
+        <h1>Audit your data where it lives.</h1>
+        <p>
+          Point Veritix at a folder of CSV exports or an Excel workbook. It
+          profiles every column, works out which files are supposed to join to
+          which, checks that those joins actually hold, and reports what is
+          wrong — with the query that proves each finding, so you can check it
+          rather than take it on trust.
+        </p>
+        <p class="stand">
+          It runs on your machine or in your own cloud. There is no vendor in
+          the middle of your commercially sensitive data.
+        </p>
+
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/russellw/veritix/releases/latest"
+            >Download Veritix</a
+          >
+          <a class="btn ghost" href="https://github.com/russellw/veritix">Read the source</a>
+        </div>
+        <p class="fineprint">
+          Windows and Linux, 64-bit. One file — no installer, no runtime to
+          install alongside it, no account, nothing to register. Free and open
+          source under the AGPL;
+          <a href="#licensing">commercial terms</a> for anyone who needs them.
+        </p>
+      </div>
+    </section>
+
+    <div class="shot">
+      <div class="wrap">
+        <figure>
+          <!-- Both themes are captured from the real interface, which follows
+               the system setting. A light screenshot on a dark page glares,
+               and dimming it would misrepresent the product instead. -->
+          <picture>
+            <source srcset="/report-dark.png" media="(prefers-color-scheme: dark)" />
+            <img
+              src="/report.png"
+              decoding="async"
+              width="2800"
+              height="1720"
+              alt="The Veritix web interface showing a completed audit: counts of errors, warnings and notes, a notice that verbatim cell values are omitted, and a list of findings such as “signup_date mixes 2 date formats”."
+            />
+          </picture>
+          <figcaption>
+            A finished audit in the built-in web interface. The same report
+            downloads as HTML, JSON or SARIF, and the command line prints it as
+            text.
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <section id="what">
+      <div class="wrap">
+        <h2>What it finds</h2>
+        <p class="lede">
+          Most of what is wrong with a business export is not wrong in a way
+          that makes anything fail. It is wrong in a way that makes the next
+          thing downstream quietly produce a different number.
+        </p>
+
+        <div class="cards">
+          <div class="card">
+            <h3>Inside a column</h3>
+            <p>
+              Values that contradict what the column claims to be. Placeholders
+              like <code>N/A</code>, <code>-1</code> and <code>999</code> that
+              defeat every null check downstream. Dates written in two formats,
+              where a single-format reader will either fail on the rest or —
+              worse — parse them into the wrong day.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Between files</h3>
+            <p>
+              A directory is one dataset, not a pile of files. Veritix infers
+              the keys that join your exports to each other and checks that the
+              references resolve. That is where most real defects live, and no
+              tool looking at one file at a time can see them.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Against your own rules</h3>
+            <p>
+              Expectations you write down once, in a YAML file, and have checked
+              on every audit afterwards. A rule that matched nothing is reported
+              as such — silence means either “your data is fine” or “this never
+              ran”, and the second is dangerous when somebody is relying on it.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Since the last audit</h3>
+            <p>
+              What this export broke that the last one did not, including rows
+              and columns that quietly stopped arriving. A build can fail on the
+              direction rather than the state, so a team with fifteen years of
+              accumulated mess can still refuse to make it worse.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="evidence">
+      <div class="wrap">
+        <h2>Every finding carries its evidence</h2>
+        <p class="lede">
+          A finding names the statement that produced its number. Veritix re-runs
+          all of them before it writes the report, and a finding that no longer
+          reproduces is dropped rather than printed.
+        </p>
+        <figure>
+          <picture>
+            <source srcset="/evidence-dark.png" media="(prefers-color-scheme: dark)" />
+            <img
+              src="/evidence.png"
+              loading="lazy"
+              decoding="async"
+              width="2032"
+              height="852"
+              alt="An expanded finding: the title “signup_date mixes 2 date formats”, an explanation of why it matters downstream, a recommended fix, the affected row count, and the SQL statement that produced that count."
+            />
+          </picture>
+          <figcaption>
+            The count, why it matters downstream, what to do about it, and the
+            statement a reader can run themselves. Actual cell values stay
+            behind a button that has to be pressed for one finding at a time.
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="egress">
+      <div class="wrap">
+        <h2>Your data does not leave the process</h2>
+        <div class="split">
+          <div>
+            <h3>By default, nothing is sent anywhere</h3>
+            <p>
+              A fresh install talks to nobody. No model provider is configured,
+              telemetry export is off, and a scheduled audit tells nobody until
+              you give it somewhere to tell. Reports omit verbatim cell values
+              unless you ask for them, and say so in the output.
+            </p>
+            <p>
+              Columns are described by derived <em>shapes</em> instead:
+              <code>CUS-004417</code> is reported as <code>XXX-999999</code> —
+              precise enough to reason about, and useless to anyone who obtains
+              the report.
+            </p>
+          </div>
+          <div>
+            <h3>With a model, the guard is a type, not a promise</h3>
+            <p>
+              The optional agentic auditor is off until you switch it on. When
+              it is on, the model sees schemas, aggregates, distributions and
+              shapes — never cell values. That boundary is enforced by the type
+              system rather than by diligence: a tool that tried to return raw
+              values would fail to compile into a leak.
+            </p>
+            <p>
+              Afterwards you can read every payload that left the machine,
+              verbatim, on the run's trace. Or point it at a model on your own
+              hardware and have no network egress at all.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="agent">
+      <div class="wrap">
+        <h2>The model explores; the engine measures</h2>
+        <p class="lede">
+          Veritix with no model is a complete deterministic auditor, and that is
+          the default. Turning the agent on adds a second kind of finding — one
+          that needed reasoning rather than a rule — without adding a second
+          kind of trust.
+        </p>
+        <div class="split">
+          <div>
+            <p>
+              The model decides <em>what</em> to investigate and writes the
+              explanation. It never reports a number it made up. To record a
+              finding it has to supply the query that would demonstrate the
+              claim <em>and</em> state what that query returns. Veritix runs the
+              query. A disagreement records nothing: it hands back the real
+              figure and asks again.
+            </p>
+          </div>
+          <div>
+            <p>
+              What survives that is then re-run alongside the deterministic
+              findings before the report is written, so it is measured twice. A
+              model-proposed finding can sit in the same list as a rule-based
+              one precisely because neither of them got there by being believed.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="run">
+      <div class="wrap">
+        <h2>Ways to run it</h2>
+        <div class="ways">
+          <div class="way">
+            <h3>On a Windows desktop</h3>
+            <p>
+              Unzip and double-click <strong>Start Veritix</strong>. It starts
+              the server and opens your browser on the interface, which is the
+              whole of the setup. The interface is the primary interface: the
+              people this is for do not have a terminal.
+            </p>
+          </div>
+          <div class="way">
+            <h3>In a build</h3>
+            <p>Non-zero exit on what you decide is unacceptable.</p>
+            <pre><code>veritix audit ./data --fail-on error
+veritix audit ./data --baseline last-report.json \
+    --fail-on-regression error</code></pre>
+          </div>
+          <div class="way">
+            <h3>On a server, on a clock</h3>
+            <p>
+              A dataset can carry a standing instruction to audit itself
+              overnight and send a webhook when the export gets worse. A
+              container image and a Kubernetes base ship with it — one replica,
+              egress denied by default.
+            </p>
+          </div>
+          <div class="way">
+            <h3>From an assistant</h3>
+            <p>
+              Veritix is an MCP server, so Claude Code or Claude Desktop can
+              audit a dataset and read the findings. An audit started that way
+              is the same run, recorded in the same place, and shows up in the
+              browser alongside the rest.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="licensing">
+      <div class="wrap">
+        <h2>Licensing</h2>
+        <p class="lede">
+          Veritix is dual licensed, and it is not the kind where the free
+          version is crippled. The AGPL build is the whole product. A commercial
+          license sells different <em>terms</em>, not different code.
+        </p>
+
+        <div class="split">
+          <div class="license">
+            <h3>AGPL-3.0-or-later</h3>
+            <span class="tag">Free. No registration, nobody to tell.</span>
+            <ul>
+              <li>
+                Run it on your own data, inside your own organization — on a
+                laptop, on a build server, in your own cloud.
+              </li>
+              <li>Modify it as much as you like for your own internal use.</li>
+              <li>
+                Your data, your reports and your rules files are yours. The
+                license is about the program's source, not its output.
+              </li>
+            </ul>
+            <p class="fineprint">
+              This is very likely fine for you, and it is the case Veritix was
+              built for.
+            </p>
+          </div>
+
+          <div class="license commercial">
+            <h3>Commercial license</h3>
+            <span class="tag">Terms a public license cannot give.</span>
+            <ul>
+              <li>
+                Ship Veritix, or code derived from it, inside a product you
+                distribute under terms of your own.
+              </li>
+              <li>
+                Run a modified Veritix as a service for people outside your
+                organization without publishing your modifications.
+              </li>
+              <li>
+                Link it into a larger system whose source you cannot release.
+              </li>
+              <li>
+                Get a warranty, an indemnity, a support commitment, or a signed
+                document your procurement department will accept.
+              </li>
+            </ul>
+            <p class="fineprint">
+              Write to
+              <a href="mailto:russell.wallace@gmail.com?subject=Veritix%20commercial%20license"
+                >russell.wallace@gmail.com</a
+              >. Getting a license is usually quicker than getting an opinion on
+              whether you need one.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="docs">
+      <div class="wrap">
+        <h2>Documentation</h2>
+        <ul class="docs">
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/windows.md">Windows</a>
+            <span class="what">— getting started, where the data lives, what the platform does not do</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/deployment.md">Deployment</a>
+            <span class="what">— binary, container, cluster, CI, telemetry</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/comparison.md">Comparison</a>
+            <span class="what">— what changed since the last audit, and gating a build on it</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/scheduling.md">Scheduling</a>
+            <span class="what">— auditing on a clock, being told, and keeping the disk</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/scale.md">Scale</a>
+            <span class="what">— what two gigabytes costs, and the four things it found</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/eval.md">Evaluation</a>
+            <span class="what">— scoring an audit against known defects</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/mcp.md">MCP</a>
+            <span class="what">— wiring an assistant to it, and pulling your own context in</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/local-model.md">Local models</a>
+            <span class="what">— running the agent on your own hardware</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/rules-proposal.md">Rule proposal</a>
+            <span class="what">— the model proposes, a person accepts, every later audit enforces</span>
+          </li>
+          <li>
+            <a href="https://github.com/russellw/veritix/blob/main/docs/frontend-stack.md">Supply chain</a>
+            <span class="what">— the dependency policy, both sides of the build</span>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <p>
+          <a href="https://github.com/russellw/veritix">Source</a> ·
+          <a href="https://github.com/russellw/veritix/releases/latest">Releases</a> ·
+          <a href="https://github.com/russellw/veritix/blob/main/LICENSING.md">Licensing</a> ·
+          <a href="mailto:russell.wallace@gmail.com?subject=Veritix">Contact</a>
+        </p>
+        <p>
+          Veritix is free software under the GNU Affero General Public License,
+          version 3 or later, or available under a commercial license.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

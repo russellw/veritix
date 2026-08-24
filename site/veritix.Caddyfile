@@ -1,0 +1,27 @@
+# The Caddy vhost for veritix.belunaro.com, kept in the repo so the deployed
+# configuration is version controlled. It is not read from here: Caddy on the
+# box has one hand-edited /etc/caddy/Caddyfile, and this block is appended to
+# it once. See README.md.
+#
+# A static file server, not a reverse proxy: the product page is HTML, CSS and
+# two PNGs, so there is no process, no port and no database to allocate. This
+# site is the *marketing* page. It does not run Veritix, and nothing customer
+# data ever touches is served from this box.
+
+veritix.belunaro.com {
+	root * /srv/www/veritix
+	file_server
+
+	# Caddy has access logging off by default, so a vhost without this block
+	# leaves no record of any request it served. Rotation is Caddy's own
+	# roller, deliberately not logrotate: logrotate would rename the file
+	# while Caddy kept writing to the old inode.
+	log {
+		output file /var/log/caddy/veritix.access.log {
+			roll_size 20MiB
+			roll_keep 12
+			roll_keep_for 90d
+		}
+		format json
+	}
+}
