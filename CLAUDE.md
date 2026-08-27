@@ -226,6 +226,8 @@ deploy/Dockerfile      three stages: the interface, the binary, distroless
 deploy/kubernetes/     a kustomize base; one replica, and egress denied
 deploy/windows/        what a release archive ships so the desktop story is a
                        double-click rather than a terminal
+docs/checks.md         every rule a run with no model can report, and what each
+                       one is for; a test holds it to the code
 docs/frontend-stack.md the front end's dependency and supply-chain policy
 docs/eval.md           the defect manifest format and what a score means
 docs/scale.md          what happens on two gigabytes, and what it changed
@@ -1609,7 +1611,11 @@ one file, read by `internal/eval`'s tests and by `veritix eval` alike; a second
 copy of a defect list disagrees with the first eventually, and then a passing
 test means nothing. Add to both halves when adding a check, and add a new
 fixture to `scoredFixtures` in `eval_test.go`, which is the only wiring a
-dataset needs.
+dataset needs. A new check also has to be listed in `docs/checks.md`, which is
+the reference list of every rule a run with no model can report;
+`internal/checks/docs_test.go` fails in both directions, since a list that has
+drifted from the code is worse than none — a missing rule reads as a check that
+does not exist, and a stale one reads as coverage that is no longer there.
 
 `sales.xlsx` is a committed binary fixture (title rows, a hidden row, merged
 cells, `#REF!`/`#DIV/0!`, a stacked TOTAL table, a hidden sheet). It was

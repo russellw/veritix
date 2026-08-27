@@ -143,6 +143,7 @@ and a scheduled audit tells nobody until a webhook is set.
 
 | | |
 |---|---|
+| [docs/checks.md](docs/checks.md) | every deterministic check, what each one reports, and why it matters downstream |
 | [docs/deployment.md](docs/deployment.md) | running it: binary, container, cluster, CI, telemetry |
 | [docs/comparison.md](docs/comparison.md) | what changed since the last audit, and failing a build on the direction rather than the state |
 | [docs/scheduling.md](docs/scheduling.md) | auditing on a clock, being told when the export gets worse, and keeping the disk |
