@@ -1624,6 +1624,134 @@ is still what would say whether the nudge cost anything. `docs/eval.md` has
 that scorecard, and what its control half says about which targets
 `needs_context:` can honestly claim.
 
+## Five models, three tiers, and the scorecard is the least of it
+
+Five models have now been driven through this loop against these fixtures. The
+recall figures are the thing to read last, because the interesting differences
+are not on that axis and two of the five never got far enough to have one.
+
+| model | fixture | agent recall / coverage | checks |
+|---|---|---|---|
+| `qwen3:4b-instruct-2507` | `dirty-retail` | 17% / 50%, 3 runs | 22 of 22, no false positives |
+| `qwen3:30b-a3b-instruct-2507` | `dirty-retail` | nothing recorded, 1 run | not scored |
+| `qwen3.5:35b-a3b` | `dirty-retail` | nothing recorded, 3 runs | not scored |
+| `gpt-oss-120b` | `dirty-logistics` | 42% / 75%, 3 runs | 9 of 9, no false positives |
+| `gpt-oss-120b` | `dirty-meters` | 0% / 0%, both halves, 3+3 runs | 8 of 8, no false positives |
+| `claude-opus-5` | `dirty-meters` | 100% aided, 67% control, 3+3 runs | 8 of 8, no false positives |
+
+**No fixture carries a score from all five**, and that is the first caveat
+rather than a footnote. The only head-to-head between the two ends of the table
+is `dirty-meters`; the small models were never run on it, and `claude-opus-5`
+was never run on the other two. The checks column never moves with the model,
+because it is deterministic and the model is not in it — which is also the
+reminder that everything below concerns the half of the product a model is
+paid for, not the half that ships switched off.
+
+### The 120b against the smaller local models: not a recall gap
+
+On raw hit rate these are closer than the size ratio suggests.
+`qwen3:4b-instruct-2507` scored 17% mean and 50% coverage on `dirty-retail`;
+`gpt-oss-120b` on the same fixture recorded both unresolved references in its
+best run, one of the two in each of two others, and three findings with one
+that did not reproduce in the run where `reasoning_effort` was being ignored.
+Neither model is reliable there, and both find real defects.
+
+What separates them is that the 120b operates the instrument without falling
+over, on three counts the traces above measure one at a time:
+
+- **It uses a tool surface it was not asked to use.**
+  `check_referential_integrity` and `record_finding` on its first two steps,
+  unprompted. That is the binary `qwen3.5:35b-a3b` failed at — forty tool calls
+  across three runs, every one of them `run_sql`, nothing recorded, and a
+  system-prompt sentence naming the check tools changed nothing and was
+  reverted. The prior is not a function of size: the 4B has it and the 35B does
+  not.
+- **It reads a shape as a shape.** Both the 4B and the 30B queried for
+  `⟨XXXX⟩` as though it were contents, and the 35B watched its own literals come
+  back through `Guard.EngineError`, concluded the engine was mangling them, and
+  gave up on SQL for the rest of a 55-minute run. The 120b's complete run made
+  four tool calls with **none refused**.
+- **Its runs end because it decided they had.** All three `dirty-logistics`
+  runs finished voluntarily at 10-12 steps of 24, and the `dirty-retail` runs
+  at 3-5 steps once the effort setting was actually taking. Every smaller
+  model that scored anything was either stopped by the budget or spent it on
+  orientation — six consecutive `describe_table` calls in the 4B's case,
+  `step_budget` with nothing recorded in the 30B's.
+
+So the 120b is the first local model here that is *dependably* competent at the
+mechanics. That is a real threshold and worth the 63 GB. It is not a smartness
+ranking, and the anti-correlation in the middle of the table is the reason to
+keep saying so.
+
+### The 120b against `claude-opus-5`: a different kind of difference
+
+`dirty-meters` is the only fixture both have run, and it was the same two
+command lines, the same brief, the same tool surface and the same client.
+100% aided against 0%. Two failures underneath that number, and both are worse
+than the number.
+
+**It never reached for information it was not pushed toward.** Three of the
+customer's own documents, connected, enumerated, listed in the brief and named
+in the system prompt: three `resources/list`, zero `resources/read`, across
+three runs. `claude-opus-5` read all three in the *first* step of every run,
+`ticket-4482` included — the document no target needs.
+
+**And the accuracy failure is the sharper half.** The 120b found the
+`site_ref` → `premises.upn` pair by itself in all six runs, joined the columns
+as literally written, and reported **14 orphans where the answer is 4**. The
+Opus runs report 4 and say why in the title — *"once the `UPN-` prefix is
+stripped"* — which is a sentence that exists only in the data dictionary.
+
+The part worth carrying elsewhere is that **14 survived `Set.Verify`**. It is
+the correct count for the query the model wrote. Evidence re-execution catches
+an invented number; it cannot catch a well-formed question about the wrong
+premise, and three of those runs went on to `propose_rule` a `references` rule
+encoding the wrong join. That is the case the accept screen's materialized
+values exist for, arrived at by a model rather than by a change to `relate.go`,
+and it is the strongest argument in this document for a person reading a
+proposal before it goes into a rules file.
+
+The comparison that stings is with Opus's *control*. With no documents at all
+it reconstructed the join from value shapes — *"all 14 values share one
+3-letter prefix and a 4-digit suffix, and 8 of the 12 distinct suffixes are
+exactly a upn in premises.csv"* — and reported 4. The unaided strong model beat
+the aided weaker one on the target the weaker one had the document for.
+
+Opus's own ceiling is in the same control and is worth stating, because it is
+not a clean sweep: 50% on the four supposedly document-dependent targets
+without the documents. Where it missed, it missed the same *shape* of way —
+it saw something in the status column every run and got it wrong every run,
+claiming 5 values in inconsistent spellings against a true 3 undocumented
+states. That is a failure to rebuild an unguessable rule, not a failure to ask
+the right question.
+
+### What the three tiers actually differ on
+
+| | operates the tools | not confused by shapes | asks the right question | seeks out information |
+|---|---|---|---|---|
+| the three small models | 1 of 3 | no | — | no |
+| `gpt-oss-120b` | yes | yes | **no** | **no** |
+| `claude-opus-5` | yes | yes | yes | yes |
+
+`gpt-oss-120b` is a competent executor of the obvious investigation.
+`claude-opus-5` is the only model measured here that behaves like an auditor —
+which for this product is most of the job, since the deterministic checks
+already cover everything obvious and the agent exists for what they cannot see.
+
+Three caveats to hold this loosely with. The samples are three runs a
+configuration, and the 120b's four `dirty-logistics` targets landed at 3/3,
+1/3, 1/3 and 0/3 — a 42% mean with a wide interval around it. The head-to-head
+is one fixture. And the 120b ran at `--llm-effort low` with a 24-step budget
+against Opus's 40, paged off a SATA disk at 0.63 tok/s.
+
+That last one is the least damaging of the three, and the traces are what say
+so: the 120b stopped **voluntarily** in nearly every run scored here, including
+all three on `dirty-meters` at 10, 7 and 8 steps of 24. It had budget in hand
+and chose not to look further. The ceiling that separates these tiers is
+judgment, not compute — which is the same conclusion the 4B-against-35B result
+reached from the other end, and the reason the advice in this document is to
+probe a model rather than to size one.
+
 ## What this is good for, and what it is not
 
 Good for: the loop, the tool surface, the egress guard, evidence re-execution,
@@ -1633,7 +1761,9 @@ first hour.
 
 Not good for: whether the agent finds *good* problems. Nothing about a 4B model
 on a 2017 laptop CPU generalizes to that, and pretending otherwise would be the
-same mistake as trusting a model's own count.
+same mistake as trusting a model's own count. That question is what
+`veritix eval` and the comparison above are for, and the honest reach of the
+answer is three small fixtures and three runs a configuration.
 
 The egress check, though, is the one that transfers completely — it is a property
 of Veritix, not of the model:
