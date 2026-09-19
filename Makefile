@@ -132,7 +132,7 @@ web-check: web-install
 audit: web-check
 	go mod verify
 	@command -v govulncheck >/dev/null 2>&1 \
-		&& govulncheck ./... \
+		&& scripts/govulncheck.sh \
 		|| echo "govulncheck not installed; install: go install golang.org/x/vuln/cmd/govulncheck@latest"
 
 # ── browser tests ──────────────────────────────────────────────────────────

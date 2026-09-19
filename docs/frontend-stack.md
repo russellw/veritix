@@ -214,14 +214,26 @@ equivalent to block.
 So instead, CI runs:
 
 - `go mod verify` — every module matches its recorded hash.
-- `govulncheck ./...` — known vulnerabilities, with call-graph analysis so a
-  vulnerable function nobody calls does not cause noise.
+- `scripts/govulncheck.sh` — `govulncheck ./...`, with call-graph analysis so a
+  vulnerable function nobody calls does not cause noise, plus the one thing
+  govulncheck has no room for: a written reason for a finding that stays.
 - `go mod tidy` with a `git diff --exit-code`, which was already there.
 
 Adding `govulncheck` immediately paid for itself: it reported 16 standard-library
 vulnerabilities reachable from this code, fixed in Go patch releases the project
-was not pinned to. `go.mod` now carries `toolchain go1.26.5` and the scan is
-clean.
+was not pinned to. `go.mod` now carries an explicit `toolchain` line and the scan
+is clean.
+
+The wrapper exists because the vulnerability database moves under a repository
+that has not changed, and the answer is not always an upgrade. GO-2026-6452
+reports a panic in `excelize` against every release of it, because the advisory
+records where the bug was introduced and not where it was fixed — and the fix is
+in the version Veritix ships. The choice there is between switching the whole
+check off and writing down what was checked, so the script keeps a list of
+accepted findings, each pinned to the module version someone verified it
+against. It fails if an accepted finding stops being reported, appears against a
+different version, or acquires a fixed version: an acceptance that has outlived
+its reason is worse than none, because it reads as a check that is running.
 
 ### 6.1 The one dependency M4 added
 

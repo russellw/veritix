@@ -235,10 +235,14 @@ jobs:
       - name: Verify module checksums
         run: go mod verify
 
+      # The wrapper, rather than govulncheck itself, because a finding is
+      # occasionally about the vulnerability database rather than about the
+      # code: scripts/govulncheck.sh is where an accepted one is written down,
+      # and it fails the moment an acceptance stops matching what is reported.
       - name: Check Go dependencies for known vulnerabilities
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          scripts/govulncheck.sh
 
       - name: Install web dependencies (frozen)
         run: make web-install

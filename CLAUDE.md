@@ -1750,6 +1750,20 @@ text — rather than as a missing dependency.
 - `go.mod` carries an explicit `toolchain` line. It is there because
   `govulncheck` reported reachable standard-library vulnerabilities fixed only
   in a later patch release; bump it rather than silence the check.
+- **`scripts/govulncheck.sh`, not `govulncheck` itself**, is what `make audit`
+  and CI run. The vulnerability database is pinned at whatever it says today,
+  so — exactly like `golangci-lint` at `version: latest` — a green build can go
+  red with no commit behind it, and the answer is almost always to upgrade the
+  module. Occasionally it is not: GO-2026-6452 names a panic in `excelize` whose
+  fix shipped *in the version Veritix already uses*, because the advisory's
+  affected range was recorded with no end. There is nowhere in govulncheck to
+  write that down, and a bare `|| true` would have taken the whole check off for
+  every module at once. The wrapper holds one list of accepted findings, each
+  pinned to the module version it was verified against, and it fails if an
+  accepted finding stops being reported, moves to a different version, or gains
+  a fixed version — because an acceptance that has outlived its reason reads as
+  a check that is running. Adding an entry means reading the advisory and the
+  module's source; "it looks unreachable" is not a reason.
 - `golangci-lint` is not in the `Makefile`'s dependency set. Install it with
   `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`;
   `make lint` falls back to `go vet` alone without it, which will not catch
