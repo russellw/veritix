@@ -126,6 +126,52 @@ veritix serve --addr 0.0.0.0:8080 --auth-token "$TOKEN"
 Configuration comes from `./veritix.yaml`, then `VERITIX_*` environment
 variables, then flags. See `internal/config/config.go` for every field.
 
+## Running a model that is larger than your RAM
+
+A local model is the answer for anyone who wants no network egress at all, and
+*local* does not have to mean *small*. Measured here: `gpt-oss-120b` — 63 GB of
+weights — auditing `testdata/dirty-retail` on a 30 GB laptop with a SATA SSD and
+no GPU, finishing a complete run in **59 minutes** with two verified findings,
+both of them unresolved foreign-key references that the deterministic pass does
+not propose. The weights are paged off the disk as they are needed.
+
+Five settings decide whether that works or fails, and four of them fail
+*silently* — as a slow model, or as a run that ends on `provider_error` having
+recorded nothing:
+
+| | |
+|---|---|
+| `--no-repack --fit off --load-mode mmap` | serve with llama.cpp, not Ollama. Weight repacking materializes tensors in anonymous memory and so defeats mmap by construction, and there is no quantization that avoids it. Confirm it took with `VmSize` ≫ `VmRSS`. |
+| `--ubatch-size 2048` | the default of 512 is wrong for a model that does not fit. A micro-batch reads each expert once and uses it for every token in the batch, so its size divides the I/O outright: **1.7x** on the first agent step. |
+| `--parallel 1` | with several slots a follow-up turn can land on a cold one and re-prefill the whole conversation, which here is half an hour. |
+| `llm.request_timeout` | the first step is nearly half the wall clock, because an agent's brief is a long prompt and all of it is prefilled before a single token comes back. The product default of 10 minutes expires in the middle of it. |
+| `--llm-effort low` | **not `none`** — gpt-oss's template knows `low`/`medium`/`high` and quietly defaults anything else. Applied, it took one run from 6h47m to 1h5m. |
+
+`scripts/local-model.sh` sets all of these and starts the server itself, which
+is why it exists: a recipe that has to be remembered in another terminal is a
+recipe that will one day be typed without `--no-repack`.
+[docs/local-model.md](docs/local-model.md) has the measurements and the traces.
+
+**What is not on that list is expert prefetch**, and it is worth saying so
+because the obvious reading of the literature is that it should be. Custom
+out-of-core code — issuing one large read per expert instead of letting the
+kernel fault pages in 4 KiB at a time — is genuinely worth 1.6-1.8x on
+generation when a model does not fit, and
+[big-local-llms](https://github.com/russellw/big-local-llms) measures it
+carefully. It buys Veritix almost nothing, and the reason generalizes to any
+agent rather than being a fact about this one.
+
+Prefetch pays only while the set it advises survives in RAM until it is read.
+Expert routing saturates fast — most of the pool within a few dozen tokens — so
+a single generated token advises a set that fits, and a prefill micro-batch
+advises one that does not: on this brief, 317 GB of advice into 30 GB of RAM.
+Pages fetched early in a layer are evicted before the arithmetic reaches them,
+and the re-reads cost more than the saved faults. An agent request is ~99%
+prefill, so a 1.3x on generation is worth well under 1% of a call. **Batching
+and caching attack the same waste** — each expert read once, used many times —
+which is also why `--ubatch-size` and prefetch do not stack, and why the flag
+is on the list above and the hook is not.
+
 ## Deploying it
 
 ```sh
